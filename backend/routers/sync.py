@@ -69,6 +69,21 @@ async def trigger_sync(req: SyncRequest, db: AsyncSession = Depends(get_db)):
         await weather.close()
 
 
+@router.post("/streams")
+async def sync_streams(db: AsyncSession = Depends(get_db)):
+    """Fetch activity streams for activities that don't have them yet."""
+    from backend.clients.strava import StravaClient
+    from backend.services.sync import SyncEngine
+
+    strava = StravaClient()
+    engine = SyncEngine(db, strava, None, None, None)
+    try:
+        count = await engine.sync_strava_streams()
+        return {"status": "success", "streams_synced": count}
+    finally:
+        await strava.close()
+
+
 @router.get("/status")
 async def sync_status(db: AsyncSession = Depends(get_db)):
     """Get the last sync status for each source."""

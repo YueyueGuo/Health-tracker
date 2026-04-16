@@ -46,12 +46,10 @@ class SyncEngine:
         if not settings.strava.access_token and not settings.strava.refresh_token:
             return 0
 
-        log = SyncLog(source="strava", sync_type="incremental", status="running")
-        self.db.add(log)
-        await self.db.flush()
+        error_msg = None
+        count = 0
 
         try:
-            # Find last synced activity
             last_sync = await self.db.execute(
                 select(Activity.start_date)
                 .order_by(Activity.start_date.desc())
@@ -61,79 +59,99 @@ class SyncEngine:
             after = last_date if last_date else None
 
             activities = await self.strava.get_all_activities(after=after)
-            count = 0
 
             for raw in activities:
-                strava_id = raw["id"]
-                existing = await self.db.execute(
-                    select(Activity).where(Activity.strava_id == strava_id)
-                )
-                if existing.scalar_one_or_none():
-                    continue
-
-                activity = Activity(
-                    strava_id=strava_id,
-                    name=raw.get("name", ""),
-                    sport_type=raw.get("sport_type", raw.get("type", "Unknown")),
-                    start_date=datetime.fromisoformat(
-                        raw["start_date"].replace("Z", "+00:00")
-                    ),
-                    start_date_local=datetime.fromisoformat(
-                        raw.get("start_date_local", raw["start_date"]).replace("Z", "+00:00")
-                    ),
-                    timezone=raw.get("timezone"),
-                    elapsed_time=raw.get("elapsed_time"),
-                    moving_time=raw.get("moving_time"),
-                    distance=raw.get("distance"),
-                    total_elevation=raw.get("total_elevation_gain"),
-                    average_hr=raw.get("average_heartrate"),
-                    max_hr=raw.get("max_heartrate"),
-                    average_speed=raw.get("average_speed"),
-                    max_speed=raw.get("max_speed"),
-                    average_power=raw.get("average_watts"),
-                    weighted_avg_power=raw.get("weighted_average_watts"),
-                    average_cadence=raw.get("average_cadence"),
-                    calories=raw.get("calories"),
-                    suffer_score=raw.get("suffer_score"),
-                    start_lat=(raw.get("start_latlng") or [None, None])[0],
-                    start_lng=(raw.get("start_latlng") or [None, None])[1],
-                    summary_polyline=(raw.get("map") or {}).get("summary_polyline"),
-                    raw_data=raw,
-                )
-                self.db.add(activity)
-                await self.db.flush()
-
-                # Fetch streams for this activity
                 try:
-                    streams = await self.strava.get_activity_streams(strava_id)
-                    for stream_type, data in streams.items():
-                        if data:
-                            self.db.add(ActivityStream(
-                                activity_id=activity.id,
-                                stream_type=stream_type,
-                                data=data,
-                            ))
-                    activity.has_streams = bool(streams)
-                except Exception:
-                    pass  # Streams are optional, don't fail the sync
+                    strava_id = raw["id"]
+                    existing = await self.db.execute(
+                        select(Activity).where(Activity.strava_id == strava_id)
+                    )
+                    if existing.scalar_one_or_none():
+                        continue
 
-                count += 1
-
-            await self.db.commit()
-            log.status = "success"
-            log.records_synced = count
-            log.completed_at = datetime.now(timezone.utc)
-            await self.db.commit()
-            return count
+                    activity = Activity(
+                        strava_id=strava_id,
+                        name=raw.get("name", ""),
+                        sport_type=raw.get("sport_type", raw.get("type", "Unknown")),
+                        start_date=datetime.fromisoformat(
+                            raw["start_date"].replace("Z", "+00:00")
+                        ),
+                        start_date_local=datetime.fromisoformat(
+                            raw.get("start_date_local", raw["start_date"]).replace("Z", "+00:00")
+                        ),
+                        timezone=raw.get("timezone"),
+                        elapsed_time=raw.get("elapsed_time"),
+                        moving_time=raw.get("moving_time"),
+                        distance=raw.get("distance"),
+                        total_elevation=raw.get("total_elevation_gain"),
+                        average_hr=raw.get("average_heartrate"),
+                        max_hr=raw.get("max_heartrate"),
+                        average_speed=raw.get("average_speed"),
+                        max_speed=raw.get("max_speed"),
+                        average_power=raw.get("average_watts"),
+                        weighted_avg_power=raw.get("weighted_average_watts"),
+                        average_cadence=raw.get("average_cadence"),
+                        calories=raw.get("calories"),
+                        suffer_score=raw.get("suffer_score"),
+                        start_lat=(raw.get("start_latlng") or [None, None])[0],
+                        start_lng=(raw.get("start_latlng") or [None, None])[1],
+                        summary_polyline=(raw.get("map") or {}).get("summary_polyline"),
+                        raw_data=raw,
+                    )
+                    self.db.add(activity)
+                    await self.db.commit()
+                    count += 1
+                except Exception as e:
+                    await self.db.rollback()
+                    error_msg = f"Failed on activity {raw.get('id')}: {e}"
 
         except Exception as e:
-            log.status = "error"
-            log.error_message = str(e)
-            log.completed_at = datetime.now(timezone.utc)
-            await self.db.commit()
-            raise
+            error_msg = str(e)
 
-    # ── Eight Sleep ───────��─────────────────────────────────────────
+        log = SyncLog(
+            source="strava",
+            sync_type="incremental",
+            status="success" if error_msg is None else "error",
+            records_synced=count,
+            error_message=error_msg,
+            completed_at=datetime.now(timezone.utc),
+        )
+        self.db.add(log)
+        await self.db.commit()
+
+        if error_msg and count == 0:
+            raise RuntimeError(error_msg)
+
+        return count
+
+    async def sync_strava_streams(self) -> int:
+        """Fetch streams for activities that don't have them yet. Run separately from main sync."""
+        result = await self.db.execute(
+            select(Activity).where(Activity.has_streams == False)  # noqa: E712
+        )
+        activities = result.scalars().all()
+        count = 0
+
+        for activity in activities:
+            try:
+                streams = await self.strava.get_activity_streams(activity.strava_id)
+                for stream_type, data in streams.items():
+                    if data:
+                        self.db.add(ActivityStream(
+                            activity_id=activity.id,
+                            stream_type=stream_type,
+                            data=data,
+                        ))
+                activity.has_streams = bool(streams)
+                await self.db.commit()
+                count += 1
+            except Exception:
+                await self.db.rollback()
+                continue
+
+        return count
+
+    # ── Eight Sleep ─────────────────────────────────────────────────
 
     async def sync_eight_sleep(self, days: int = 30) -> int:
         if not settings_eight_sleep_configured():
