@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _env_file_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
@@ -59,6 +59,13 @@ class DiscordSettings(BaseSettings):
 
     bot_token: str = ""
     guild_id: int | None = None
+
+    @field_validator("guild_id", mode="before")
+    @classmethod
+    def empty_str_to_none(cls, v):
+        if v == "" or v is None:
+            return None
+        return int(v)
 
 
 class Settings(BaseSettings):
