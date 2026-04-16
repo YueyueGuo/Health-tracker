@@ -94,3 +94,45 @@ async def sync_status(db: AsyncSession = Depends(get_db)):
             statuses[source] = {"status": "never", "last_sync": None}
 
     return statuses
+
+
+@router.get("/debug/strava-raw")
+async def debug_strava_raw():
+    """Debug: fetch raw Strava data to see what's coming back."""
+    from backend.clients.strava import StravaClient
+
+    client = StravaClient()
+    try:
+        # Test 1: Can we authenticate?
+        try:
+            athlete = await client.get_athlete()
+            auth_status = {"ok": True, "athlete": athlete.get("firstname", "?") + " " + athlete.get("lastname", "?")}
+        except Exception as e:
+            return {"auth_status": {"ok": False, "error": str(e)}}
+
+        # Test 2: Fetch first page of activities (just 5)
+        try:
+            activities = await client.get_activities(per_page=5)
+            activities_summary = [
+                {
+                    "id": a.get("id"),
+                    "name": a.get("name"),
+                    "type": a.get("type"),
+                    "sport_type": a.get("sport_type"),
+                    "start_date": a.get("start_date"),
+                    "distance": a.get("distance"),
+                    "moving_time": a.get("moving_time"),
+                }
+                for a in activities
+            ]
+        except Exception as e:
+            return {"auth_status": auth_status, "activities_error": str(e)}
+
+        return {
+            "auth_status": auth_status,
+            "activities_count": len(activities),
+            "activities": activities_summary,
+            "first_raw": activities[0] if activities else None,
+        }
+    finally:
+        await client.close()
