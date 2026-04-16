@@ -1,0 +1,25 @@
+import { Routes, Route } from "react-router-dom";
+import Layout from "./components/Layout";
+import Dashboard from "./components/Dashboard";
+import ActivityList from "./components/ActivityList";
+import ActivityDetail from "./components/ActivityDetail";
+import SleepChart from "./components/SleepChart";
+import RecoveryPanel from "./components/RecoveryPanel";
+import TrainingLoad from "./components/TrainingLoad";
+import ChatPanel from "./components/ChatPanel";
+
+export default function App() {
+  return (
+    <Routes>
+      <Route element={<Layout />}>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/activities" element={<ActivityList />} />
+        <Route path="/activities/:id" element={<ActivityDetail />} />
+        <Route path="/sleep" element={<SleepChart />} />
+        <Route path="/recovery" element={<RecoveryPanel />} />
+        <Route path="/training" element={<TrainingLoad />} />
+        <Route path="/ask" element={<ChatPanel />} />
+      </Route>
+    </Routes>
+  );
+}
