@@ -3,9 +3,11 @@ from __future__ import annotations
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_env_file_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+
 
 class StravaSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="STRAVA_")
+    model_config = SettingsConfigDict(env_prefix="STRAVA_", **_env_file_config)
 
     client_id: str = ""
     client_secret: str = ""
@@ -14,7 +16,7 @@ class StravaSettings(BaseSettings):
 
 
 class EightSleepSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="EIGHT_SLEEP_")
+    model_config = SettingsConfigDict(env_prefix="EIGHT_SLEEP_", **_env_file_config)
 
     email: str = ""
     password: str = ""
@@ -22,7 +24,7 @@ class EightSleepSettings(BaseSettings):
 
 
 class WhoopSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="WHOOP_")
+    model_config = SettingsConfigDict(env_prefix="WHOOP_", **_env_file_config)
 
     enabled: bool = False
     client_id: str = ""
@@ -32,12 +34,14 @@ class WhoopSettings(BaseSettings):
 
 
 class WeatherSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="OPENWEATHERMAP_")
+    model_config = SettingsConfigDict(env_prefix="OPENWEATHERMAP_", **_env_file_config)
 
     api_key: str = ""
 
 
 class LLMSettings(BaseSettings):
+    model_config = SettingsConfigDict(**_env_file_config)
+
     anthropic_api_key: str = ""
     openai_api_key: str = ""
     google_ai_api_key: str = ""
@@ -45,20 +49,20 @@ class LLMSettings(BaseSettings):
 
 
 class TelegramSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="TELEGRAM_")
+    model_config = SettingsConfigDict(env_prefix="TELEGRAM_", **_env_file_config)
 
     bot_token: str = ""
 
 
 class DiscordSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="DISCORD_")
+    model_config = SettingsConfigDict(env_prefix="DISCORD_", **_env_file_config)
 
     bot_token: str = ""
     guild_id: int = 0
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(**_env_file_config)
 
     # App
     database_url: str = "sqlite+aiosqlite:///./health_tracker.db"
