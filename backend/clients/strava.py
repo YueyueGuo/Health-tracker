@@ -54,9 +54,10 @@ class StravaClient:
         return data
 
     async def _ensure_token(self):
-        if self._token_expires_at and time.time() < self._token_expires_at - 60:
-            return
         if not self._refresh_token:
+            return
+        # Always refresh if we don't know the expiry, or if token is about to expire
+        if self._token_expires_at and time.time() < self._token_expires_at - 60:
             return
         resp = await self._http.post(
             self.TOKEN_URL,
