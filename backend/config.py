@@ -58,7 +58,7 @@ class DiscordSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="DISCORD_", **_env_file_config)
 
     bot_token: str = ""
-    guild_id: int = 0
+    guild_id: int | None = None
 
 
 class Settings(BaseSettings):
