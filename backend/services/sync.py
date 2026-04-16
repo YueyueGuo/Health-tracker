@@ -29,17 +29,23 @@ class SyncEngine:
         self.whoop = whoop
         self.weather = weather
 
-    async def sync_all(self) -> dict[str, int]:
-        results = {}
-        results["strava"] = await self.sync_strava()
-        results["eight_sleep"] = await self.sync_eight_sleep()
-        results["whoop"] = await self.sync_whoop()
-        results["weather"] = await self.sync_weather()
+    async def sync_all(self) -> dict[str, int | str]:
+        results: dict[str, int | str] = {}
+        for source in ["strava", "eight_sleep", "whoop", "weather"]:
+            try:
+                count = await getattr(self, f"sync_{source}")()
+                results[source] = count
+            except Exception as e:
+                results[source] = f"error: {e}"
         return results
 
     # ── Strava ──────────────────────────────────────────────────────
 
     async def sync_strava(self) -> int:
+        from backend.config import settings
+        if not settings.strava.access_token and not settings.strava.refresh_token:
+            return 0
+
         log = SyncLog(source="strava", sync_type="incremental", status="running")
         self.db.add(log)
         await self.db.flush()

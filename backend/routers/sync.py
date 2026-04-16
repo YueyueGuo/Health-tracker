@@ -35,13 +35,33 @@ async def trigger_sync(req: SyncRequest, db: AsyncSession = Depends(get_db)):
         if req.source == "all":
             results = await engine.sync_all()
         elif req.source in ("strava", "eight_sleep", "whoop", "weather"):
-            sync_method = getattr(engine, f"sync_{req.source}")
-            count = await sync_method()
-            results = {req.source: count}
+            try:
+                sync_method = getattr(engine, f"sync_{req.source}")
+                count = await sync_method()
+                results = {req.source: count}
+            except Exception as e:
+                results = {req.source: f"error: {e}"}
         else:
             return {"error": f"Unknown source: {req.source}"}
 
-        return {"status": "success", "synced": results}
+        # Check if any source needs configuration
+        unconfigured = []
+        from backend.config import settings
+        if not settings.strava.access_token and not settings.strava.refresh_token:
+            unconfigured.append("strava")
+        if not settings.eight_sleep.email:
+            unconfigured.append("eight_sleep")
+        if not settings.whoop.enabled:
+            unconfigured.append("whoop")
+        if not settings.weather.api_key:
+            unconfigured.append("weather")
+
+        return {
+            "status": "success",
+            "synced": results,
+            "unconfigured": unconfigured,
+            "hint": "Add credentials to .env for unconfigured sources" if unconfigured else None,
+        }
     finally:
         await strava.close()
         await eight_sleep.close()
