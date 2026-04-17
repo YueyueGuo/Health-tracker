@@ -74,6 +74,18 @@ class LLMSettings(BaseSettings):
     openai_api_key: str = ""
     google_ai_api_key: str = ""
     default_llm_provider: str = "claude-sonnet"
+    # Model used for the dashboard insights (daily recommendation +
+    # latest-workout takeaway).
+    dashboard_model: str = "claude-haiku"
+    # Ordered fallback chain if the primary model fails.
+    dashboard_fallback_models: list[str] = ["claude-sonnet", "gpt-4o-mini"]
+
+    @field_validator("dashboard_fallback_models", mode="before")
+    @classmethod
+    def _parse_fallbacks(cls, v):
+        if isinstance(v, str):
+            return [m.strip() for m in v.split(",") if m.strip()]
+        return v
 
 
 class TelegramSettings(BaseSettings):

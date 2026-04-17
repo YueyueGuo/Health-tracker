@@ -267,17 +267,22 @@ def _extract_fields(trend: dict, interval: dict | None) -> dict[str, Any]:
         tz,
     ) or _bed_plus_total(bed_time, total_sec)
 
-    # Latency = time between first presence and first asleep stage. Computed
-    # against the *raw* UTC timestamps (tz-independent) so the duration is
-    # always correct regardless of DST transitions.
-    latency = None
-    presence_start = _parse_dt(trend.get("presenceStart"))
-    sleep_start_utc = _parse_dt(trend.get("sleepStart"))
-    if presence_start and sleep_start_utc:
-        latency = max(int((sleep_start_utc - presence_start).total_seconds()), 0)
-
     # Wake / out-of-bed detail — only derivable when the interval is present.
+    # This also yields the authoritative sleep latency (pre-sleep awake
+    # chunks from the stages array), which cleanly excludes mid-night
+    # wakes (those roll up into WASO instead).
     wake_stats = _wake_stats(interval)
+    latency = wake_stats.get("latency_sec")
+
+    # Fallback for archive nights without interval stages: derive latency
+    # from trend-level timestamps (presenceStart → sleepStart). This is
+    # coarser and can be contaminated by re-anchored sessions, but it's
+    # all we have.
+    if latency is None:
+        presence_start = _parse_dt(trend.get("presenceStart"))
+        sleep_start_utc = _parse_dt(trend.get("sleepStart"))
+        if presence_start and sleep_start_utc:
+            latency = max(int((sleep_start_utc - presence_start).total_seconds()), 0)
 
     return {
         "external_id": str(trend.get("mainSessionId") or (interval or {}).get("id") or "") or None,
@@ -363,6 +368,7 @@ def _wake_stats(interval: dict | None) -> dict[str, Any]:
     out_sec = 0
     wake_count = 0
     out_count = 0
+    latency_sec = 0          # sum of awake/out chunks BEFORE first sleep stage
 
     seen_sleep = False       # flipped True after first deep/rem/light chunk
     cum_offset_sec = 0       # running offset from the start of the interval
@@ -385,15 +391,22 @@ def _wake_stats(interval: dict | None) -> dict[str, Any]:
                     "duration_sec": dur,
                     "offset_sec": cum_offset_sec,
                 })
-            # else: this is the pre-sleep latency chunk — skip.
+            else:
+                # Pre-sleep awake chunk — this is sleep latency, not WASO.
+                latency_sec += dur
         elif stage == "out":
-            out_count += 1
-            out_sec += dur
-            wake_events.append({
-                "type": "out",
-                "duration_sec": dur,
-                "offset_sec": cum_offset_sec,
-            })
+            if seen_sleep:
+                out_count += 1
+                out_sec += dur
+                wake_events.append({
+                    "type": "out",
+                    "duration_sec": dur,
+                    "offset_sec": cum_offset_sec,
+                })
+            else:
+                # Out-of-bed before falling asleep (e.g. bathroom trip
+                # after first getting in bed). Still counts as latency.
+                latency_sec += dur
 
         cum_offset_sec += dur
 
@@ -404,6 +417,13 @@ def _wake_stats(interval: dict | None) -> dict[str, Any]:
         waso_sec = int(summary["wasoDuration"])
     if isinstance(summary.get("outDuration"), (int, float)):
         out_sec = int(summary["outDuration"])
+    # stageSummary carries the authoritative pre-sleep latency value.
+    # Prefer it (covers edge cases our manual loop might miss).
+    for key in ("awakeBeforeSleepDuration", "latency", "sleepLatency"):
+        v = summary.get(key)
+        if isinstance(v, (int, float)):
+            latency_sec = int(v)
+            break
 
     return {
         "wake_count": wake_count,
@@ -411,6 +431,9 @@ def _wake_stats(interval: dict | None) -> dict[str, Any]:
         "out_of_bed_count": out_count,
         "out_of_bed_duration": _sec_to_min(out_sec),
         "wake_events": wake_events or None,
+        # Latency is the single authoritative value in SECONDS derived
+        # from the stages array (pre-sleep awake only, excludes WASO).
+        "latency_sec": latency_sec if latency_sec > 0 else None,
     }
 
 

@@ -28,6 +28,18 @@ class LLMProvider(ABC):
         ...
 
     @abstractmethod
+    async def query_structured(
+        self,
+        system_prompt: str,
+        user_message: str,
+        schema: dict,
+        schema_name: str = "response",
+        max_tokens: int = 1024,
+    ) -> dict:
+        """Query the model and return a parsed JSON dict matching `schema`."""
+        ...
+
+    @abstractmethod
     async def close(self):
         ...
 
@@ -85,6 +97,42 @@ class AnthropicProvider(LLMProvider):
             else None
         )
         return LLMResponse(text=text, model=self._model_id, tokens_used=tokens)
+
+    async def query_structured(
+        self,
+        system_prompt: str,
+        user_message: str,
+        schema: dict,
+        schema_name: str = "response",
+        max_tokens: int = 1024,
+    ) -> dict:
+        """Use Anthropic tool-use to coerce the model into schema-compliant JSON."""
+        import json as _json
+
+        tool_def = {
+            "name": schema_name,
+            "description": f"Emit a {schema_name} object that strictly matches the schema.",
+            "input_schema": schema,
+        }
+        response = await self._client.messages.create(
+            model=self._model_id,
+            max_tokens=max_tokens,
+            system=system_prompt,
+            tools=[tool_def],
+            tool_choice={"type": "tool", "name": schema_name},
+            messages=[{"role": "user", "content": user_message}],
+        )
+        for block in response.content:
+            if getattr(block, "type", None) == "tool_use":
+                return dict(block.input)
+        # Fallback: if text returned, try to parse.
+        text_parts = [
+            b.text for b in response.content if getattr(b, "type", None) == "text"
+        ]
+        text = "\n".join(text_parts).strip()
+        if text:
+            return _json.loads(text)
+        raise ValueError("Anthropic returned no usable structured content")
 
     async def close(self):
         await self._client.close()
@@ -145,17 +193,108 @@ class OpenAIProvider(LLMProvider):
         )
         return LLMResponse(text=text, model=self._model_id, tokens_used=tokens)
 
+    async def query_structured(
+        self,
+        system_prompt: str,
+        user_message: str,
+        schema: dict,
+        schema_name: str = "response",
+        max_tokens: int = 1024,
+    ) -> dict:
+        import json as _json
+
+        expected_keys = list((schema.get("properties") or {}).keys())
+        augmented_system = (
+            system_prompt
+            + "\n\nRespond with a single JSON object that matches this schema EXACTLY.\n"
+            + f"Top-level keys MUST be exactly: {expected_keys}\n"
+            + "Do NOT wrap fields in sub-objects. String fields must be plain strings, "
+            + "array fields must be JSON arrays of strings.\n"
+            + f"Schema:\n{_json.dumps(schema, indent=2)}\n"
+        )
+        strict_schema = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": schema_name,
+                "schema": schema,
+                "strict": True,
+            },
+        }
+        messages = [
+            {"role": "system", "content": augmented_system},
+            {"role": "user", "content": user_message},
+        ]
+        try:
+            response = await self._client.chat.completions.create(
+                model=self._model_id,
+                messages=messages,
+                max_tokens=max_tokens,
+                response_format=strict_schema,
+            )
+        except Exception:
+            # Older models may not support json_schema; try json_object.
+            response = await self._client.chat.completions.create(
+                model=self._model_id,
+                messages=messages,
+                max_tokens=max_tokens,
+                response_format={"type": "json_object"},
+            )
+        text = response.choices[0].message.content or ""
+        return _json.loads(text)
+
     async def close(self):
         await self._client.close()
+
+
+def _sanitize_for_gemini(schema: dict) -> dict:
+    """Strip JSON-Schema keys Gemini doesn't understand."""
+    UNSUPPORTED = {"title", "default", "additionalProperties", "$defs", "$ref", "allOf", "oneOf", "anyOf"}
+    def _walk(node):
+        if isinstance(node, dict):
+            return {k: _walk(v) for k, v in node.items() if k not in UNSUPPORTED}
+        if isinstance(node, list):
+            return [_walk(x) for x in node]
+        return node
+    return _walk(schema)
+
+
+def _build_gemini_example(schema: dict) -> dict:
+    """Build a minimal JSON example that matches the schema for few-shot prompting."""
+    def _example(node):
+        if not isinstance(node, dict):
+            return None
+        t = node.get("type")
+        if "enum" in node and node["enum"]:
+            return node["enum"][0]
+        if t == "string":
+            return "..."
+        if t == "integer":
+            return 0
+        if t == "number":
+            return 0.0
+        if t == "boolean":
+            return False
+        if t == "array":
+            return [_example(node.get("items", {}))]
+        if t == "object":
+            return {k: _example(v) for k, v in (node.get("properties") or {}).items()}
+        return None
+    return _example(schema) or {}
 
 
 class GoogleProvider(LLMProvider):
     """Gemini models via Google Generative AI SDK."""
 
     MODELS = {
-        "gemini-pro": "gemini-1.5-pro",
-        "gemini-flash": "gemini-1.5-flash",
+        # Legacy aliases (kept for backward compat).
+        "gemini-pro": "gemini-2.5-pro",
+        "gemini-flash": "gemini-2.5-flash",
         "gemini-2-flash": "gemini-2.0-flash",
+        # Current canonical names.
+        "gemini-2.5-pro": "gemini-2.5-pro",
+        "gemini-2.5-flash": "gemini-2.5-flash",
+        "gemini-2.5-flash-lite": "gemini-2.5-flash-lite",
+        "gemini-2.0-flash": "gemini-2.0-flash",
     }
 
     def __init__(self, model_key: str = "gemini-pro"):
@@ -190,6 +329,53 @@ class GoogleProvider(LLMProvider):
                 + response.usage_metadata.candidates_token_count
             )
         return LLMResponse(text=text, model=self._model_id, tokens_used=tokens)
+
+    async def query_structured(
+        self,
+        system_prompt: str,
+        user_message: str,
+        schema: dict,
+        schema_name: str = "response",
+        max_tokens: int = 1024,
+    ) -> dict:
+        """Gemini: inline schema + example in the system prompt (legacy SDK's
+        ``response_schema`` is unreliable). Also pass response_schema as a
+        best-effort hint to models that support it."""
+        import google.generativeai as genai
+        import json as _json
+
+        cleaned = _sanitize_for_gemini(schema)
+        example = _build_gemini_example(cleaned)
+        expected_keys = list((schema.get("properties") or {}).keys())
+
+        augmented_system = (
+            system_prompt
+            + "\n\nYou MUST respond with a single JSON object that matches this schema EXACTLY.\n"
+            + f"Top-level keys MUST be exactly: {expected_keys}\n"
+            + "Do NOT wrap the response in any outer key. Do NOT add commentary.\n"
+            + f"Schema:\n{_json.dumps(cleaned, indent=2)}\n"
+            + f"Example (replace values with yours):\n{_json.dumps(example, indent=2)}\n"
+        )
+
+        model = genai.GenerativeModel(
+            self._model_id,
+            system_instruction=augmented_system,
+        )
+        try:
+            config = genai.types.GenerationConfig(
+                response_mime_type="application/json",
+                response_schema=cleaned,
+                max_output_tokens=max_tokens,
+            )
+            response = await model.generate_content_async(user_message, generation_config=config)
+        except Exception:
+            config = genai.types.GenerationConfig(
+                response_mime_type="application/json",
+                max_output_tokens=max_tokens,
+            )
+            response = await model.generate_content_async(user_message, generation_config=config)
+        text = response.text if response.text else ""
+        return _json.loads(text)
 
     async def close(self):
         pass  # No persistent connection to close
