@@ -303,54 +303,35 @@ class SyncEngine:
             self.db, self.eight_sleep, days=days, full_history=full_history
         )
 
-    # ── Whoop ───────��───────────────────────────────────────────────
+    # ── Whoop ───────────────────────────────────────────────────────
 
-    async def sync_whoop(self, days: int = 30) -> int:
+    async def sync_whoop(self, days: int = 30) -> dict[str, int]:
+        """Delegator to ``backend.services.whoop_sync``.
+
+        Kept as a thin method so strand-branch work on the Whoop pipeline
+        doesn't collide with Strava edits here. Logs a single SyncLog row
+        capturing total records synced across recovery + sleep + workouts.
+        """
         if not self.whoop.is_enabled:
-            return 0
+            return {"recovery_new": 0, "sleep_new": 0, "workouts_new": 0}
+
+        from backend.services.whoop_sync import sync_whoop as _whoop_sync
 
         log = SyncLog(source="whoop", sync_type="incremental", status="running")
         self.db.add(log)
         await self.db.flush()
-
         try:
-            end = date.today()
-            start = end - timedelta(days=days)
-
-            records = await self.whoop.get_recovery(start, end)
-            count = 0
-
-            for rec in records:
-                rec_date = date.fromisoformat(rec.get("date", "")[:10])
-
-                existing = await self.db.execute(
-                    select(Recovery).where(Recovery.date == rec_date)
-                )
-                if existing.scalar_one_or_none():
-                    continue
-
-                recovery = Recovery(
-                    source="whoop",
-                    date=rec_date,
-                    recovery_score=rec.get("score", {}).get("recovery_score"),
-                    resting_hr=rec.get("score", {}).get("resting_heart_rate"),
-                    hrv=rec.get("score", {}).get("hrv_rmssd_milli"),
-                    spo2=rec.get("score", {}).get("spo2_percentage"),
-                    skin_temp=rec.get("score", {}).get("skin_temp_celsius"),
-                    strain_score=rec.get("strain"),
-                    calories=rec.get("kilojoules"),
-                    raw_data=rec,
-                )
-                self.db.add(recovery)
-                count += 1
-
-            await self.db.commit()
+            stats = await _whoop_sync(self.db, self.whoop, days=days)
+            total_new = (
+                stats.get("recovery_new", 0)
+                + stats.get("sleep_new", 0)
+                + stats.get("workouts_new", 0)
+            )
             log.status = "success"
-            log.records_synced = count
+            log.records_synced = total_new
             log.completed_at = datetime.now(timezone.utc)
             await self.db.commit()
-            return count
-
+            return stats
         except Exception as e:
             log.status = "error"
             log.error_message = str(e)
