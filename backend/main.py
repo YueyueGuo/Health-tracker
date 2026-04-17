@@ -46,12 +46,14 @@ def create_app() -> FastAPI:
         dashboard,
         recovery,
         sleep,
+        strength,
         sync,
     )
 
     app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
     app.include_router(activities.router, prefix="/api/activities", tags=["activities"])
     app.include_router(sleep.router, prefix="/api/sleep", tags=["sleep"])
+    app.include_router(strength.router, prefix="/api/strength", tags=["strength"])
     app.include_router(recovery.router, prefix="/api/recovery", tags=["recovery"])
     app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
     app.include_router(chat.router, prefix="/api/chat", tags=["chat"])

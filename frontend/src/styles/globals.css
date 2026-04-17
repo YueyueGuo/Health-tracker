@@ -438,3 +438,92 @@ select {
 .sport-mix .mix-ride { background: #f59e0b; }
 .sport-mix .mix-weighttraining { background: #22c55e; }
 .sport-mix .mix-other { background: #8b8fa3; }
+
+/* ── Strength page ──────────────────────────────────────────────────── */
+.strength-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .strength-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.strength-grid .card {
+  margin-bottom: 16px;
+}
+
+.data-table tr.row-selected {
+  background: var(--bg-hover);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.data-table-compact th,
+.data-table-compact td {
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.exercise-block {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.exercise-block:first-of-type {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  width: 100%;
+  font-family: inherit;
+}
+
+.input:focus {
+  border-color: var(--accent);
+}
+
+.btn-secondary {
+  background: var(--bg-hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover {
+  background: var(--bg-card);
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.link-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--red);
+}
+
+.link-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
