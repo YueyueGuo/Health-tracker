@@ -63,6 +63,24 @@ class Activity(Base):
     classification_flags: Mapped[list | None] = mapped_column(JSON)
     classified_at: Mapped[datetime | None] = mapped_column(DateTime)
     weather_enriched: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Base-elevation enrichment. ``elev_high_m`` / ``elev_low_m`` come
+    # straight from the Strava detail response for GPS-backed activities.
+    # ``base_elevation_m`` is the canonical "where did this happen"
+    # altitude used by downstream analytics (classifier tier flag,
+    # correlations). Derivation precedence:
+    #   1. ``elev_low_m`` from Strava (watch-recorded)
+    #   2. ``location_id``’s ``user_locations.elevation_m``
+    #   3. Open-Meteo lookup by ``start_lat``/``start_lng``
+    #   4. Default ``UserLocation`` when no coords at all
+    elev_high_m: Mapped[float | None] = mapped_column(Float)
+    elev_low_m: Mapped[float | None] = mapped_column(Float)
+    base_elevation_m: Mapped[float | None] = mapped_column(Float)
+    elevation_enriched: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    location_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("user_locations.id", ondelete="SET NULL"), index=True
+    )
     raw_data: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

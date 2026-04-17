@@ -44,6 +44,7 @@ def create_app() -> FastAPI:
         chat,
         correlations,
         dashboard,
+        locations,
         recovery,
         sleep,
         strength,
@@ -54,6 +55,11 @@ def create_app() -> FastAPI:
 
     app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
     app.include_router(activities.router, prefix="/api/activities", tags=["activities"])
+    # Activity location-attach endpoints live in routers/locations.py but are
+    # mounted under /api/activities for a consistent REST surface.
+    app.include_router(
+        locations.attach_router, prefix="/api/activities", tags=["activities"]
+    )
     app.include_router(sleep.router, prefix="/api/sleep", tags=["sleep"])
     app.include_router(strength.router, prefix="/api/strength", tags=["strength"])
     app.include_router(recovery.router, prefix="/api/recovery", tags=["recovery"])
@@ -63,6 +69,7 @@ def create_app() -> FastAPI:
     app.include_router(sync.router, prefix="/api/sync", tags=["sync"])
     app.include_router(correlations.router, prefix="/api/correlations", tags=["correlations"])
     app.include_router(weather.router, prefix="/api/weather", tags=["weather"])
+    app.include_router(locations.router, prefix="/api/locations", tags=["locations"])
 
     @app.get("/api/health")
     async def health_check():
