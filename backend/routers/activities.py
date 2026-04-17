@@ -239,6 +239,13 @@ def _activity_summary(a: Activity) -> dict:
         "classification_flags": a.classification_flags,
         "classified_at": a.classified_at.isoformat() if a.classified_at else None,
         "weather_enriched": a.weather_enriched,
+        "elev_high_m": a.elev_high_m,
+        "elev_low_m": a.elev_low_m,
+        "base_elevation_m": a.base_elevation_m,
+        "elevation_enriched": a.elevation_enriched,
+        "location_id": a.location_id,
+        "start_lat": a.start_lat,
+        "start_lng": a.start_lng,
     }
 
 

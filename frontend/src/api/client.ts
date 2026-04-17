@@ -54,6 +54,16 @@ export interface ActivitySummary {
   classification_flags: string[] | null;
   classified_at: string | null;
   weather_enriched: boolean;
+  // Base-elevation context. ``base_elevation_m`` is the canonical
+  // "where did this workout happen" altitude used for altitude-tier
+  // flagging and correlations.
+  elev_high_m: number | null;
+  elev_low_m: number | null;
+  base_elevation_m: number | null;
+  elevation_enriched: boolean;
+  location_id: number | null;
+  start_lat: number | null;
+  start_lng: number | null;
 }
 
 export interface ActivityLap {

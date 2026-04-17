@@ -22,6 +22,7 @@ import {
 import { getActivityWeather } from "../api/weather";
 import { useState } from "react";
 import ClassificationBadge from "./ClassificationBadge";
+import LocationPicker from "./LocationPicker";
 import WeatherCard from "./WeatherCard";
 import {
   formatDistance,
@@ -31,6 +32,19 @@ import {
   useUnits,
   type UnitSystem,
 } from "../hooks/useUnits";
+
+// Mirrors the tier thresholds in backend/services/classifier.py. Kept in
+// sync manually — if you change one, change the other.
+const ALT_LOW_M = 610;
+const ALT_MODERATE_M = 1500;
+const ALT_HIGH_M = 2500;
+
+function altitudeTierLabel(elevation_m: number): string | null {
+  if (elevation_m >= ALT_HIGH_M) return "high altitude";
+  if (elevation_m >= ALT_MODERATE_M) return "moderate altitude";
+  if (elevation_m >= ALT_LOW_M) return "low altitude";
+  return null;
+}
 
 export default function ActivityDetail() {
   const { id } = useParams<{ id: string }>();
@@ -184,10 +198,25 @@ export default function ActivityDetail() {
         )}
         {activity.total_elevation != null && activity.total_elevation > 0 && (
           <div className="metric-card">
-            <div className="label">Elevation</div>
+            <div className="label">Elevation Gain</div>
             <div className="value">{formatElevation(activity.total_elevation, units)}</div>
           </div>
         )}
+        {activity.base_elevation_m != null &&
+          activity.base_elevation_m >= ALT_LOW_M && (
+            <div className="metric-card">
+              <div className="label">Base Altitude</div>
+              <div className="value">
+                {formatElevation(activity.base_elevation_m, units)}
+              </div>
+              {(() => {
+                const tier = altitudeTierLabel(activity.base_elevation_m!);
+                return tier ? (
+                  <div className="subtext">{tier}</div>
+                ) : null;
+              })()}
+            </div>
+          )}
         {activity.kilojoules != null && (
           <div className="metric-card">
             <div className="label">Work</div>
@@ -206,6 +235,16 @@ export default function ActivityDetail() {
       </div>
 
       <WeatherCard weather={weather} />
+
+      {/* Indoor / no-GPS activities: let the user attach a saved location
+          so we can still compute base altitude. */}
+      {activity.start_lat == null && activity.start_lng == null && (
+        <LocationPicker
+          activityId={activityId}
+          currentLocationId={activity.location_id}
+          onChange={reload}
+        />
+      )}
 
       {activity.laps && activity.laps.length > 0 && (
         <div className="card" style={{ padding: 0, overflow: "hidden" }}>

@@ -50,7 +50,7 @@ class SyncEngine:
 
     async def sync_all(self) -> dict[str, int | dict | str]:
         results: dict[str, int | dict | str] = {}
-        for source in ["strava", "eight_sleep", "whoop", "weather"]:
+        for source in ["strava", "eight_sleep", "whoop", "weather", "elevation"]:
             try:
                 count = await getattr(self, f"sync_{source}")()
                 results[source] = count
@@ -288,6 +288,25 @@ class SyncEngine:
         activity.device_watts = detail.get("device_watts", activity.device_watts)
         activity.workout_type = detail.get("workout_type", activity.workout_type)
         activity.available_zones = detail.get("available_zones")
+        # Base-elevation context (from Strava GPS, watch-recorded).
+        # ``elev_high`` / ``elev_low`` are absent on indoor activities.
+        if detail.get("elev_high") is not None:
+            try:
+                activity.elev_high_m = float(detail["elev_high"])
+            except (TypeError, ValueError):
+                pass
+        if detail.get("elev_low") is not None:
+            try:
+                activity.elev_low_m = float(detail["elev_low"])
+            except (TypeError, ValueError):
+                pass
+        # Only seed base_elevation_m from elev_low_m here — the full
+        # derivation (user location, Open-Meteo fallback) lives in
+        # ``backend.services.elevation_sync`` so the logic stays in one
+        # place and this method stays focused on field mapping.
+        if activity.elev_low_m is not None:
+            activity.base_elevation_m = activity.elev_low_m
+            activity.elevation_enriched = True
 
     # ── Eight Sleep ─────────────────────────────────────────────────
 
@@ -463,6 +482,33 @@ class SyncEngine:
                 Activity.start_lng.isnot(None),
             )
         )).scalar_one()
+
+    # ── Elevation enrichment ────────────────────────────────────────
+
+    async def sync_elevation(
+        self,
+        *,
+        limit: int | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, int]:
+        """Delegator to ``backend.services.elevation_sync``.
+
+        Kept as a thin method on ``SyncEngine`` so the scheduler /
+        backfill script call into elevation enrichment the same way
+        they call into weather. The real logic lives in the isolated
+        module so parallel work on ``services/sync.py`` (e.g. Strava
+        tweaks) doesn't collide.
+        """
+        from backend.clients.elevation import ElevationClient
+        from backend.services.elevation_sync import sync_elevation as _elev_sync
+
+        client = ElevationClient()
+        try:
+            return await _elev_sync(
+                self.db, client, limit=limit, dry_run=dry_run
+            )
+        finally:
+            await client.close()
 
 
 def settings_eight_sleep_configured() -> bool:

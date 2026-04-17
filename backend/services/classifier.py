@@ -15,6 +15,7 @@ Types (mutually exclusive):
 Flags (orthogonal, zero or more):
     Runs:  is_long, has_speed_component, has_warmup_cooldown
     Rides: is_long, is_hilly
+    Either: altitude_low | altitude_moderate | altitude_high (at most one)
 """
 from __future__ import annotations
 
@@ -57,6 +58,13 @@ _RIDE_MIXED_MIN_VI = 1.10
 _RIDE_LONG_DURATION_S = 120 * 60  # 2 hr
 _RIDE_LONG_DISTANCE_M = 50_000    # 50 km
 _RIDE_HILLY_M_PER_KM = 15.0
+
+# Altitude tier thresholds in meters above sea level. Tuned conservatively
+# for a sea-level athlete — the low-tier floor is ~2,000 ft (610 m) where
+# aerobic effort typically starts to feel noticeably harder.
+_ALT_LOW_M = 610       # ~2,000 ft
+_ALT_MODERATE_M = 1500  # ~5,000 ft
+_ALT_HIGH_M = 2500      # ~8,200 ft
 
 # Strava `workout_type` codes (undocumented-but-stable).
 # Runs: 0=default, 1=race, 2=long_run, 3=workout (speed/structured)
@@ -247,6 +255,10 @@ def _run_flags(
             if speeds[0] < middle_avg * 0.95 and speeds[-1] < middle_avg * 0.95:
                 flags.append("has_warmup_cooldown")
 
+    alt = _altitude_flag(activity.base_elevation_m)
+    if alt:
+        flags.append(alt)
+
     return flags
 
 
@@ -331,7 +343,30 @@ def _ride_flags(activity: Activity, features: dict) -> list[str]:
         flags.append("is_long")
     if (features.get("elevation_per_km") or 0) >= _RIDE_HILLY_M_PER_KM:
         flags.append("is_hilly")
+    alt = _altitude_flag(activity.base_elevation_m)
+    if alt:
+        flags.append(alt)
     return flags
+
+
+def _altitude_flag(elevation_m: float | None) -> str | None:
+    """Return the altitude tier flag (or ``None`` for sea-level workouts).
+
+    Tier bands:
+        < 610 m   → no flag (sea level, default case)
+        610–1500  → ``altitude_low``
+        1500–2500 → ``altitude_moderate``
+        ≥ 2500    → ``altitude_high``
+    """
+    if elevation_m is None:
+        return None
+    if elevation_m >= _ALT_HIGH_M:
+        return "altitude_high"
+    if elevation_m >= _ALT_MODERATE_M:
+        return "altitude_moderate"
+    if elevation_m >= _ALT_LOW_M:
+        return "altitude_low"
+    return None
 
 
 # ── Convenience for tests / notebooks ────────────────────────────────────────

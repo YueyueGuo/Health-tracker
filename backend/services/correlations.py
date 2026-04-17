@@ -27,12 +27,16 @@ SLEEP_METRICS: tuple[str, ...] = (
 )
 
 # Activity metrics to correlate against (attribute names on Activity).
+# Note: ``base_elevation_m`` is sparse by design (sea-level workouts)
+# — the correlation function handles null/insufficient samples and
+# returns None for those cells rather than raising.
 ACTIVITY_METRICS: tuple[str, ...] = (
     "average_hr",
     "average_power",
     "moving_time",
     "suffer_score",
     "average_speed",
+    "base_elevation_m",
 )
 
 # Noise filters.

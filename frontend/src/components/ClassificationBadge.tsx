@@ -39,6 +39,12 @@ function humanizeFlag(flag: string): string {
       return "w/u + c/d";
     case "is_hilly":
       return "hilly";
+    case "altitude_low":
+      return "low altitude";
+    case "altitude_moderate":
+      return "moderate altitude";
+    case "altitude_high":
+      return "high altitude";
     default:
       return flag;
   }
@@ -54,6 +60,10 @@ function flagIcon(flag: string): string {
       return "↕";
     case "is_hilly":
       return "⛰";
+    case "altitude_low":
+    case "altitude_moderate":
+    case "altitude_high":
+      return "↑";
     default:
       return "•";
   }

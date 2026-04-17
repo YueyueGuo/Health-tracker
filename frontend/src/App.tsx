@@ -7,6 +7,7 @@ import Sleep from "./components/Sleep";
 import RecoveryPanel from "./components/RecoveryPanel";
 import TrainingLoad from "./components/TrainingLoad";
 import ChatPanel from "./components/ChatPanel";
+import Settings from "./pages/Settings";
 import Strength from "./pages/Strength";
 import StrengthEntry from "./pages/StrengthEntry";
 
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/recovery" element={<RecoveryPanel />} />
         <Route path="/training" element={<TrainingLoad />} />
         <Route path="/ask" element={<ChatPanel />} />
+        <Route path="/settings" element={<Settings />} />
       </Route>
     </Routes>
   );
