@@ -18,11 +18,12 @@ async def _run_strava_enrichment_drain(*, batch: int = 40):
     Runs periodically. Skips when:
       * there are no pending activities (fast no-op)
       * the daily Strava read quota has been hit
+
+    Only constructs the Strava client — the other sync clients aren't
+    touched by Phase B, so constructing them here would be wasted work
+    (and trigger unnecessary Eight Sleep token refreshes).
     """
     from backend.clients.strava import StravaClient
-    from backend.clients import get_weather_client
-    from backend.clients.eight_sleep import EightSleepClient
-    from backend.clients.whoop import WhoopClient
     from backend.services.sync import SyncEngine
 
     async with async_session() as db:
@@ -43,22 +44,16 @@ async def _run_strava_enrichment_drain(*, batch: int = 40):
             return
 
         strava = StravaClient()
-        eight_sleep = EightSleepClient()
-        whoop = WhoopClient()
-        weather = get_weather_client()
-        engine = SyncEngine(db, strava, eight_sleep, whoop, weather)
+        engine = SyncEngine(db, strava, None, None, None)  # type: ignore[arg-type]
         try:
             count = await engine._strava_phase_b(limit=batch)
             logger.info(
                 "Enrichment drain: enriched=%s pending_before=%s", count, pending
             )
-        except Exception as e:
-            logger.warning("Enrichment drain error: %s", e)
+        except Exception:
+            logger.exception("Enrichment drain error")
         finally:
             await strava.close()
-            await eight_sleep.close()
-            await whoop.close()
-            await weather.close()
 
 
 async def _run_sync(source: str = "all"):

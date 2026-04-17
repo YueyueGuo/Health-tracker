@@ -253,7 +253,15 @@ async def _get_latest_completed_activity(
     db: AsyncSession, activity_id: int | None = None
 ) -> Activity | None:
     if activity_id is not None:
-        row = await db.execute(select(Activity).where(Activity.id == activity_id))
+        # Require enrichment_status == "complete" even for explicit IDs;
+        # running the LLM on a pending row feeds it a half-populated
+        # snapshot (no laps, no weighted power, etc.).
+        row = await db.execute(
+            select(Activity).where(
+                Activity.id == activity_id,
+                Activity.enrichment_status == "complete",
+            )
+        )
         return row.scalar_one_or_none()
 
     row = await db.execute(

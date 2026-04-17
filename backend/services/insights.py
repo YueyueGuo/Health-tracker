@@ -125,7 +125,25 @@ def _pydantic_schema(model: type[BaseModel]) -> dict:
         return node
 
     schema = _inline(schema)
-    schema.setdefault("additionalProperties", False)
+
+    # OpenAI strict-mode JSON Schema (and Anthropic tool-use) require every
+    # object to set `additionalProperties: false` AND every property listed
+    # under `required`. Pydantic marks fields with defaults / default_factory
+    # as optional, so we force them all into `required` here. Nullable
+    # optionals are still expressible via `type: [T, "null"]` / `anyOf`,
+    # which strict mode allows.
+    def _tighten(node):
+        if isinstance(node, dict):
+            if node.get("type") == "object" and "properties" in node:
+                node.setdefault("additionalProperties", False)
+                node["required"] = list(node["properties"].keys())
+            for v in node.values():
+                _tighten(v)
+        elif isinstance(node, list):
+            for v in node:
+                _tighten(v)
+
+    _tighten(schema)
     return schema
 
 

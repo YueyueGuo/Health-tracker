@@ -202,6 +202,7 @@ class OpenAIProvider(LLMProvider):
         max_tokens: int = 1024,
     ) -> dict:
         import json as _json
+        import openai
 
         expected_keys = list((schema.get("properties") or {}).keys())
         augmented_system = (
@@ -231,8 +232,15 @@ class OpenAIProvider(LLMProvider):
                 max_tokens=max_tokens,
                 response_format=strict_schema,
             )
-        except Exception:
-            # Older models may not support json_schema; try json_object.
+        except openai.BadRequestError as e:
+            # Older models / unsupported strict-schema features → fall back
+            # to the permissive json_object mode. Narrow to BadRequestError
+            # so transient network / auth errors still surface.
+            import logging as _logging
+            _logging.getLogger(__name__).info(
+                "OpenAI json_schema mode rejected (%s); falling back to json_object",
+                e,
+            )
             response = await self._client.chat.completions.create(
                 model=self._model_id,
                 messages=messages,

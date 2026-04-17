@@ -236,3 +236,60 @@ async def test_workout_insight_caches_per_activity_id(db, monkeypatch):
     assert first is not None and second is not None
     assert first.cached is False and second.cached is True
     assert len(stub._calls) == 1
+
+
+# ── Schema preparation ────────────────────────────────────────────────
+
+
+def test_pydantic_schema_tightens_every_object():
+    """Every `object` in the schema must have additionalProperties=false
+    and list all its properties under `required` — OpenAI strict mode
+    rejects the payload otherwise."""
+    schema = insights._pydantic_schema(insights.WorkoutInsight)
+
+    def _walk(node):
+        if isinstance(node, dict):
+            if node.get("type") == "object" and "properties" in node:
+                assert node.get("additionalProperties") is False, node
+                assert set(node["required"]) == set(node["properties"].keys()), node
+            for v in node.values():
+                _walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                _walk(v)
+
+    _walk(schema)
+
+
+# ── Explicit-id enrichment gate ───────────────────────────────────────
+
+
+async def test_workout_insight_skips_pending_activity_by_id(db, monkeypatch):
+    """If the caller passes an activity_id that is `pending`, return None
+    rather than feeding the LLM a half-populated snapshot."""
+    # Seed a pending activity — no laps, no suffer_score, etc.
+    pending = Activity(
+        strava_id=999,
+        name="Pending",
+        sport_type="Run",
+        start_date=datetime.utcnow(),
+        start_date_local=datetime.utcnow(),
+        enrichment_status="pending",
+    )
+    db.add(pending)
+    await db.commit()
+    await db.refresh(pending)
+
+    called = {"n": 0}
+
+    def _factory(model_key=None):
+        called["n"] += 1
+        return _StubProvider(VALID_WORKOUT_INSIGHT)
+
+    monkeypatch.setattr(insights, "get_provider", _factory)
+
+    result = await insights.get_latest_workout_insight(
+        db, activity_id=pending.id, model="claude-haiku"
+    )
+    assert result is None
+    assert called["n"] == 0
