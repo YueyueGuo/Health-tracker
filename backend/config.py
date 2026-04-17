@@ -15,12 +15,40 @@ class StravaSettings(BaseSettings):
     refresh_token: str = ""
 
 
+# Public client credentials shipped with the Eight Sleep consumer mobile app.
+# Used as defaults if EIGHT_SLEEP_CLIENT_ID / _CLIENT_SECRET are unset or blank.
+_EIGHT_SLEEP_DEFAULT_CLIENT_ID = "0894c7f33bb94800a03f1f4df13a4f38"
+_EIGHT_SLEEP_DEFAULT_CLIENT_SECRET = (
+    "f0954a3ed5763ba3d06834c73731a32f15f168f47d4f164751275def86db0c76"
+)
+
+
 class EightSleepSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="EIGHT_SLEEP_", **_env_file_config)
 
     email: str = ""
     password: str = ""
     timezone: str = "America/New_York"
+
+    # OAuth-style tokens. The refresh token is persisted back to .env after
+    # the first successful email+password exchange; subsequent runs use only
+    # the refresh token.
+    refresh_token: str = ""
+    # Persisted from the password grant response. Refresh grants don't
+    # return userId, so caching it here lets the client skip a /me call.
+    user_id: str = ""
+    client_id: str = _EIGHT_SLEEP_DEFAULT_CLIENT_ID
+    client_secret: str = _EIGHT_SLEEP_DEFAULT_CLIENT_SECRET
+
+    @field_validator("client_id", mode="before")
+    @classmethod
+    def _client_id_default(cls, v):
+        return v or _EIGHT_SLEEP_DEFAULT_CLIENT_ID
+
+    @field_validator("client_secret", mode="before")
+    @classmethod
+    def _client_secret_default(cls, v):
+        return v or _EIGHT_SLEEP_DEFAULT_CLIENT_SECRET
 
 
 class WhoopSettings(BaseSettings):

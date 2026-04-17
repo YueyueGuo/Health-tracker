@@ -38,7 +38,16 @@ def create_app() -> FastAPI:
     )
 
     # Import and register routers
-    from backend.routers import activities, auth, chat, dashboard, recovery, sleep, sync
+    from backend.routers import (
+        activities,
+        auth,
+        chat,
+        correlations,
+        dashboard,
+        recovery,
+        sleep,
+        sync,
+    )
 
     app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
     app.include_router(activities.router, prefix="/api/activities", tags=["activities"])
@@ -47,6 +56,7 @@ def create_app() -> FastAPI:
     app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
     app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
     app.include_router(sync.router, prefix="/api/sync", tags=["sync"])
+    app.include_router(correlations.router, prefix="/api/correlations", tags=["correlations"])
 
     @app.get("/api/health")
     async def health_check():

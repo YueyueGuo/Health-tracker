@@ -25,9 +25,19 @@ class SleepSession(Base):
     light_sleep: Mapped[int | None] = mapped_column(Integer)  # minutes
     awake_time: Mapped[int | None] = mapped_column(Integer)  # minutes
     sleep_score: Mapped[float | None] = mapped_column(Float)
+    sleep_fitness_score: Mapped[float | None] = mapped_column(Float)  # Eight Sleep
     avg_hr: Mapped[float | None] = mapped_column(Float)
     hrv: Mapped[float | None] = mapped_column(Float)
     respiratory_rate: Mapped[float | None] = mapped_column(Float)
     bed_temp: Mapped[float | None] = mapped_column(Float)  # Eight Sleep specific
+    tnt_count: Mapped[int | None] = mapped_column(Integer)  # toss & turn count
+    latency: Mapped[int | None] = mapped_column(Integer)  # time to sleep (sec)
+    # Mid-night wake-up metrics. NULL on archive nights where Eight Sleep
+    # didn't return per-stage interval data.
+    wake_count: Mapped[int | None] = mapped_column(Integer)  # awakenings after sleep onset
+    waso_duration: Mapped[int | None] = mapped_column(Integer)  # wake-after-sleep-onset, minutes
+    out_of_bed_count: Mapped[int | None] = mapped_column(Integer)
+    out_of_bed_duration: Mapped[int | None] = mapped_column(Integer)  # minutes
+    wake_events: Mapped[list | None] = mapped_column(JSON)  # [{type, duration_sec, start}]
     raw_data: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

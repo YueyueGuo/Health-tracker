@@ -1,15 +1,34 @@
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.clients.eight_sleep import EightSleepClient
-from backend.clients.strava import StravaClient
+from backend.clients.strava import StravaClient, StravaRateLimitError
 from backend.clients.weather import WeatherClient
 from backend.clients.whoop import WhoopClient
-from backend.models import Activity, ActivityStream, Recovery, SleepSession, SyncLog, WeatherSnapshot
+from backend.models import (
+    Activity,
+    ActivityLap,
+    Recovery,
+    SleepSession,
+    SyncLog,
+    WeatherSnapshot,
+)
+from backend.services.classifier import classify_and_persist
+logger = logging.getLogger(__name__)
+
+# When running Phase A incrementally, re-scan this many days back from the
+# most recently seen activity to catch late watch uploads.
+_LIST_LOOKBACK_DAYS = 7
+
+# Summary fields that can change after upload (renames, description edits,
+# privacy changes). For activities within the lookback window, refresh these
+# on each list pass.
+_MUTABLE_SUMMARY_FIELDS = ("name",)
 
 
 class SyncEngine:
@@ -41,162 +60,248 @@ class SyncEngine:
 
     # ── Strava ──────────────────────────────────────────────────────
 
-    async def sync_strava(self) -> int:
+    async def sync_strava(
+        self,
+        *,
+        full_history: bool = False,
+        enrich_limit: int | None = None,
+    ) -> int:
+        """Two-phase Strava sync.
+
+        Phase A (always): list activities from Strava, upsert summary rows
+        with `enrichment_status='pending'`.
+
+        Phase B (always, but bounded): for activities still pending, fetch
+        full detail (incl. embedded laps) + zones, populate all summary
+        fields, insert lap rows, mark `complete`. Stops cleanly on rate
+        limit exhaustion or after `enrich_limit` activities.
+
+        Args:
+            full_history: if True, list from the beginning of time (used by
+                backfill script). Otherwise incremental from
+                max(start_date) - lookback window.
+            enrich_limit: cap on number of activities enriched this pass.
+                None = as many as rate limits allow.
+
+        Returns the number of NEWLY-listed activities in Phase A (not the
+        enrichment count).
+        """
         from backend.config import settings
         if not settings.strava.access_token and not settings.strava.refresh_token:
             return 0
 
-        log = SyncLog(source="strava", sync_type="incremental", status="running")
+        log = SyncLog(
+            source="strava",
+            sync_type="full" if full_history else "incremental",
+            status="running",
+        )
         self.db.add(log)
         await self.db.flush()
 
         try:
-            # Find last synced activity
-            last_sync = await self.db.execute(
-                select(Activity.start_date)
-                .order_by(Activity.start_date.desc())
-                .limit(1)
+            new_count = await self._strava_phase_a(full_history=full_history)
+            enriched_count = await self._strava_phase_b(limit=enrich_limit)
+
+            log.status = "success"
+            log.records_synced = new_count
+            log.error_message = f"enriched={enriched_count}"
+            log.completed_at = datetime.now(timezone.utc)
+            await self.db.commit()
+            return new_count
+
+        except Exception as e:
+            log.status = "error"
+            log.error_message = str(e)
+            log.completed_at = datetime.now(timezone.utc)
+            await self.db.commit()
+            raise
+
+    async def _strava_phase_a(self, *, full_history: bool) -> int:
+        """List activities from Strava, upsert summary rows.
+
+        Returns the count of newly inserted activities.
+        """
+        if full_history:
+            after = None
+        else:
+            last_date = (await self.db.execute(
+                select(func.max(Activity.start_date))
+            )).scalar_one_or_none()
+            after = (
+                last_date - timedelta(days=_LIST_LOOKBACK_DAYS)
+                if last_date else None
             )
-            last_date = last_sync.scalar_one_or_none()
-            after = last_date if last_date else None
 
-            activities = await self.strava.get_all_activities(after=after)
-            count = 0
+        activities = await self.strava.get_all_activities(after=after)
+        new_count = 0
 
-            for raw in activities:
-                strava_id = raw["id"]
-                existing = await self.db.execute(
-                    select(Activity).where(Activity.strava_id == strava_id)
+        for raw in activities:
+            strava_id = raw["id"]
+            existing = (await self.db.execute(
+                select(Activity).where(Activity.strava_id == strava_id)
+            )).scalar_one_or_none()
+
+            if existing:
+                # Refresh only mutable metadata on activities within the
+                # lookback window (avoids rewriting ancient rows every pass).
+                if (
+                    datetime.now(timezone.utc).replace(tzinfo=None)
+                    - existing.start_date.replace(tzinfo=None)
+                    < timedelta(days=_LIST_LOOKBACK_DAYS)
+                ):
+                    for field in _MUTABLE_SUMMARY_FIELDS:
+                        new_value = raw.get(field)
+                        if new_value is not None and getattr(existing, field) != new_value:
+                            setattr(existing, field, new_value)
+                continue
+
+            activity = Activity(
+                strava_id=strava_id,
+                name=raw.get("name", ""),
+                sport_type=raw.get("sport_type", raw.get("type", "Unknown")),
+                start_date=datetime.fromisoformat(
+                    raw["start_date"].replace("Z", "+00:00")
+                ),
+                start_date_local=datetime.fromisoformat(
+                    raw.get("start_date_local", raw["start_date"]).replace("Z", "+00:00")
+                ),
+                timezone=raw.get("timezone"),
+                elapsed_time=raw.get("elapsed_time"),
+                moving_time=raw.get("moving_time"),
+                distance=raw.get("distance"),
+                total_elevation=raw.get("total_elevation_gain"),
+                average_hr=raw.get("average_heartrate"),
+                max_hr=raw.get("max_heartrate"),
+                average_speed=raw.get("average_speed"),
+                max_speed=raw.get("max_speed"),
+                average_power=raw.get("average_watts"),
+                average_cadence=raw.get("average_cadence"),
+                device_watts=raw.get("device_watts"),
+                start_lat=(raw.get("start_latlng") or [None, None])[0],
+                start_lng=(raw.get("start_latlng") or [None, None])[1],
+                summary_polyline=(raw.get("map") or {}).get("summary_polyline"),
+                raw_data=raw,
+                enrichment_status="pending",
+            )
+            self.db.add(activity)
+            new_count += 1
+
+        await self.db.commit()
+        return new_count
+
+    async def _strava_phase_b(self, *, limit: int | None) -> int:
+        """Enrich pending activities with detail + zones.
+
+        Stops early when Strava quota nears exhaustion, when a 429 is
+        returned, or after `limit` successful enrichments.
+        """
+        q = (
+            select(Activity)
+            .where(Activity.enrichment_status == "pending")
+            .order_by(Activity.start_date.desc())
+        )
+        if limit is not None:
+            q = q.limit(limit)
+        pending = (await self.db.execute(q)).scalars().all()
+
+        enriched = 0
+        for activity in pending:
+            if self.strava.quota_exhausted():
+                logger.info(
+                    f"Strava quota near limit, stopping enrichment: "
+                    f"{self.strava.quota_usage()}"
                 )
-                if existing.scalar_one_or_none():
-                    continue
+                break
 
-                activity = Activity(
-                    strava_id=strava_id,
-                    name=raw.get("name", ""),
-                    sport_type=raw.get("sport_type", raw.get("type", "Unknown")),
-                    start_date=datetime.fromisoformat(
-                        raw["start_date"].replace("Z", "+00:00")
-                    ),
-                    start_date_local=datetime.fromisoformat(
-                        raw.get("start_date_local", raw["start_date"]).replace("Z", "+00:00")
-                    ),
-                    timezone=raw.get("timezone"),
-                    elapsed_time=raw.get("elapsed_time"),
-                    moving_time=raw.get("moving_time"),
-                    distance=raw.get("distance"),
-                    total_elevation=raw.get("total_elevation_gain"),
-                    average_hr=raw.get("average_heartrate"),
-                    max_hr=raw.get("max_heartrate"),
-                    average_speed=raw.get("average_speed"),
-                    max_speed=raw.get("max_speed"),
-                    average_power=raw.get("average_watts"),
-                    weighted_avg_power=raw.get("weighted_average_watts"),
-                    average_cadence=raw.get("average_cadence"),
-                    calories=raw.get("calories"),
-                    suffer_score=raw.get("suffer_score"),
-                    start_lat=(raw.get("start_latlng") or [None, None])[0],
-                    start_lng=(raw.get("start_latlng") or [None, None])[1],
-                    summary_polyline=(raw.get("map") or {}).get("summary_polyline"),
-                    raw_data=raw,
+            try:
+                detail = await self.strava.get_activity_detail(activity.strava_id)
+                zones = await self.strava.get_activity_zones(activity.strava_id)
+            except StravaRateLimitError:
+                logger.warning("Strava 429 during enrichment; stopping loop.")
+                await self.db.commit()
+                break
+            except Exception as e:
+                activity.enrichment_status = "failed"
+                activity.enrichment_error = str(e)[:1000]
+                await self.db.commit()
+                continue
+
+            self._apply_detail_to_activity(activity, detail)
+            activity.zones_data = zones if zones else None
+
+            # Replace lap rows (wholesale) from the embedded laps array.
+            # Bulk delete avoids async lazy-load of the .laps relationship.
+            await self.db.execute(
+                delete(ActivityLap).where(ActivityLap.activity_id == activity.id)
+            )
+            for lap_raw in detail.get("laps") or []:
+                self.db.add(_lap_from_raw(activity_id=activity.id, raw=lap_raw))
+
+            activity.enrichment_status = "complete"
+            activity.enrichment_error = None
+            activity.enriched_at = datetime.now(timezone.utc)
+
+            # Classify. Failures here shouldn't abort enrichment — the raw
+            # data is more important than the derived label.
+            try:
+                fresh_laps = (await self.db.execute(
+                    select(ActivityLap)
+                    .where(ActivityLap.activity_id == activity.id)
+                    .order_by(ActivityLap.lap_index)
+                )).scalars().all()
+                classify_and_persist(activity, list(fresh_laps))
+            except Exception as e:
+                logger.warning(
+                    f"Classifier failed for activity {activity.strava_id}: {e}"
                 )
-                self.db.add(activity)
-                await self.db.flush()
-
-                # Fetch streams for this activity
-                try:
-                    streams = await self.strava.get_activity_streams(strava_id)
-                    for stream_type, data in streams.items():
-                        if data:
-                            self.db.add(ActivityStream(
-                                activity_id=activity.id,
-                                stream_type=stream_type,
-                                data=data,
-                            ))
-                    activity.has_streams = bool(streams)
-                except Exception:
-                    pass  # Streams are optional, don't fail the sync
-
-                count += 1
 
             await self.db.commit()
-            log.status = "success"
-            log.records_synced = count
-            log.completed_at = datetime.now(timezone.utc)
-            await self.db.commit()
-            return count
+            enriched += 1
 
-        except Exception as e:
-            log.status = "error"
-            log.error_message = str(e)
-            log.completed_at = datetime.now(timezone.utc)
-            await self.db.commit()
-            raise
+        return enriched
 
-    # ── Eight Sleep ───────��─────────────────────────────────────────
+    @staticmethod
+    def _apply_detail_to_activity(activity: Activity, detail: dict) -> None:
+        """Populate Activity fields from the detail response."""
+        activity.name = detail.get("name", activity.name)
+        activity.elapsed_time = detail.get("elapsed_time", activity.elapsed_time)
+        activity.moving_time = detail.get("moving_time", activity.moving_time)
+        activity.distance = detail.get("distance", activity.distance)
+        activity.total_elevation = detail.get(
+            "total_elevation_gain", activity.total_elevation
+        )
+        activity.average_hr = detail.get("average_heartrate", activity.average_hr)
+        activity.max_hr = detail.get("max_heartrate", activity.max_hr)
+        activity.average_speed = detail.get("average_speed", activity.average_speed)
+        activity.max_speed = detail.get("max_speed", activity.max_speed)
+        activity.average_power = detail.get("average_watts", activity.average_power)
+        activity.max_power = detail.get("max_watts", activity.max_power)
+        activity.weighted_avg_power = detail.get(
+            "weighted_average_watts", activity.weighted_avg_power
+        )
+        activity.average_cadence = detail.get(
+            "average_cadence", activity.average_cadence
+        )
+        activity.calories = detail.get("calories", activity.calories)
+        activity.kilojoules = detail.get("kilojoules", activity.kilojoules)
+        activity.suffer_score = detail.get("suffer_score", activity.suffer_score)
+        activity.device_watts = detail.get("device_watts", activity.device_watts)
+        activity.workout_type = detail.get("workout_type", activity.workout_type)
+        activity.available_zones = detail.get("available_zones")
 
-    async def sync_eight_sleep(self, days: int = 30) -> int:
-        if not settings_eight_sleep_configured():
-            return 0
+    # ── Eight Sleep ─────────────────────────────────────────────────
 
-        log = SyncLog(source="eight_sleep", sync_type="incremental", status="running")
-        self.db.add(log)
-        await self.db.flush()
+    async def sync_eight_sleep(self, days: int = 30, *, full_history: bool = False) -> int:
+        """Thin delegation to the isolated Eight Sleep sync module.
 
-        try:
-            sleep_data = await self.eight_sleep.get_recent_sleep(days=days)
-            count = 0
-
-            for day in sleep_data:
-                sleep_date = date.fromisoformat(day.get("date", day.get("day", "")))
-
-                existing = await self.db.execute(
-                    select(SleepSession).where(
-                        SleepSession.source == "eight_sleep",
-                        SleepSession.date == sleep_date,
-                    )
-                )
-                if existing.scalar_one_or_none():
-                    continue
-
-                # Extract sleep metrics from Eight Sleep data format
-                sleep_info = day.get("sleepQualityScore", {})
-                intervals = day.get("intervals", [])
-
-                session = SleepSession(
-                    source="eight_sleep",
-                    date=sleep_date,
-                    bed_time=_parse_dt(day.get("bedTime")),
-                    wake_time=_parse_dt(day.get("wakeTime")),
-                    total_duration=day.get("totalDuration"),
-                    deep_sleep=day.get("deepSleepDuration"),
-                    rem_sleep=day.get("remSleepDuration"),
-                    light_sleep=day.get("lightSleepDuration"),
-                    awake_time=day.get("awakeDuration"),
-                    sleep_score=sleep_info if isinstance(sleep_info, (int, float))
-                    else sleep_info.get("total"),
-                    avg_hr=day.get("avgHeartRate"),
-                    hrv=day.get("avgHrv"),
-                    respiratory_rate=day.get("avgRespiratoryRate"),
-                    bed_temp=day.get("avgBedTemp"),
-                    raw_data=day,
-                )
-                self.db.add(session)
-                count += 1
-
-            await self.db.commit()
-            log.status = "success"
-            log.records_synced = count
-            log.completed_at = datetime.now(timezone.utc)
-            await self.db.commit()
-            return count
-
-        except Exception as e:
-            log.status = "error"
-            log.error_message = str(e)
-            log.completed_at = datetime.now(timezone.utc)
-            await self.db.commit()
-            raise
+        Kept as a method on SyncEngine so the scheduler / API routers /
+        initial_sync script call into Eight Sleep the same way they call
+        into Strava.
+        """
+        from backend.services.eight_sleep_sync import sync_eight_sleep as _es_sync
+        return await _es_sync(
+            self.db, self.eight_sleep, days=days, full_history=full_history
+        )
 
     # ── Whoop ───────��───────────────────────────────────────────────
 
@@ -314,3 +419,27 @@ def _parse_dt(val: str | None) -> datetime | None:
         return datetime.fromisoformat(val.replace("Z", "+00:00"))
     except (ValueError, AttributeError):
         return None
+
+
+def _lap_from_raw(*, activity_id: int, raw: dict) -> ActivityLap:
+    """Build an ActivityLap row from a Strava lap dict."""
+    return ActivityLap(
+        activity_id=activity_id,
+        lap_index=raw.get("lap_index"),
+        name=raw.get("name"),
+        elapsed_time=raw.get("elapsed_time"),
+        moving_time=raw.get("moving_time"),
+        distance=raw.get("distance"),
+        start_date=_parse_dt(raw.get("start_date")),
+        average_speed=raw.get("average_speed"),
+        max_speed=raw.get("max_speed"),
+        average_heartrate=raw.get("average_heartrate"),
+        max_heartrate=raw.get("max_heartrate"),
+        average_cadence=raw.get("average_cadence"),
+        average_watts=raw.get("average_watts"),
+        total_elevation_gain=raw.get("total_elevation_gain"),
+        pace_zone=raw.get("pace_zone"),
+        split=raw.get("split"),
+        start_index=raw.get("start_index"),
+        end_index=raw.get("end_index"),
+    )

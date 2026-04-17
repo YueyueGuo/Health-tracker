@@ -7,6 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_db
 from backend.models import SleepSession
 from backend.services.metrics import get_sleep_trends
+from backend.services.sleep_analytics import (
+    get_best_worst_nights,
+    get_consistency_metrics,
+    get_rolling_averages,
+    get_sleep_debt,
+)
 
 router = APIRouter()
 
@@ -41,6 +47,44 @@ async def sleep_trends(
 ):
     """Get sleep trend data."""
     return await get_sleep_trends(db, days=days)
+
+
+@router.get("/analytics/rolling")
+async def sleep_rolling_averages(
+    days: int = Query(30, ge=7, le=365),
+    db: AsyncSession = Depends(get_db),
+):
+    """7-day and N-day rolling averages of key sleep metrics."""
+    return await get_rolling_averages(db, days=days)
+
+
+@router.get("/analytics/debt")
+async def sleep_debt(
+    target_hours: float = Query(8.0, gt=0, le=24),
+    days: int = Query(14, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-night and cumulative sleep debt vs a target sleep duration."""
+    return await get_sleep_debt(db, target_hours=target_hours, days=days)
+
+
+@router.get("/analytics/best-worst")
+async def sleep_best_worst(
+    days: int = Query(90, ge=1, le=365),
+    top_n: int = Query(5, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+):
+    """Top N best and worst nights in the window, ranked by sleep_score."""
+    return await get_best_worst_nights(db, days=days, top_n=top_n)
+
+
+@router.get("/analytics/consistency")
+async def sleep_consistency(
+    days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stdev of bed time, wake time, and total sleep duration."""
+    return await get_consistency_metrics(db, days=days)
 
 
 @router.get("/latest")
