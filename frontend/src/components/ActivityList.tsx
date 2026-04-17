@@ -1,17 +1,39 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApi } from "../hooks/useApi";
-import { fetchActivities, fetchSportTypes } from "../api/client";
+import {
+  fetchActivities,
+  fetchSportTypes,
+  type ActivitySummary,
+  type ClassificationType,
+} from "../api/client";
+import ClassificationBadge from "./ClassificationBadge";
+
+const CLASSIFICATION_OPTIONS: Exclude<ClassificationType, null>[] = [
+  "easy",
+  "tempo",
+  "intervals",
+  "race",
+  "recovery",
+  "endurance",
+  "mixed",
+];
 
 export default function ActivityList() {
   const [sportType, setSportType] = useState<string>("");
+  const [classification, setClassification] = useState<string>("");
   const [days, setDays] = useState(30);
   const navigate = useNavigate();
 
   const { data: types } = useApi(fetchSportTypes);
   const { data: activities, loading, error } = useApi(
-    () => fetchActivities({ sport_type: sportType || undefined, days, limit: 100 }),
+    () => fetchActivities({ sport_type: sportType || undefined, days, limit: 200 }),
     [sportType, days]
+  );
+
+  // Classification filter is client-side (the API doesn't filter on it yet).
+  const filtered = activities?.filter(
+    (a) => !classification || a.classification_type === classification
   );
 
   return (
@@ -30,18 +52,33 @@ export default function ActivityList() {
             </option>
           ))}
         </select>
+        <select value={classification} onChange={(e) => setClassification(e.target.value)}>
+          <option value="">All Classifications</option>
+          {CLASSIFICATION_OPTIONS.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
         <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
           <option value={7}>Last 7 days</option>
           <option value={30}>Last 30 days</option>
           <option value={90}>Last 90 days</option>
           <option value={365}>Last year</option>
         </select>
+        {filtered && activities && (
+          <span style={{ color: "var(--text-muted)", fontSize: 13 }}>
+            {filtered.length}
+            {filtered.length !== activities.length ? ` / ${activities.length}` : ""} result
+            {filtered.length !== 1 ? "s" : ""}
+          </span>
+        )}
       </div>
 
       {loading && <div className="loading">Loading activities...</div>}
       {error && <div className="error">{error}</div>}
 
-      {activities && activities.length > 0 && (
+      {filtered && filtered.length > 0 && (
         <div className="card" style={{ padding: 0, overflow: "hidden" }}>
           <table className="data-table">
             <thead>
@@ -49,22 +86,30 @@ export default function ActivityList() {
                 <th>Date</th>
                 <th>Name</th>
                 <th>Type</th>
+                <th>Classification</th>
                 <th>Distance</th>
                 <th>Duration</th>
-                <th>Avg HR</th>
-                <th>Calories</th>
+                <th>Pace / Avg HR</th>
+                <th>Relative Effort</th>
               </tr>
             </thead>
             <tbody>
-              {activities.map((a: any) => (
+              {filtered.map((a) => (
                 <tr key={a.id} onClick={() => navigate(`/activities/${a.id}`)}>
                   <td>{formatDate(a.start_date_local || a.start_date)}</td>
                   <td>{a.name}</td>
                   <td>{a.sport_type}</td>
+                  <td>
+                    <ClassificationBadge
+                      type={a.classification_type}
+                      flags={a.classification_flags}
+                      compact
+                    />
+                  </td>
                   <td>{a.distance ? `${(a.distance / 1000).toFixed(1)} km` : "—"}</td>
                   <td>{formatDuration(a.moving_time)}</td>
-                  <td>{a.average_hr ? `${Math.round(a.average_hr)}` : "—"}</td>
-                  <td>{a.calories ? Math.round(a.calories) : "—"}</td>
+                  <td>{formatPaceOrHr(a)}</td>
+                  <td>{a.suffer_score ?? "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -72,23 +117,38 @@ export default function ActivityList() {
         </div>
       )}
 
-      {activities && activities.length === 0 && (
+      {filtered && filtered.length === 0 && (
         <div className="card">No activities found for the selected filters.</div>
       )}
     </div>
   );
 }
 
-function formatDate(iso: string): string {
+function formatDate(iso: string | null): string {
+  if (!iso) return "—";
   return new Date(iso).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
   });
 }
 
-function formatDuration(seconds?: number): string {
+function formatDuration(seconds: number | null): string {
   if (!seconds) return "—";
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function formatPaceOrHr(a: ActivitySummary): string {
+  const sport = (a.sport_type || "").toLowerCase();
+  if (sport.includes("run") && a.average_speed) {
+    const paceSeconds = 1000 / a.average_speed;
+    const mins = Math.floor(paceSeconds / 60);
+    const secs = Math.round(paceSeconds % 60);
+    return `${mins}:${secs.toString().padStart(2, "0")} /km`;
+  }
+  if (a.average_hr) {
+    return `${Math.round(a.average_hr)} bpm`;
+  }
+  return "—";
 }

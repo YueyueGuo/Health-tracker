@@ -11,7 +11,131 @@ async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
   return resp.json();
 }
 
-// Activities
+// ── Domain types ────────────────────────────────────────────────────────────
+
+export type ClassificationType =
+  | "easy"
+  | "tempo"
+  | "intervals"
+  | "race"
+  | "recovery"
+  | "endurance"
+  | "mixed"
+  | null;
+
+export interface ActivitySummary {
+  id: number;
+  strava_id: number;
+  name: string;
+  sport_type: string;
+  start_date: string | null;
+  start_date_local: string | null;
+  elapsed_time: number | null;
+  moving_time: number | null;
+  distance: number | null;
+  total_elevation: number | null;
+  average_hr: number | null;
+  max_hr: number | null;
+  average_speed: number | null;
+  max_speed: number | null;
+  average_power: number | null;
+  max_power: number | null;
+  weighted_avg_power: number | null;
+  average_cadence: number | null;
+  calories: number | null;
+  kilojoules: number | null;
+  suffer_score: number | null;
+  device_watts: boolean | null;
+  workout_type: number | null;
+  available_zones: string[] | null;
+  enrichment_status: string;
+  enriched_at: string | null;
+  classification_type: ClassificationType;
+  classification_flags: string[] | null;
+  classified_at: string | null;
+  weather_enriched: boolean;
+}
+
+export interface ActivityLap {
+  lap_index: number;
+  name: string | null;
+  elapsed_time: number | null;
+  moving_time: number | null;
+  distance: number | null;
+  start_date: string | null;
+  average_speed: number | null;
+  max_speed: number | null;
+  average_heartrate: number | null;
+  max_heartrate: number | null;
+  average_cadence: number | null;
+  average_watts: number | null;
+  total_elevation_gain: number | null;
+  pace_zone: number | null;
+  split: number | null;
+  start_index: number | null;
+  end_index: number | null;
+}
+
+export interface ZoneBucket {
+  min: number;
+  max: number;
+  time: number;
+}
+
+export interface ZoneDistribution {
+  type: string; // "heartrate" | "pace" | "power"
+  distribution_buckets: ZoneBucket[];
+  sensor_based?: boolean;
+  points?: number;
+}
+
+export interface ActivityDetail extends ActivitySummary {
+  laps: ActivityLap[];
+  zones: ZoneDistribution[] | null;
+  weather: Record<string, any> | null;
+  streams_cached: boolean;
+  raw_data: Record<string, any> | null;
+}
+
+export interface WeeklySummary {
+  week_start: string;
+  week_end: string;
+  iso_week: string;
+  totals: {
+    activity_count: number;
+    duration_s: number;
+    distance_m: number;
+    total_elevation_m: number;
+    suffer_score: number;
+    kilojoules: number;
+    calories: number;
+  };
+  by_sport: Record<
+    string,
+    { count: number; duration_s: number; distance_m: number; kilojoules: number }
+  >;
+  run_breakdown: Record<
+    string,
+    { count: number; duration_s: number; distance_m: number }
+  >;
+  flags: {
+    has_long_run: boolean;
+    long_run_distance_m: number;
+    has_speed_session: boolean;
+    has_tempo: boolean;
+    has_race: boolean;
+    has_long_ride: boolean;
+  };
+  notable: {
+    longest_activity_id: number | null;
+    hardest_activity_id: number | null;
+  };
+  enrichment_pending: number;
+  classification_pending: number;
+}
+
+// ── Activities ──────────────────────────────────────────────────────────────
+
 export function fetchActivities(params?: {
   sport_type?: string;
   days?: number;
@@ -22,15 +146,31 @@ export function fetchActivities(params?: {
   if (params?.days) qs.set("days", String(params.days));
   if (params?.limit) qs.set("limit", String(params.limit));
   const query = qs.toString();
-  return fetchJson<any[]>(`/activities${query ? `?${query}` : ""}`);
+  return fetchJson<ActivitySummary[]>(
+    `/activities${query ? `?${query}` : ""}`
+  );
 }
 
 export function fetchActivity(id: number) {
-  return fetchJson<any>(`/activities/${id}`);
+  return fetchJson<ActivityDetail>(`/activities/${id}`);
+}
+
+export function fetchActivityStreams(id: number) {
+  return fetchJson<Record<string, number[]>>(`/activities/${id}/streams`);
+}
+
+export function reclassifyActivity(id: number) {
+  return fetchJson<any>(`/activities/${id}/classify`, { method: "POST" });
 }
 
 export function fetchSportTypes() {
   return fetchJson<string[]>("/activities/types");
+}
+
+// ── Weekly summary ──────────────────────────────────────────────────────────
+
+export function fetchWeeklySummaries(weeks = 4) {
+  return fetchJson<WeeklySummary[]>(`/summary/weekly?weeks=${weeks}`);
 }
 
 // Sleep

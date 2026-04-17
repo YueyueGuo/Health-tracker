@@ -1,6 +1,7 @@
 import { useApi } from "../hooks/useApi";
 import { fetchDashboardOverview, triggerSync } from "../api/client";
 import { useState } from "react";
+import WeeklySummaryCards from "./WeeklySummaryCards";
 
 export default function Dashboard() {
   const { data, loading, error, reload } = useApi(fetchDashboardOverview);
@@ -81,6 +82,8 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      <WeeklySummaryCards weeks={4} />
 
       {thisWeek?.sport_breakdown && Object.keys(thisWeek.sport_breakdown).length > 0 && (
         <div className="card">
