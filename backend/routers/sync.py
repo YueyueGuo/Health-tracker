@@ -69,6 +69,12 @@ async def trigger_sync(req: SyncRequest, db: AsyncSession = Depends(get_db)):
         await weather.close()
 
 
+# NOTE: A POST /sync/streams endpoint existed briefly to bulk-fetch missing
+# streams. It's been replaced by the on-demand GET /api/activities/{id}/streams
+# endpoint (see backend/routers/activities.py), which fetches and caches
+# streams per-activity when the UI actually needs them.
+
+
 @router.get("/status")
 async def sync_status(db: AsyncSession = Depends(get_db)):
     """Get the last sync status for each source, plus Strava enrichment state."""
