@@ -238,7 +238,22 @@ function LatestNightSummary({ session }: { session: SleepSession }) {
           {formatClock(session.bed_time)} → {formatClock(session.wake_time)}
         </div>
         <div className="subtext">
-          {session.latency != null ? `Latency ${formatLatency(session.latency)}` : ""}
+          {session.awake_time != null
+            ? `${session.awake_time}m awake in bed`
+            : ""}
+        </div>
+      </div>
+      <div className="metric-card">
+        <div className="label">Sleep Latency</div>
+        <div className="value">{formatLatency(session.latency)}</div>
+        <div className="subtext">
+          {session.waso_duration != null && session.wake_count != null
+            ? `${session.waso_duration}m WASO · ${session.wake_count} wake${
+                session.wake_count === 1 ? "" : "s"
+              }`
+            : session.waso_duration != null
+              ? `${session.waso_duration}m WASO`
+              : "Time to fall asleep"}
         </div>
       </div>
       <div className="metric-card">
@@ -378,10 +393,16 @@ function StagesTooltip({
   label?: string;
 }) {
   if (!active || !payload || payload.length === 0) return null;
-  const total = payload.reduce(
-    (sum, p) => sum + (typeof p.value === "number" ? p.value : 0),
-    0
-  );
+  // Sleep total EXCLUDES awake — awake is time-in-bed-but-not-asleep, not
+  // a sleep stage. The stacked bar still renders awake on top for visual
+  // context (time in bed), but the percentage/total refer to actual sleep.
+  const sleepTotal = payload.reduce((sum, p) => {
+    if (p.dataKey === "awake") return sum;
+    return sum + (typeof p.value === "number" ? p.value : 0);
+  }, 0);
+  const awakeEntry = payload.find((p) => p.dataKey === "awake");
+  const awakeValue =
+    awakeEntry && typeof awakeEntry.value === "number" ? awakeEntry.value : 0;
   return (
     <div
       style={{
@@ -406,7 +427,9 @@ function StagesTooltip({
         >
           <span>{p.name}</span>
           <span style={{ color: "var(--text)" }}>
-            {formatStageValue(p.value || 0, total)}
+            {p.dataKey === "awake"
+              ? formatDurationMinutes(p.value || 0)
+              : formatStageValue(p.value || 0, sleepTotal)}
           </span>
         </div>
       ))}
@@ -420,11 +443,25 @@ function StagesTooltip({
           color: "var(--text-muted)",
         }}
       >
-        <span>Total</span>
-        <span style={{ color: "var(--text)" }}>
-          {formatDurationMinutes(total)}
+        <span>Sleep</span>
+        <span style={{ color: "var(--text)", fontWeight: 600 }}>
+          {formatDurationMinutes(sleepTotal)}
         </span>
       </div>
+      {awakeValue > 0 && (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            color: "var(--text-muted)",
+            fontSize: 12,
+            marginTop: 2,
+          }}
+        >
+          <span>In bed but awake</span>
+          <span>{formatDurationMinutes(awakeValue)}</span>
+        </div>
+      )}
     </div>
   );
 }

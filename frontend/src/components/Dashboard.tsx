@@ -3,6 +3,8 @@ import { fetchDashboardOverview, triggerSync } from "../api/client";
 import { useState } from "react";
 import { useUnits } from "../hooks/useUnits";
 import WeeklySummaryCards from "./WeeklySummaryCards";
+import RecommendationCard from "./RecommendationCard";
+import LatestWorkoutCard from "./LatestWorkoutCard";
 
 export default function Dashboard() {
   const { units } = useUnits();
@@ -38,6 +40,9 @@ export default function Dashboard() {
           {syncing ? "Syncing..." : "Sync Data"}
         </button>
       </div>
+
+      <RecommendationCard />
+      <LatestWorkoutCard />
 
       <div className="metric-grid">
         <div className="metric-card">

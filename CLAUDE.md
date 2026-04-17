@@ -185,7 +185,7 @@ Extended `SleepSession` columns (see `backend/models/sleep.py`):
 | `sleep_score` | 0-100 | all nights | = `sleepQualityScore` |
 | `sleep_fitness_score` | 0-100 | all nights | = trend `score` (composite); `sleepFitnessScore` is NOT a real API field |
 | `tnt_count` | count | all nights | Trend scalar; not a count of `tnt` timeseries |
-| `latency` | seconds | all nights | `sleepStart - presenceStart`, computed from UTC |
+| `latency` | seconds | all nights | **Pre-sleep only.** Recent nights: first `awake` chunk from the stages array (preferring `stageSummary.awakeBeforeSleepDuration` when provided). Archive nights: falls back to `sleepStart - presenceStart` from the trend row. Never includes mid-night wakes (those roll up into `waso_duration`). |
 | `bed_time`, `wake_time` | datetime | all nights | **Naive local wall-clock** (see tz below) |
 | `avg_hr`, `hrv`, `respiratory_rate`, `bed_temp` | varies | **recent ~2 weeks only** | From interval `timeseries` |
 | `wake_count` | count | recent only | Mid-night awakenings; first awake chunk = latency, NOT counted |
@@ -462,16 +462,47 @@ safe to run while the backfill scheduler is writing.
 - **Elevation backfill state:** 1,512 / 1,754 `elevation_enriched=True`;
   62 indoor + 180 pending-Strava still `False`. Phase 2 deferred until a
   default `UserLocation` is set (see the elevation section above).
-- **Another agent has uncommitted dashboard-insights work** in the working
-  tree (`backend/routers/insights.py`, `backend/services/insights.py`,
-  `backend/services/training_metrics.py`, `RecommendationCard.tsx`,
-  `LatestWorkoutCard.tsx`, `tests/test_services/test_insights.py`,
-  `tests/test_services/test_scheduler_jobs.py`, plus modifications to
-  `backend/config.py`, `backend/scheduler.py`, `backend/main.py`,
-  `backend/services/llm_providers.py`, `frontend/src/components/Dashboard.tsx`).
-  Do NOT commit these alongside elevation work — they're that agent's
-  scope and should land on their own branch.
 - User cleared with multi-day backfill being fine.
+
+## Dashboard insights (LLM-powered)
+
+Three endpoints, all under `/api/insights/*`:
+- `GET /training-metrics` — raw snapshot (ACWR, monotony, strain, sleep
+  debt, recovery trend, latest workout) for debugging.
+- `GET /daily-recommendation?refresh=bool&model=str` — structured LLM
+  output with intensity pill, suggestion, rationale, concerns,
+  confidence. Cached per-day (24h TTL) keyed on inputs hash.
+- `GET /latest-workout?activity_id=int&refresh=bool&model=str` —
+  per-activity insight (headline, takeaway, notable segments,
+  vs_history, flags). Cached per-activity_id (no TTL).
+
+Key files:
+- `backend/services/training_metrics.py` — deterministic snapshot
+  builders (no LLM).
+- `backend/services/insights.py` — Pydantic schemas
+  (`DailyRecommendation`, `WorkoutInsight`), cache helpers,
+  `_call_llm_structured()` with fallback chain + self-correcting retry,
+  `_maybe_unwrap()` to handle models that wrap responses in a single
+  top-level key.
+- `backend/services/llm_providers.py` — added `query_structured()` on
+  each provider: Anthropic (tool-use), OpenAI (`json_schema` strict →
+  `json_object` fallback), Gemini (inlined schema + `response_schema`
+  hint). `_pydantic_schema()` in `insights.py` inlines `$defs`/`$ref`
+  recursively — providers (especially Gemini) don't follow refs.
+
+Config (`backend/config.py` → `LLMSettings`):
+- `dashboard_model` (default `claude-haiku`).
+- `dashboard_fallback_models` (default `["claude-sonnet", "gpt-4o-mini"]`).
+  Accepts comma-separated env var.
+
+### Enrichment drain scheduler job
+
+`_run_strava_enrichment_drain()` in `backend/scheduler.py` runs every
+20 minutes. No-ops when no activities have `enrichment_status="pending"`
+and skips when `StravaClient.daily_quota_exhausted()` is True. Calls
+`SyncEngine._strava_phase_b(limit=batch)` directly — does NOT re-list.
+Wired into the uvicorn lifespan (`backend/main.py`) alongside the
+existing `sync_all` job.
 
 ## Quick commands cheatsheet
 

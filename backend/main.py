@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.database import init_db
+from backend.scheduler import create_scheduler
 
 FRONTEND_DIR = pathlib.Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
@@ -17,8 +18,12 @@ FRONTEND_DIR = pathlib.Path(__file__).resolve().parent.parent / "frontend" / "di
 async def lifespan(app: FastAPI):
     # Startup
     await init_db()
+    scheduler = create_scheduler()
+    scheduler.start()
+    app.state.scheduler = scheduler
     yield
     # Shutdown
+    scheduler.shutdown(wait=False)
 
 
 def create_app() -> FastAPI:
@@ -44,6 +49,7 @@ def create_app() -> FastAPI:
         chat,
         correlations,
         dashboard,
+        insights,
         locations,
         recovery,
         sleep,
@@ -69,6 +75,7 @@ def create_app() -> FastAPI:
     app.include_router(sync.router, prefix="/api/sync", tags=["sync"])
     app.include_router(correlations.router, prefix="/api/correlations", tags=["correlations"])
     app.include_router(weather.router, prefix="/api/weather", tags=["weather"])
+    app.include_router(insights.router, prefix="/api/insights", tags=["insights"])
     app.include_router(locations.router, prefix="/api/locations", tags=["locations"])
 
     @app.get("/api/health")

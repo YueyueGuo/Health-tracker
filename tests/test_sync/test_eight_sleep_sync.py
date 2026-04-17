@@ -147,8 +147,12 @@ def test_extract_fields_full_payload():
     assert fields["respiratory_rate"] == pytest.approx(14.766, rel=1e-3)
     assert fields["bed_temp"] == pytest.approx(27.5, rel=1e-3)
     assert fields["tnt_count"] == 6
-    # latency = sleepStart - presenceStart = 10 min = 600 sec
-    assert fields["latency"] == 600
+    # Latency now derives from the interval's stages array (first awake
+    # chunk before any sleep stage). The _interval() fixture has a
+    # 30-minute pre-sleep awake chunk, so latency = 1800 seconds.
+    # The coarser trend-level computation (which would give 600s here)
+    # is only used as a fallback when the interval is absent.
+    assert fields["latency"] == 30 * 60
     assert fields["external_id"] == "sess-42"
     assert isinstance(fields["bed_time"], datetime)
     assert fields["wake_time"] > fields["bed_time"]
@@ -219,6 +223,56 @@ def test_wake_stats_returns_empty_when_no_interval():
     assert _wake_stats({"stages": []}) == {}
 
 
+def test_wake_stats_extracts_pre_sleep_latency():
+    """The first awake chunk before any sleep stage = sleep latency."""
+    interval = {
+        "stages": [
+            {"stage": "awake", "duration": 20 * 60},   # 20 min latency
+            {"stage": "light", "duration": 60 * 60},
+            {"stage": "awake", "duration": 5 * 60},    # mid-night, NOT latency
+            {"stage": "deep", "duration": 30 * 60},
+        ],
+    }
+    s = _wake_stats(interval)
+    assert s["latency_sec"] == 20 * 60
+    assert s["waso_duration"] == 5
+
+
+def test_wake_stats_latency_prefers_stage_summary():
+    """When stageSummary.awakeBeforeSleepDuration is present, prefer it."""
+    interval = {
+        "stages": [
+            {"stage": "awake", "duration": 30 * 60},
+            {"stage": "light", "duration": 60 * 60},
+        ],
+        "stageSummary": {
+            "awakeBeforeSleepDuration": 900,  # Eight's authoritative = 15 min
+            "wasoDuration": 0,
+        },
+    }
+    s = _wake_stats(interval)
+    assert s["latency_sec"] == 900
+
+
+def test_wake_stats_latency_none_when_no_pre_sleep_awake():
+    """Sleep starts immediately — latency is None, not zero."""
+    interval = {
+        "stages": [
+            {"stage": "light", "duration": 60 * 60},
+            {"stage": "deep", "duration": 30 * 60},
+        ],
+    }
+    s = _wake_stats(interval)
+    assert s["latency_sec"] is None
+
+
+def test_extract_fields_falls_back_to_trend_latency_without_interval():
+    """Archive nights without interval data use presenceStart → sleepStart."""
+    fields = _extract_fields(_trend_row(), None)
+    # _trend_row sets presenceStart 10 min before sleepStart.
+    assert fields["latency"] == 600
+
+
 def test_extract_fields_populates_wake_columns():
     interval = _interval()
     # Insert a mid-night awake chunk so we have a wake-up to detect.
@@ -270,9 +324,9 @@ def test_extract_fields_returns_bed_time_in_local_tz():
     # EDT = UTC-4; expect local wall-clock time.
     assert fields["bed_time"] == datetime(2026, 4, 16, 0, 1, 30)
     assert fields["wake_time"] == datetime(2026, 4, 16, 8, 24, 30)
-    # Latency computed from UTC originals, unaffected by tz conversion.
-    # (sleepStart - presenceStart) = 43.5 min = 2610 sec.
-    assert fields["latency"] == 2610
+    # Latency derives from the interval's first awake chunk (30 min in
+    # the fixture), not trend-level timestamps.
+    assert fields["latency"] == 30 * 60
 
 
 def test_series_mean_handles_tuple_format():
