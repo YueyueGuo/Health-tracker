@@ -1,9 +1,11 @@
 import { useApi } from "../hooks/useApi";
 import { fetchDashboardOverview, triggerSync } from "../api/client";
 import { useState } from "react";
+import { useUnits } from "../hooks/useUnits";
 import WeeklySummaryCards from "./WeeklySummaryCards";
 
 export default function Dashboard() {
+  const { units } = useUnits();
   const { data, loading, error, reload } = useApi(fetchDashboardOverview);
   const [syncing, setSyncing] = useState(false);
 
@@ -42,7 +44,11 @@ export default function Dashboard() {
           <div className="label">Activities This Week</div>
           <div className="value">{thisWeek?.total_activities ?? "—"}</div>
           <div className="subtext">
-            {thisWeek?.total_distance_km ? `${thisWeek.total_distance_km} km` : "No data"}
+            {thisWeek?.total_distance_km
+              ? units === "imperial"
+                ? `${(thisWeek.total_distance_km * 0.621371).toFixed(1)} mi`
+                : `${thisWeek.total_distance_km} km`
+              : "No data"}
           </div>
         </div>
 

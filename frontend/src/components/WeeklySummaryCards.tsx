@@ -1,5 +1,6 @@
 import { useApi } from "../hooks/useApi";
 import { fetchWeeklySummaries, type WeeklySummary } from "../api/client";
+import { formatDistanceShort, useUnits } from "../hooks/useUnits";
 
 interface Props {
   weeks?: number;
@@ -33,15 +34,15 @@ export default function WeeklySummaryCards({ weeks = 4 }: Props) {
 }
 
 function WeekCard({ week }: { week: WeeklySummary }) {
+  const { units } = useUnits();
   const { totals, by_sport, flags, iso_week } = week;
-  const distanceKm = totals.distance_m / 1000;
   const hours = totals.duration_s / 3600;
 
   const flagChips: { key: string; label: string }[] = [];
   if (flags.has_long_run) {
     flagChips.push({
       key: "long-run",
-      label: `long run ${(flags.long_run_distance_m / 1000).toFixed(1)}km`,
+      label: `long run ${formatDistanceShort(flags.long_run_distance_m, units)}`,
     });
   }
   if (flags.has_speed_session) flagChips.push({ key: "speed", label: "speed session" });
@@ -60,8 +61,12 @@ function WeekCard({ week }: { week: WeeklySummary }) {
           <div className="tot-label">Activities</div>
         </div>
         <div>
-          <div className="tot-value">{distanceKm.toFixed(1)}</div>
-          <div className="tot-label">km</div>
+          <div className="tot-value">
+            {units === "imperial"
+              ? (totals.distance_m / 1609.344).toFixed(1)
+              : (totals.distance_m / 1000).toFixed(1)}
+          </div>
+          <div className="tot-label">{units === "imperial" ? "mi" : "km"}</div>
         </div>
         <div>
           <div className="tot-value">{hours.toFixed(1)}</div>

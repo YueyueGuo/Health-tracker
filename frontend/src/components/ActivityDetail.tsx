@@ -17,17 +17,25 @@ import {
   fetchActivityStreams,
   fetchWorkoutAnalysis,
   reclassifyActivity,
-  type ActivityLap,
   type ZoneDistribution,
 } from "../api/client";
 import { getActivityWeather } from "../api/weather";
 import { useState } from "react";
 import ClassificationBadge from "./ClassificationBadge";
 import WeatherCard from "./WeatherCard";
+import {
+  formatDistance,
+  formatElevation,
+  formatPaceOrSpeed,
+  isCyclingSport,
+  useUnits,
+  type UnitSystem,
+} from "../hooks/useUnits";
 
 export default function ActivityDetail() {
   const { id } = useParams<{ id: string }>();
   const activityId = Number(id);
+  const { units } = useUnits();
   const { data: activity, loading, error, reload } = useApi(
     () => fetchActivity(activityId),
     [activityId]
@@ -134,7 +142,7 @@ export default function ActivityDetail() {
         {activity.distance != null && (
           <div className="metric-card">
             <div className="label">Distance</div>
-            <div className="value">{(activity.distance / 1000).toFixed(2)} km</div>
+            <div className="value">{formatDistance(activity.distance, units)}</div>
           </div>
         )}
         <div className="metric-card">
@@ -153,8 +161,12 @@ export default function ActivityDetail() {
         )}
         {activity.average_speed && activity.distance && (
           <div className="metric-card">
-            <div className="label">Avg Pace</div>
-            <div className="value">{formatPace(activity.average_speed)}</div>
+            <div className="label">
+              {isCyclingSport(activity.sport_type) ? "Avg Speed" : "Avg Pace"}
+            </div>
+            <div className="value">
+              {formatPaceOrSpeed(activity.average_speed, activity.sport_type, units)}
+            </div>
           </div>
         )}
         {activity.average_power != null && (
@@ -173,7 +185,7 @@ export default function ActivityDetail() {
         {activity.total_elevation != null && activity.total_elevation > 0 && (
           <div className="metric-card">
             <div className="label">Elevation</div>
-            <div className="value">{Math.round(activity.total_elevation)} m</div>
+            <div className="value">{formatElevation(activity.total_elevation, units)}</div>
           </div>
         )}
         {activity.kilojoules != null && (
@@ -214,9 +226,13 @@ export default function ActivityDetail() {
               {activity.laps.map((lap) => (
                 <tr key={lap.lap_index} className={laneClass(lap.pace_zone)}>
                   <td>{lap.lap_index}</td>
-                  <td>{lap.distance ? formatDistanceM(lap.distance) : "—"}</td>
+                  <td>{formatDistance(lap.distance, units)}</td>
                   <td>{formatDuration(lap.moving_time)}</td>
-                  <td>{lap.average_speed ? formatPace(lap.average_speed) : "—"}</td>
+                  <td>
+                    {lap.average_speed
+                      ? formatPaceOrSpeed(lap.average_speed, activity.sport_type, units)
+                      : "—"}
+                  </td>
                   <td>{lap.average_heartrate ? Math.round(lap.average_heartrate) : "—"}</td>
                   <td>{lap.average_watts ? `${Math.round(lap.average_watts)} W` : "—"}</td>
                   <td>{lap.pace_zone ?? "—"}</td>
@@ -251,7 +267,13 @@ export default function ActivityDetail() {
         )}
         {streamsLoading && <div className="loading">Loading streams...</div>}
         {streamsError && <div className="error">{streamsError}</div>}
-        {streams && <StreamsChart streams={streams} />}
+        {streams && (
+          <StreamsChart
+            streams={streams}
+            units={units}
+            sportType={activity.sport_type}
+          />
+        )}
       </div>
 
       <div className="card">
@@ -298,24 +320,57 @@ function ZoneChart({ zone }: { zone: ZoneDistribution }) {
   );
 }
 
-function StreamsChart({ streams }: { streams: Record<string, number[]> }) {
+function StreamsChart({
+  streams,
+  units,
+  sportType,
+}: {
+  streams: Record<string, number[]>;
+  units: UnitSystem;
+  sportType: string | null | undefined;
+}) {
   const hasHR = (streams.heartrate?.length ?? 0) > 0;
   const hasPace = (streams.velocity_smooth?.length ?? 0) > 0;
   const hasAltitude = (streams.altitude?.length ?? 0) > 0;
   const timeData = streams.time || [];
+  const cycling = isCyclingSport(sportType);
 
-  const chartData = timeData.map((t, i) => ({
-    time: Math.round(t / 60),
-    hr: streams.heartrate?.[i],
-    speed: streams.velocity_smooth?.[i]
-      ? 1000 / streams.velocity_smooth[i]! / 60
-      : undefined,
-    altitude: streams.altitude?.[i],
-  }));
+  // For cycling: render speed (mph or km/h). For running/other: render pace
+  // in decimal minutes per mile/km so the y-axis reads natively.
+  const metersPerUnit = units === "imperial" ? 1609.344 : 1000;
+  const chartData = timeData.map((t, i) => {
+    const mps = streams.velocity_smooth?.[i];
+    let yValue: number | undefined;
+    if (mps && mps > 0) {
+      if (cycling) {
+        // Speed → mph or km/h
+        yValue = units === "imperial"
+          ? (mps * 3600) / 1609.344
+          : (mps * 3600) / 1000;
+      } else {
+        // Pace → min per mile / km
+        yValue = metersPerUnit / mps / 60;
+      }
+    }
+    return {
+      time: Math.round(t / 60),
+      hr: streams.heartrate?.[i],
+      speed: yValue,
+      altitude: streams.altitude?.[i],
+    };
+  });
 
   if (chartData.length === 0 || (!hasHR && !hasPace && !hasAltitude)) {
     return <div style={{ color: "var(--text-muted)" }}>No stream data available.</div>;
   }
+
+  const paceLabel = cycling
+    ? units === "imperial"
+      ? "Speed (mph)"
+      : "Speed (km/h)"
+    : units === "imperial"
+      ? "Pace (min/mi)"
+      : "Pace (min/km)";
 
   return (
     <ResponsiveContainer width="100%" height={350}>
@@ -328,7 +383,13 @@ function StreamsChart({ streams }: { streams: Record<string, number[]> }) {
         />
         {hasHR && <YAxis yAxisId="hr" orientation="left" stroke="#ef4444" domain={["auto", "auto"]} />}
         {hasPace && (
-          <YAxis yAxisId="pace" orientation="right" stroke="#6366f1" reversed domain={["auto", "auto"]} />
+          <YAxis
+            yAxisId="pace"
+            orientation="right"
+            stroke="#6366f1"
+            reversed={!cycling}
+            domain={["auto", "auto"]}
+          />
         )}
         <Tooltip contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border)" }} />
         <Legend />
@@ -336,7 +397,7 @@ function StreamsChart({ streams }: { streams: Record<string, number[]> }) {
           <Line yAxisId="hr" type="monotone" dataKey="hr" stroke="#ef4444" dot={false} name="Heart Rate (bpm)" />
         )}
         {hasPace && (
-          <Line yAxisId="pace" type="monotone" dataKey="speed" stroke="#6366f1" dot={false} name="Pace (min/km)" />
+          <Line yAxisId="pace" type="monotone" dataKey="speed" stroke="#6366f1" dot={false} name={paceLabel} />
         )}
       </LineChart>
     </ResponsiveContainer>
@@ -356,19 +417,6 @@ function formatDuration(seconds: number | null | undefined): string {
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
   return h > 0 ? `${h}h ${m}m` : `${m}m ${s}s`;
-}
-
-function formatPace(speedMps: number | null | undefined): string {
-  if (!speedMps || speedMps <= 0) return "—";
-  const paceSeconds = 1000 / speedMps;
-  const mins = Math.floor(paceSeconds / 60);
-  const secs = Math.round(paceSeconds % 60);
-  return `${mins}:${secs.toString().padStart(2, "0")} /km`;
-}
-
-function formatDistanceM(m: number): string {
-  if (m >= 1000) return `${(m / 1000).toFixed(2)} km`;
-  return `${Math.round(m)} m`;
 }
 
 function zoneBucketLabel(type: string, b: { min: number; max: number }, i: number): string {

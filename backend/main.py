@@ -47,6 +47,7 @@ def create_app() -> FastAPI:
         recovery,
         sleep,
         strength,
+        summary,
         sync,
         weather,
     )
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
     app.include_router(strength.router, prefix="/api/strength", tags=["strength"])
     app.include_router(recovery.router, prefix="/api/recovery", tags=["recovery"])
     app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
+    app.include_router(summary.router, prefix="/api/summary", tags=["summary"])
     app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
     app.include_router(sync.router, prefix="/api/sync", tags=["sync"])
     app.include_router(correlations.router, prefix="/api/correlations", tags=["correlations"])

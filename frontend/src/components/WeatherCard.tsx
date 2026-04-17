@@ -1,4 +1,9 @@
 import type { WeatherSnapshot } from "../api/weather";
+import {
+  formatTemperature,
+  formatWindSpeed,
+  useUnits,
+} from "../hooks/useUnits";
 
 interface Props {
   weather: WeatherSnapshot | null;
@@ -9,6 +14,7 @@ interface Props {
  * snapshot is available — the parent decides layout / placement.
  */
 export default function WeatherCard({ weather }: Props) {
+  const { units } = useUnits();
   if (!weather) return null;
 
   const iconCode = extractIconCode(weather);
@@ -36,11 +42,13 @@ export default function WeatherCard({ weather }: Props) {
         )}
         <div className="weather-temp-block">
           {weather.temp_c != null && (
-            <div className="weather-temp">{formatTemp(weather.temp_c)}</div>
+            <div className="weather-temp">
+              {formatTemperature(weather.temp_c, units)}
+            </div>
           )}
           {weather.feels_like_c != null && weather.temp_c != null && (
             <div className="weather-feels">
-              Feels like {formatTemp(weather.feels_like_c)}
+              Feels like {formatTemperature(weather.feels_like_c, units)}
             </div>
           )}
           {weather.conditions && (
@@ -54,13 +62,13 @@ export default function WeatherCard({ weather }: Props) {
           {weather.wind_speed != null && (
             <WeatherMetric
               label="Wind"
-              value={formatWind(weather.wind_speed, weather.wind_deg)}
+              value={formatWind(weather.wind_speed, weather.wind_deg, units)}
             />
           )}
           {weather.wind_gust != null && (
             <WeatherMetric
               label="Gust"
-              value={`${weather.wind_gust.toFixed(1)} m/s`}
+              value={formatWindSpeed(weather.wind_gust, units)}
             />
           )}
           {weather.uv_index != null && (
@@ -94,12 +102,12 @@ function WeatherMetric({ label, value }: { label: string; value: string }) {
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-function formatTemp(c: number): string {
-  return `${Math.round(c * 10) / 10}°C`;
-}
-
-function formatWind(speed: number, deg: number | null): string {
-  const base = `${speed.toFixed(1)} m/s`;
+function formatWind(
+  speedMps: number,
+  deg: number | null,
+  units: "imperial" | "metric"
+): string {
+  const base = formatWindSpeed(speedMps, units);
   if (deg == null) return base;
   return `${base} ${windArrow(deg)}`;
 }

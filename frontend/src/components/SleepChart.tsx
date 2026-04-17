@@ -79,9 +79,9 @@ export default function SleepChart() {
             <YAxis stroke="var(--text-muted)" />
             <Tooltip contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border)" }} />
             <Legend />
-            <Area type="monotone" dataKey="deep" stackId="1" stroke="#3b82f6" fill="#3b82f6" name="Deep" />
-            <Area type="monotone" dataKey="rem" stackId="1" stroke="#8b5cf6" fill="#8b5cf6" name="REM" />
-            <Area type="monotone" dataKey="light" stackId="1" stroke="#6366f1" fill="#6366f180" name="Light" />
+            <Area type="monotone" dataKey="deep" stackId="1" stroke="#1e3a8a" fill="#1e3a8a" name="Deep" />
+            <Area type="monotone" dataKey="rem" stackId="1" stroke="#14b8a6" fill="#14b8a6" name="REM" />
+            <Area type="monotone" dataKey="light" stackId="1" stroke="#d4a574" fill="#d4a574" name="Light" />
           </AreaChart>
         </ResponsiveContainer>
       </div>

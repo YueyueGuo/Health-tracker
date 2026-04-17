@@ -78,6 +78,43 @@ a:hover {
   text-decoration: none;
 }
 
+.sidebar-footer {
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.units-toggle {
+  display: inline-flex;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.units-toggle button {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.12s;
+  letter-spacing: 0.5px;
+}
+
+.units-toggle button:hover {
+  color: var(--text);
+}
+
+.units-toggle button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
 .main-content {
   margin-left: 240px;
   flex: 1;

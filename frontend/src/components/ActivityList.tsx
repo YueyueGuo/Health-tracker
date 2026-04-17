@@ -7,6 +7,12 @@ import {
   type ActivitySummary,
   type ClassificationType,
 } from "../api/client";
+import {
+  formatDistance,
+  formatPaceOrSpeed,
+  isCyclingSport,
+  useUnits,
+} from "../hooks/useUnits";
 import ClassificationBadge from "./ClassificationBadge";
 
 const CLASSIFICATION_OPTIONS: Exclude<ClassificationType, null>[] = [
@@ -24,6 +30,7 @@ export default function ActivityList() {
   const [classification, setClassification] = useState<string>("");
   const [days, setDays] = useState(30);
   const navigate = useNavigate();
+  const { units } = useUnits();
 
   const { data: types } = useApi(fetchSportTypes);
   const { data: activities, loading, error } = useApi(
@@ -106,9 +113,9 @@ export default function ActivityList() {
                       compact
                     />
                   </td>
-                  <td>{a.distance ? `${(a.distance / 1000).toFixed(1)} km` : "—"}</td>
+                  <td>{formatDistance(a.distance, units)}</td>
                   <td>{formatDuration(a.moving_time)}</td>
-                  <td>{formatPaceOrHr(a)}</td>
+                  <td>{formatPaceOrHr(a, units)}</td>
                   <td>{a.suffer_score ?? "—"}</td>
                 </tr>
               ))}
@@ -139,13 +146,14 @@ function formatDuration(seconds: number | null): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-function formatPaceOrHr(a: ActivitySummary): string {
+function formatPaceOrHr(
+  a: ActivitySummary,
+  units: "imperial" | "metric"
+): string {
   const sport = (a.sport_type || "").toLowerCase();
-  if (sport.includes("run") && a.average_speed) {
-    const paceSeconds = 1000 / a.average_speed;
-    const mins = Math.floor(paceSeconds / 60);
-    const secs = Math.round(paceSeconds % 60);
-    return `${mins}:${secs.toString().padStart(2, "0")} /km`;
+  // Runs → pace; rides → speed; everything else → average HR if present.
+  if ((sport.includes("run") || sport.includes("walk") || isCyclingSport(a.sport_type)) && a.average_speed) {
+    return formatPaceOrSpeed(a.average_speed, a.sport_type, units);
   }
   if (a.average_hr) {
     return `${Math.round(a.average_hr)} bpm`;

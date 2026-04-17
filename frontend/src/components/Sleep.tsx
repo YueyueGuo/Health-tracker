@@ -20,11 +20,15 @@ import {
   WakeEvent,
 } from "../api/sleep";
 
+// Stage palette picked for hue separation rather than pretty variance on
+// a single hue: deep = navy (darkest blue), REM = teal/cyan (cool), light
+// = warm tan (warm, low-sat), awake = red (hot). Each pair is distinct
+// in both hue and luminance so the stacked bars read at a glance.
 const STAGE_COLORS = {
-  deep: "#3b82f6",
-  rem: "#8b5cf6",
-  light: "#6366f1",
-  awake: "#f59e0b",
+  deep: "#1e3a8a",   // navy
+  rem: "#14b8a6",    // teal
+  light: "#d4a574",  // warm sand
+  awake: "#ef4444",  // red
 };
 
 export default function Sleep() {

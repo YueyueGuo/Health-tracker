@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
+import { useUnits } from "../hooks/useUnits";
 
 const navItems = [
   { to: "/", label: "Dashboard" },
@@ -11,6 +12,7 @@ const navItems = [
 ];
 
 export default function Layout() {
+  const { units, setUnits } = useUnits();
   return (
     <div className="app-layout">
       <nav className="sidebar">
@@ -25,6 +27,26 @@ export default function Layout() {
             {item.label}
           </NavLink>
         ))}
+        <div className="sidebar-footer">
+          <div className="units-toggle" role="group" aria-label="Units">
+            <button
+              type="button"
+              className={units === "imperial" ? "active" : ""}
+              onClick={() => setUnits("imperial")}
+              title="Miles, feet, °F, mph"
+            >
+              mi
+            </button>
+            <button
+              type="button"
+              className={units === "metric" ? "active" : ""}
+              onClick={() => setUnits("metric")}
+              title="Kilometers, meters, °C, m/s"
+            >
+              km
+            </button>
+          </div>
+        </div>
       </nav>
       <main className="main-content">
         <Outlet />
