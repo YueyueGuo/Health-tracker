@@ -527,3 +527,83 @@ select {
   opacity: 0.3;
   cursor: not-allowed;
 }
+
+/* ── Weather card ───────────────────────────────────────────────── */
+.weather-card .weather-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.weather-card .weather-header h2 {
+  margin: 0;
+}
+
+.weather-card .weather-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+
+.weather-card .weather-body {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.weather-card .weather-icon {
+  display: block;
+  flex-shrink: 0;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35));
+}
+
+.weather-card .weather-temp-block {
+  min-width: 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.weather-card .weather-temp {
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.weather-card .weather-feels {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.weather-card .weather-conditions {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 500;
+  margin-top: 4px;
+}
+
+.weather-card .weather-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 16px 24px;
+  flex: 1;
+  min-width: 240px;
+}
+
+.weather-card .weather-metric-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 2px;
+}
+
+.weather-card .weather-metric-value {
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}

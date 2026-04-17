@@ -132,6 +132,38 @@ async def classify_activity(
     return {"classified": True, **dump(result)}
 
 
+@router.get("/{activity_id}/weather")
+async def get_activity_weather(
+    activity_id: int,
+    raw: bool = Query(False, description="Include raw OpenWeatherMap payload."),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the WeatherSnapshot joined to this activity.
+
+    404 if the activity doesn't exist or has no snapshot yet. Omits the
+    ``raw_data`` blob by default to keep payloads small; pass
+    ``?raw=true`` to include it (useful for rendering icons from the
+    ``weather[0].icon`` code).
+    """
+    activity = (await db.execute(
+        select(Activity).where(Activity.id == activity_id)
+    )).scalar_one_or_none()
+    if not activity:
+        raise HTTPException(status_code=404, detail="Activity not found")
+
+    snapshot = (await db.execute(
+        select(WeatherSnapshot).where(
+            WeatherSnapshot.activity_id == activity_id
+        )
+    )).scalar_one_or_none()
+    if not snapshot:
+        raise HTTPException(
+            status_code=404, detail="No weather snapshot for this activity"
+        )
+
+    return _weather_full_dict(snapshot, include_raw=raw)
+
+
 @router.get("/{activity_id}/streams")
 async def get_activity_streams(
     activity_id: int, db: AsyncSession = Depends(get_db)
@@ -238,8 +270,37 @@ def _weather_dict(w: WeatherSnapshot) -> dict:
         "feels_like_c": w.feels_like_c,
         "humidity": w.humidity,
         "wind_speed": w.wind_speed,
+        "wind_gust": w.wind_gust,
+        "wind_deg": w.wind_deg,
         "conditions": w.conditions,
         "description": w.description,
         "pressure": w.pressure,
         "uv_index": w.uv_index,
     }
+
+
+def _weather_full_dict(w: WeatherSnapshot, *, include_raw: bool) -> dict:
+    """Full WeatherSnapshot payload for the /weather endpoint.
+
+    ``raw_data`` is heavy and only needed when the UI wants the
+    OpenWeatherMap icon code (``raw_data.data[0].weather[0].icon``) — gate
+    it behind an explicit flag.
+    """
+    out = {
+        "id": w.id,
+        "activity_id": w.activity_id,
+        "temp_c": w.temp_c,
+        "feels_like_c": w.feels_like_c,
+        "humidity": w.humidity,
+        "wind_speed": w.wind_speed,
+        "wind_gust": w.wind_gust,
+        "wind_deg": w.wind_deg,
+        "conditions": w.conditions,
+        "description": w.description,
+        "pressure": w.pressure,
+        "uv_index": w.uv_index,
+        "created_at": w.created_at.isoformat() if w.created_at else None,
+    }
+    if include_raw:
+        out["raw_data"] = w.raw_data
+    return out

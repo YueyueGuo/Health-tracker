@@ -48,6 +48,7 @@ def create_app() -> FastAPI:
         sleep,
         strength,
         sync,
+        weather,
     )
 
     app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
@@ -59,6 +60,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
     app.include_router(sync.router, prefix="/api/sync", tags=["sync"])
     app.include_router(correlations.router, prefix="/api/correlations", tags=["correlations"])
+    app.include_router(weather.router, prefix="/api/weather", tags=["weather"])
 
     @app.get("/api/health")
     async def health_check():

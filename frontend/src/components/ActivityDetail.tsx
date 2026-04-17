@@ -20,14 +20,23 @@ import {
   type ActivityLap,
   type ZoneDistribution,
 } from "../api/client";
+import { getActivityWeather } from "../api/weather";
 import { useState } from "react";
 import ClassificationBadge from "./ClassificationBadge";
+import WeatherCard from "./WeatherCard";
 
 export default function ActivityDetail() {
   const { id } = useParams<{ id: string }>();
   const activityId = Number(id);
   const { data: activity, loading, error, reload } = useApi(
     () => fetchActivity(activityId),
+    [activityId]
+  );
+  // Weather is fetched independently so a missing snapshot (404) doesn't
+  // block the rest of the detail view. We always request ``?raw=true``
+  // so the card can render the OpenWeatherMap icon when available.
+  const { data: weather } = useApi(
+    () => getActivityWeather(activityId, { raw: true }),
     [activityId]
   );
   const [analysis, setAnalysis] = useState<string | null>(null);
@@ -184,19 +193,7 @@ export default function ActivityDetail() {
         )}
       </div>
 
-      {activity.weather && (
-        <div className="card">
-          <h2>Weather</h2>
-          <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
-            <div>
-              <strong>{activity.weather.temp_c}°C</strong> (feels like {activity.weather.feels_like_c}°C)
-            </div>
-            <div>{activity.weather.conditions} — {activity.weather.description}</div>
-            <div>Humidity: {activity.weather.humidity}%</div>
-            <div>Wind: {activity.weather.wind_speed} m/s</div>
-          </div>
-        </div>
-      )}
+      <WeatherCard weather={weather} />
 
       {activity.laps && activity.laps.length > 0 && (
         <div className="card" style={{ padding: 0, overflow: "hidden" }}>

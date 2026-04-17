@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.clients.eight_sleep import EightSleepClient
 from backend.clients.strava import StravaClient, StravaRateLimitError
-from backend.clients.weather import WeatherClient
+from backend.clients.weather import WeatherClient, WeatherRateLimitError
 from backend.clients.whoop import WhoopClient
 from backend.models import (
     Activity,
@@ -48,8 +48,8 @@ class SyncEngine:
         self.whoop = whoop
         self.weather = weather
 
-    async def sync_all(self) -> dict[str, int | str]:
-        results: dict[str, int | str] = {}
+    async def sync_all(self) -> dict[str, int | dict | str]:
+        results: dict[str, int | dict | str] = {}
         for source in ["strava", "eight_sleep", "whoop", "weather"]:
             try:
                 count = await getattr(self, f"sync_{source}")()
@@ -360,20 +360,66 @@ class SyncEngine:
 
     # ── Weather enrichment ──────────────────────────────────────────
 
-    async def sync_weather(self) -> int:
-        if not self.weather.is_configured:
-            return 0
+    async def sync_weather(
+        self,
+        *,
+        limit: int | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, int]:
+        """Enrich activities with historical weather data.
 
-        # Find outdoor activities without weather data
-        result = await self.db.execute(
-            select(Activity).where(
-                Activity.weather_enriched == False,  # noqa: E712
-                Activity.start_lat.isnot(None),
-                Activity.start_lng.isnot(None),
-            )
-        )
+        Iterates activities with start_lat/start_lng and
+        ``weather_enriched == False``, fetches the One Call 3.0 timemachine
+        response, and inserts a ``WeatherSnapshot`` row. Stops cleanly on
+        ``WeatherRateLimitError`` (429 / invalid-key 401).
+
+        Args:
+            limit: cap on number of activities processed this pass. ``None``
+                means "all pending".
+            dry_run: when ``True``, only counts candidates and makes no API
+                calls / DB writes.
+
+        Returns:
+            ``{"enriched": n, "skipped": n, "failed": n, "remaining": n}``.
+            ``remaining`` is the count of still-un-enriched activities after
+            this pass (useful for driving a backfill loop).
+        """
+        pending_q = select(Activity).where(
+            Activity.weather_enriched == False,  # noqa: E712
+            Activity.start_lat.isnot(None),
+            Activity.start_lng.isnot(None),
+        ).order_by(Activity.start_date.desc())
+
+        if limit is not None:
+            pending_q = pending_q.limit(limit)
+
+        result = await self.db.execute(pending_q)
         activities = result.scalars().all()
-        count = 0
+
+        enriched = 0
+        skipped = 0
+        failed = 0
+
+        if dry_run:
+            skipped = len(activities)
+            remaining = await self._weather_remaining_count()
+            return {
+                "enriched": 0,
+                "skipped": skipped,
+                "failed": 0,
+                "remaining": remaining,
+            }
+
+        if not self.weather.is_configured:
+            # Still return a structured response so callers can treat this
+            # consistently rather than hitting a silent 0.
+            remaining = await self._weather_remaining_count()
+            return {
+                "enriched": 0,
+                "skipped": len(activities),
+                "failed": 0,
+                "remaining": remaining,
+            }
 
         for activity in activities:
             try:
@@ -382,29 +428,60 @@ class SyncEngine:
                     lng=activity.start_lng,
                     dt=activity.start_date,
                 )
-                if weather_data:
-                    snapshot = WeatherSnapshot(
-                        activity_id=activity.id,
-                        temp_c=weather_data["temp_c"],
-                        feels_like_c=weather_data["feels_like_c"],
-                        humidity=weather_data["humidity"],
-                        wind_speed=weather_data["wind_speed"],
-                        wind_gust=weather_data.get("wind_gust"),
-                        wind_deg=weather_data.get("wind_deg"),
-                        conditions=weather_data.get("conditions"),
-                        description=weather_data.get("description"),
-                        pressure=weather_data.get("pressure"),
-                        uv_index=weather_data.get("uv_index"),
-                        raw_data=weather_data.get("raw_data"),
-                    )
-                    self.db.add(snapshot)
-                    activity.weather_enriched = True
-                    count += 1
-            except Exception:
-                continue  # Don't fail the whole batch for one activity
+            except WeatherRateLimitError:
+                logger.warning(
+                    "Weather rate limit / auth failure; stopping sync loop."
+                )
+                # Commit what we have so progress isn't lost.
+                await self.db.commit()
+                break
+            except Exception as e:
+                logger.warning(
+                    f"Weather fetch failed for activity {activity.id}: {e}"
+                )
+                failed += 1
+                continue
+
+            if not weather_data:
+                skipped += 1
+                continue
+
+            snapshot = WeatherSnapshot(
+                activity_id=activity.id,
+                temp_c=weather_data["temp_c"],
+                feels_like_c=weather_data["feels_like_c"],
+                humidity=weather_data["humidity"],
+                wind_speed=weather_data["wind_speed"],
+                wind_gust=weather_data.get("wind_gust"),
+                wind_deg=weather_data.get("wind_deg"),
+                conditions=weather_data.get("conditions"),
+                description=weather_data.get("description"),
+                pressure=weather_data.get("pressure"),
+                uv_index=weather_data.get("uv_index"),
+                raw_data=weather_data.get("raw_data"),
+            )
+            self.db.add(snapshot)
+            activity.weather_enriched = True
+            enriched += 1
 
         await self.db.commit()
-        return count
+        remaining = await self._weather_remaining_count()
+        return {
+            "enriched": enriched,
+            "skipped": skipped,
+            "failed": failed,
+            "remaining": remaining,
+        }
+
+    async def _weather_remaining_count(self) -> int:
+        """Count activities still awaiting weather enrichment."""
+        return (await self.db.execute(
+            select(func.count()).select_from(Activity).where(
+                Activity.weather_enriched == False,  # noqa: E712
+                Activity.start_lat.isnot(None),
+                Activity.start_lng.isnot(None),
+            )
+        )).scalar_one()
 
 
 def settings_eight_sleep_configured() -> bool:
