@@ -68,14 +68,28 @@ def create_app() -> FastAPI:
     async def health_check():
         return {"status": "ok", "version": "0.1.0"}
 
-    # Serve the built React frontend from the same server
+    # Serve the built React frontend from the same server.
+    #
+    # Hashed files under /assets are safe to cache forever (each Vite build
+    # rewrites the filename), but index.html MUST NOT be cached by the
+    # browser — otherwise a stale index.html keeps pointing at an old JS
+    # bundle filename and any backend change (like a new router) never gets
+    # picked up. Real users hit this as "Unexpected token '<'" errors when
+    # the cached JS calls an endpoint that didn't exist in the old deploy.
     if FRONTEND_DIR.exists():
         app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="static")
 
         @app.get("/{full_path:path}")
         async def serve_frontend(request: Request, full_path: str):
             # Serve index.html for all non-API routes (SPA client-side routing)
-            return FileResponse(FRONTEND_DIR / "index.html")
+            return FileResponse(
+                FRONTEND_DIR / "index.html",
+                headers={
+                    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                    "Pragma": "no-cache",
+                    "Expires": "0",
+                },
+            )
 
     return app
 

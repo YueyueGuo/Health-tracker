@@ -132,15 +132,23 @@ export default function Sleep() {
       </div>
 
       <div className="card">
-        <h2>Nightly Stages — Last 30 Days (minutes)</h2>
+        <h2>Nightly Stages — Last 30 Days</h2>
         <ResponsiveContainer width="100%" height={280}>
           <BarChart data={stagesChartData}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
             <XAxis dataKey="date" stroke="var(--text-muted)" fontSize={12} />
-            <YAxis stroke="var(--text-muted)" />
-            <Tooltip
-              contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
+            <YAxis
+              stroke="var(--text-muted)"
+              tickFormatter={formatMinutesAxis}
+              label={{
+                value: "Duration",
+                angle: -90,
+                position: "insideLeft",
+                fill: "var(--text-muted)",
+                fontSize: 12,
+              }}
             />
+            <Tooltip content={<StagesTooltip />} />
             <Legend />
             <Bar dataKey="deep" stackId="stages" fill={STAGE_COLORS.deep} name="Deep" />
             <Bar dataKey="rem" stackId="stages" fill={STAGE_COLORS.rem} name="REM" />
@@ -316,6 +324,109 @@ function formatDurationMinutes(minutes?: number | null): string {
   const h = Math.floor(minutes / 60);
   const m = Math.round(minutes % 60);
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+/**
+ * Y-axis tick formatter for the stages chart. Anything >= 60 minutes
+ * reads as whole hours (1h, 2h, 3h…); shorter ticks stay in minutes so
+ * you can still tell 30m apart from 45m near the bottom of the axis.
+ */
+function formatMinutesAxis(minutes: number): string {
+  if (minutes == null) return "";
+  if (minutes >= 60) {
+    const h = minutes / 60;
+    return Number.isInteger(h) ? `${h}h` : `${h.toFixed(1)}h`;
+  }
+  return `${Math.round(minutes)}m`;
+}
+
+/**
+ * Tooltip entry formatter: "1h 23m (28%)" when the stage ran over an
+ * hour, "45m (12%)" otherwise. ``total`` is the night's stacked sleep
+ * total including Awake time so the four percentages always add up to
+ * 100. If the total is zero (shouldn't happen in practice), we skip the
+ * percent suffix so we don't render "NaN%".
+ */
+function formatStageValue(minutes: number, total: number): string {
+  if (!minutes || minutes < 0) return "0m";
+  const pct = total > 0 ? Math.round((minutes / total) * 100) : null;
+  const pctSuffix = pct != null ? ` (${pct}%)` : "";
+  if (minutes >= 60) {
+    const h = Math.floor(minutes / 60);
+    const m = Math.round(minutes % 60);
+    const core = m > 0 ? `${h}h ${m}m` : `${h}h`;
+    return `${core}${pctSuffix}`;
+  }
+  return `${Math.round(minutes)}m${pctSuffix}`;
+}
+
+/**
+ * Custom Recharts tooltip for the stacked stages chart.
+ *
+ * Recharts gives us one ``payload`` entry per stacked series (Deep /
+ * REM / Light / Awake). We sum all four to compute the night's total,
+ * then render each stage as "<duration> (<pct>%)". Total is shown at
+ * the bottom so you can see the full night at a glance.
+ */
+function StagesTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: any[];
+  label?: string;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+  const total = payload.reduce(
+    (sum, p) => sum + (typeof p.value === "number" ? p.value : 0),
+    0
+  );
+  return (
+    <div
+      style={{
+        background: "var(--bg-card)",
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        padding: "10px 12px",
+        fontSize: 13,
+        minWidth: 180,
+      }}
+    >
+      <div style={{ fontWeight: 600, marginBottom: 6 }}>{label}</div>
+      {payload.map((p) => (
+        <div
+          key={p.dataKey}
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            color: p.color,
+          }}
+        >
+          <span>{p.name}</span>
+          <span style={{ color: "var(--text)" }}>
+            {formatStageValue(p.value || 0, total)}
+          </span>
+        </div>
+      ))}
+      <div
+        style={{
+          marginTop: 6,
+          paddingTop: 6,
+          borderTop: "1px solid var(--border)",
+          display: "flex",
+          justifyContent: "space-between",
+          color: "var(--text-muted)",
+        }}
+      >
+        <span>Total</span>
+        <span style={{ color: "var(--text)" }}>
+          {formatDurationMinutes(total)}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 function formatDurationSeconds(seconds: number): string {
