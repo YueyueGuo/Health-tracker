@@ -18,16 +18,16 @@ class SyncRequest(BaseModel):
 @router.post("/trigger")
 async def trigger_sync(req: SyncRequest, db: AsyncSession = Depends(get_db)):
     """Manually trigger a data sync."""
+    from backend.clients import get_weather_client
     from backend.clients.eight_sleep import EightSleepClient
     from backend.clients.strava import StravaClient
-    from backend.clients.weather import WeatherClient
     from backend.clients.whoop import WhoopClient
     from backend.services.sync import SyncEngine
 
     strava = StravaClient()
     eight_sleep = EightSleepClient()
     whoop = WhoopClient()
-    weather = WeatherClient()
+    weather = get_weather_client()
 
     engine = SyncEngine(db, strava, eight_sleep, whoop, weather)
 
@@ -53,7 +53,9 @@ async def trigger_sync(req: SyncRequest, db: AsyncSession = Depends(get_db)):
             unconfigured.append("eight_sleep")
         if not settings.whoop.enabled:
             unconfigured.append("whoop")
-        if not settings.weather.api_key:
+        # Only flag weather as unconfigured when the chosen provider
+        # actually needs credentials (Open-Meteo does not).
+        if settings.weather_provider == "openweathermap" and not settings.weather.api_key:
             unconfigured.append("weather")
 
         return {

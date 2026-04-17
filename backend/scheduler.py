@@ -12,9 +12,9 @@ logger = logging.getLogger(__name__)
 
 async def _run_sync(source: str = "all"):
     """Background sync job."""
+    from backend.clients import get_weather_client
     from backend.clients.eight_sleep import EightSleepClient
     from backend.clients.strava import StravaClient
-    from backend.clients.weather import WeatherClient
     from backend.clients.whoop import WhoopClient
     from backend.services.sync import SyncEngine
 
@@ -22,7 +22,7 @@ async def _run_sync(source: str = "all"):
         strava = StravaClient()
         eight_sleep = EightSleepClient()
         whoop = WhoopClient()
-        weather = WeatherClient()
+        weather = get_weather_client()
         engine = SyncEngine(db, strava, eight_sleep, whoop, weather)
 
         try:

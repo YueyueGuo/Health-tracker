@@ -22,7 +22,7 @@ class WeatherBackfillRequest(BaseModel):
     )
     dry_run: bool = Field(
         False,
-        description="Count candidates without hitting the OpenWeatherMap API.",
+        description="Count candidates without hitting the weather provider.",
     )
 
 
@@ -41,9 +41,9 @@ async def backfill_weather(
 
     ``{"enriched": int, "skipped": int, "failed": int, "remaining": int}``.
     """
+    from backend.clients import get_weather_client
     from backend.clients.eight_sleep import EightSleepClient
     from backend.clients.strava import StravaClient
-    from backend.clients.weather import WeatherClient
     from backend.clients.whoop import WhoopClient
     from backend.services.sync import SyncEngine
 
@@ -54,7 +54,7 @@ async def backfill_weather(
     strava = StravaClient()
     eight_sleep = EightSleepClient()
     whoop = WhoopClient()
-    weather = WeatherClient()
+    weather = get_weather_client()
 
     try:
         engine = SyncEngine(db, strava, eight_sleep, whoop, weather)

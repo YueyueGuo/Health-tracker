@@ -1,15 +1,20 @@
-"""Full-history OpenWeatherMap backfill.
+"""Full-history weather backfill.
 
 Walks through activities that have start_lat/start_lng but
-``weather_enriched=False`` and inserts a ``WeatherSnapshot`` per activity
-using the One Call 3.0 timemachine endpoint.
+``weather_enriched=False`` and inserts a ``WeatherSnapshot`` per
+activity using the currently-configured weather provider
+(``WEATHER_PROVIDER`` in ``.env``).
 
 Safe to ctrl-C and re-run — state lives in ``activities.weather_enriched``.
 
-The free tier allows 1000 calls/day and 60 calls/min. The WeatherClient
-self-throttles at ~1 call/sec, and this script caps total calls at
-``--max-calls`` (default 900) so a single run stays well under the soft
-daily cap. It also stops cleanly on 429 / invalid-key 401 responses.
+Provider notes:
+
+* **Open-Meteo** (default): free, no key, no hard daily cap. ``--max-calls``
+  is mostly a courtesy cap for politeness; the client self-throttles at
+  ~4 req/sec.
+* **OpenWeatherMap** (fallback): 1000 calls/day + 60/min free tier.
+  ``--max-calls`` defaults to 900 to leave headroom for the scheduler.
+  Stops cleanly on 429 / invalid-key 401.
 
 Usage::
 
@@ -29,10 +34,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import func, select
 
+from backend.clients import get_weather_client
 from backend.clients.eight_sleep import EightSleepClient
 from backend.clients.strava import StravaClient
-from backend.clients.weather import WeatherClient, WeatherRateLimitError
+from backend.clients.weather import WeatherRateLimitError
 from backend.clients.whoop import WhoopClient
+from backend.config import settings
 from backend.database import async_session
 from backend.models import Activity, WeatherSnapshot
 from backend.services.sync import SyncEngine
@@ -40,7 +47,7 @@ from backend.services.sync import SyncEngine
 
 def _fmt_quota(q: dict) -> str:
     calls = q.get("calls_today") or 0
-    limit = q.get("daily_limit") or 1000
+    limit = q.get("daily_limit") or 0
     return f"calls_today={calls}/{limit}"
 
 
@@ -62,7 +69,7 @@ async def _pending_count() -> int:
         )).scalar_one()
 
 
-async def _run_once(weather: WeatherClient, batch: int, *, dry_run: bool) -> dict:
+async def _run_once(weather, batch: int, *, dry_run: bool) -> dict:
     """One iteration of sync_weather against a fresh DB session."""
     async with async_session() as db:
         engine = SyncEngine(
@@ -82,11 +89,12 @@ async def main() -> int:
         help="Activities to enrich per iteration (default: 50).",
     )
     parser.add_argument(
-        "--max-calls", type=int, default=900,
+        "--max-calls", type=int, default=5000,
         help=(
-            "Hard cap on total API calls this run. OpenWeatherMap's free "
-            "tier is 1000 calls/day; 900 leaves headroom for the scheduler "
-            "(default: 900)."
+            "Hard cap on total API calls this run. Open-Meteo has no "
+            "strict daily cap (generous fair-use), so this defaults to "
+            "5000. For OpenWeatherMap the 1000/day free tier makes 900 a "
+            "safer value (default: 5000)."
         ),
     )
     parser.add_argument(
@@ -95,11 +103,14 @@ async def main() -> int:
     )
     args = parser.parse_args()
 
-    weather = WeatherClient()
+    provider = settings.weather_provider
+    weather = get_weather_client()
+    print(f"Weather provider: {provider}")
     if not weather.is_configured and not args.dry_run:
         print(
-            "OPENWEATHERMAP_API_KEY is not set — aborting. "
-            "Add it to .env or run with --dry-run."
+            "Weather provider is not configured — aborting. "
+            "For OpenWeatherMap, set OPENWEATHERMAP_API_KEY in .env; "
+            "for Open-Meteo no key is required (set WEATHER_PROVIDER=openmeteo)."
         )
         await weather.close()
         return 1
@@ -157,7 +168,7 @@ async def main() -> int:
                     weather, batch=effective_batch, dry_run=False
                 )
             except WeatherRateLimitError as e:
-                stopped_reason = f"OpenWeatherMap rate limit / auth: {e}"
+                stopped_reason = f"{provider} rate limit / auth: {e}"
                 break
 
             enriched = result["enriched"]

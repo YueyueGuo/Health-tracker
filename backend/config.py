@@ -105,6 +105,12 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
+    # Weather provider. Supported values:
+    #   "openmeteo"       — Open-Meteo ERA5 archive (default, free, no key)
+    #   "openweathermap"  — OpenWeatherMap One Call 3.0 (requires paid subscription)
+    # Overridable via WEATHER_PROVIDER in .env.
+    weather_provider: str = "openmeteo"
+
     # Sub-settings
     strava: StravaSettings = Field(default_factory=StravaSettings)
     eight_sleep: EightSleepSettings = Field(default_factory=EightSleepSettings)

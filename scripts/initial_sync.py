@@ -5,9 +5,9 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from backend.clients import get_weather_client
 from backend.clients.eight_sleep import EightSleepClient
 from backend.clients.strava import StravaClient
-from backend.clients.weather import WeatherClient
 from backend.clients.whoop import WhoopClient
 from backend.database import async_session, init_db
 from backend.services.sync import SyncEngine
@@ -21,7 +21,7 @@ async def main():
         strava = StravaClient()
         eight_sleep = EightSleepClient()
         whoop = WhoopClient()
-        weather = WeatherClient()
+        weather = get_weather_client()
         engine = SyncEngine(db, strava, eight_sleep, whoop, weather)
 
         try:

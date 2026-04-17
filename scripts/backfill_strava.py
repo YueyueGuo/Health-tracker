@@ -29,9 +29,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import func, select
 
+from backend.clients import get_weather_client
 from backend.clients.eight_sleep import EightSleepClient
 from backend.clients.strava import StravaClient
-from backend.clients.weather import WeatherClient
 from backend.clients.whoop import WhoopClient
 from backend.database import async_session
 from backend.models import Activity
@@ -56,7 +56,7 @@ async def _phase_a(strava: StravaClient) -> int:
     """Run Phase A (list all activities). Returns new-row count."""
     async with async_session() as db:
         engine = SyncEngine(
-            db, strava, EightSleepClient(), WhoopClient(), WeatherClient()
+            db, strava, EightSleepClient(), WhoopClient(), get_weather_client()
         )
         print("Phase A: listing all activities from Strava...")
         new_count = await engine._strava_phase_a(full_history=True)
@@ -68,7 +68,7 @@ async def _phase_b_once(strava: StravaClient, batch: int) -> int:
     """Run one Phase B iteration. Returns enriched count."""
     async with async_session() as db:
         engine = SyncEngine(
-            db, strava, EightSleepClient(), WhoopClient(), WeatherClient()
+            db, strava, EightSleepClient(), WhoopClient(), get_weather_client()
         )
         enriched = await engine._strava_phase_b(limit=batch)
         return enriched

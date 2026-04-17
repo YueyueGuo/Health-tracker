@@ -48,16 +48,16 @@ class ChatHandler:
 
     async def trigger_sync(self, source: str = "all") -> dict[str, int]:
         """Trigger a data sync."""
+        from backend.clients import get_weather_client
         from backend.clients.eight_sleep import EightSleepClient
         from backend.clients.strava import StravaClient
-        from backend.clients.weather import WeatherClient
         from backend.clients.whoop import WhoopClient
         from backend.services.sync import SyncEngine
 
         strava = StravaClient()
         eight_sleep = EightSleepClient()
         whoop = WhoopClient()
-        weather = WeatherClient()
+        weather = get_weather_client()
         engine = SyncEngine(self.db, strava, eight_sleep, whoop, weather)
 
         try:
