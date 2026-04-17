@@ -258,17 +258,141 @@ EIGHT_SLEEP_USER_ID=            # auto-persisted
 EIGHT_SLEEP_CLIENT_ID=          # optional; defaults to public app credentials
 EIGHT_SLEEP_CLIENT_SECRET=      # optional; defaults to public app credentials
 ```
-
+## Elevation / altitude enrichment
+Added in PR #1 (merged as `b7e661c`). User lives at sea level; this pipeline
+surfaces when a workout happened at altitude so HR/pace shifts on travel
+weeks are legible.
+### Concept split
+- `activities.total_elevation` — elevation **gained** during the workout
+  (already existed; from Strava `total_elevation_gain`).
+- `activities.base_elevation_m` — **altitude above sea level** where the
+  workout happened. New. Canonical value used by the classifier and
+  correlations.
+### Four-path derivation (`backend/services/elevation_sync.py`)
+Precedence for `base_elevation_m`:
+1. **Strava `elev_low_m`** — authoritative, watch-recorded. Extracted from
+   the detail response in `_apply_detail_to_activity` and also available
+   in `raw_data` for every already-enriched activity (hence Phase 1 of
+   the backfill needs zero new API calls).
+2. **Attached `UserLocation`** via `activities.location_id` — user picked
+   a saved place on the activity.
+3. **Open-Meteo elevation API** lookup by `start_lat`/`start_lng` — free,
+   no key. Used when the watch didn't record altitude but the phone still
+   captured coords.
+4. **Default `UserLocation`** (`is_default=True`) — auto-applies to
+   activities with no coords AND no explicit attachment. Typical indoor
+   strength session at home.
+`elevation_enriched` mirrors `weather_enriched` as the worklist key. Once
+flipped True we don't re-evaluate — even if `base_elevation_m` ended up
+NULL (no default location at the time). Attaching a location later calls
+`recompute_for_activity` directly.
+### User locations
+New `user_locations` table + `backend/routers/locations.py`:
+- `GET /api/locations` — list saved places
+- `GET /api/locations/search?q=...` — proxies Open-Meteo's free geocoding
+  (no key). Returns name + lat/lng + elevation in one shot for landmark
+  queries, so the common path needs no follow-up elevation call.
+- `POST /api/locations` — create. Accepts `{name, lat, lng, elevation_m?}`
+  OR `{name, from_activity_id}` (derive coords/elevation from an existing
+  Strava activity). Missing elevation resolved via Open-Meteo.
+- `PATCH /api/locations/{id}`, `DELETE /api/locations/{id}`,
+  `POST /api/locations/{id}/set-default`.
+- `POST /api/activities/{id}/location` / `DELETE` — attach/detach
+  (triggers `recompute_for_activity`). Mounted under `/api/activities`
+  even though it lives in `routers/locations.py`, for REST consistency.
+Invariant: at most one row has `is_default=True`. Enforced in code (via
+`_clear_other_defaults`) rather than a partial unique index so SQLite
+doesn't fight us.
+### Classifier tier flags
+`backend/services/classifier.py` adds a tiered altitude flag (at most one
+per activity, orthogonal to workout type):
+- `altitude_low` — ≥ 610 m (~2,000 ft). Tuned conservatively for a
+  sea-level athlete.
+- `altitude_moderate` — ≥ 1,500 m (~5,000 ft).
+- `altitude_high` — ≥ 2,500 m (~8,200 ft).
+Wired into both `_run_flags` and `_ride_flags` via `_altitude_flag()`.
+Coexists with `is_long`, `is_hilly`, etc.
+### Correlations
+`base_elevation_m` added to `ACTIVITY_METRICS` in
+`backend/services/correlations.py`. Sparse by design (sea-level workouts);
+the existing `MIN_PAIRED_SAMPLES=8` gate returns null cells until enough
+altitude data exists to compute Pearson r.
+### Client (`backend/clients/elevation.py`)
+Two Open-Meteo endpoints, both free and no-key:
+- `api.open-meteo.com/v1/elevation` — point lookup.
+- `geocoding-api.open-meteo.com/v1/search` — name search, returns
+  elevation inline.
+Mirrors the weather client pattern: self-throttled at ~4 req/sec,
+module-level `_quota_state`, 429 → typed `ElevationRateLimitError`.
+`is_configured=True` always.
+### Backfill (`scripts/backfill_elevation.py`)
+Two phases, resumable via `elevation_enriched`:
+1. **Phase 1 — Strava promotion.** Re-reads `Activity.raw_data` and
+   populates `elev_high_m`/`elev_low_m`/`base_elevation_m` from the
+   cached Strava detail blob. **Zero API calls.** Runs in seconds.
+   Covered 1,512 / 1,754 activities on the initial run.
+   - **Pagination gotcha**: the query filters on
+     `elevation_enriched == False` and flips that flag as we go, so using
+     OFFSET would skip unprocessed rows. The script re-queries the first
+     `page_size` rows each iteration instead. If a full page passes
+     without progress, we stop to avoid looping forever on indoor rows.
+2. **Phase 2 — Open-Meteo fallback.** Coords-only gaps + default-location
+   application. `--phase1-only`, `--dry-run`, `--batch`, `--max-calls`
+   flags mirror `backfill_weather.py` for consistency.
+### Frontend
+- `frontend/src/components/ActivityDetail.tsx` — new Base Altitude metric
+  card gated at `base_elevation_m >= 610` with tier subtext. Kept
+  separate from the existing "Elevation Gain" card.
+- `frontend/src/components/LocationPicker.tsx` — shown on activity detail
+  when `start_lat`/`start_lng` are null. Three entry paths, **no raw
+  coords required**: pick-saved / search-by-name / use-current-location
+  (`navigator.geolocation`).
+- `frontend/src/pages/Settings.tsx` (route `/settings`) — list + add (all
+  three paths above + an advanced raw-coords form) + rename + delete +
+  set-default. Tier thresholds mirrored in a small constant at the top of
+  `ActivityDetail.tsx`; keep in sync with classifier constants if they
+  ever change.
+- `ClassificationBadge` humanizes `altitude_low` / `altitude_moderate` /
+  `altitude_high`.
+### Tests (29 new, all passing)
+- `tests/test_clients/test_elevation.py` (9) — elevation happy path, 429,
+  missing-key null, geocoding search + malformed-record skipping.
+- `tests/test_sync/test_elevation_sync.py` (13) — each of the four
+  derivation paths, default-location fallback, enrichment idempotency,
+  rate-limit mid-loop, `recompute_for_activity`, `extract_elev_from_raw`.
+- `tests/test_sync/test_classifier_altitude.py` (7) — tier boundaries,
+  flag coexistence with `is_long` / `is_hilly`, ride vs run.
+### Migration
+- `a7e2c5f8b1d3` — adds `elev_high_m`, `elev_low_m`, `base_elevation_m`,
+  `elevation_enriched`, `location_id` to `activities`; creates
+  `user_locations`.
+### Phase 1 backfill state (as of merge)
+- **1,512 / 1,754 activities enriched** via Phase 1 (cached `raw_data`).
+- **242 still pending** `elevation_enriched=False`:
+  - 62 `complete` indoor rows with no GPS (waiting on a default location
+    to be set, then Phase 2 to pick them up).
+  - 180 `pending` Strava rows (will be handled on the next Strava
+    enrichment pass).
+- Reclassify pass ran on 756 activities; altitude flags applied where
+  relevant. Top elevation in the DB: 4,680 m (Kilimanjaro summit, July
+  2025).
+- **Phase 2 was intentionally skipped** — without a default `UserLocation`
+  it would flip the 62 indoor rows to `enriched=True` with `base=NULL`,
+  preventing a future default from retroactively applying. When the user
+  sets a home default via `/settings`, re-run `backfill_elevation.py`.
 ## Frontend layout
 - Routes wired in `frontend/src/App.tsx`: `/`, `/activities`, `/activities/:id`,
-  `/sleep`, `/recovery`, `/training`, `/ask`.
+  `/sleep`, `/recovery`, `/training`, `/ask`, `/settings`,
+  `/strength`, `/strength/new`.
 - Dashboard includes `WeeklySummaryCards` (4-week strip).
 - ActivityList has a Classification column + filter, Pace/HR + Relative
   Effort columns.
 - ActivityDetail has:
   - Classification badge + Reclassify button at top
-  - Metric cards (distance, duration, pace, power, elevation, work/kJ,
-    relative effort)
+  - Metric cards (distance, duration, pace, power, elevation gain, work/kJ,
+    relative effort, **base altitude** — gated ≥ 610 m)
+  - **LocationPicker** shown when the activity has no GPS coords (search /
+    current location / pick-saved)
   - Laps table with pace-zone row tinting
   - Time-in-zone bar charts (HR / pace / power — whichever are available)
   - "Load Streams" button (lazy) → uses `/api/activities/{id}/streams`
@@ -281,7 +405,7 @@ EIGHT_SLEEP_CLIENT_SECRET=      # optional; defaults to public app credentials
   Recharts consistent with the rest of the frontend.
 
 ## Alembic
-Linear chain: `initial → laps_zones_enrichment (a1c4f9d2e8b0) → eight_sleep_extra_fields (c3e7b18f92a4) → classification (b2d5e0f3c1a7) → sleep_wake_events (d89f2a41e6c3)`.
+Linear chain: `initial → laps_zones_enrichment (a1c4f9d2e8b0) → eight_sleep_extra_fields (c3e7b18f92a4) → classification (b2d5e0f3c1a7) → sleep_wake_events (d89f2a41e6c3) → strength_sets (e4a9b1c3d5f7) → whoop_workouts (f5a1c7b2d4e9) → elevation_and_user_locations (a7e2c5f8b1d3)`.
 
 New migrations that add nullable columns should use plain `op.add_column`
 (not `batch_alter_table`) — SQLite does ADD COLUMN as metadata-only, which is
@@ -302,35 +426,51 @@ safe to run while the backfill scheduler is writing.
 
 ## Open work / things to pick up
 
-- **Strand: strength session manual entry UI** — User wants to manually log
-  sets/reps/weight for strength sessions (Strava has no concept of them).
-  Scope discussed: new `strength_sets` table (exercise, reps, weight, rpe,
-  timestamp, FK to activities), a simple form UI, progression chart later.
-  Not started.
-- **Strand: Whoop modernization** — User just set up a Whoop device. Scope:
-  port `backend/clients/whoop.py` to the Strava client pattern (async,
-  rate-limit parsing, typed exceptions). If kicking off a parallel agent,
-  branch off `main` and avoid touching `sync_strava`, activities/summary
-  routers, or frontend.
+- **Elevation — Phase 2 follow-up.** Backfill Phase 2 was skipped
+  intentionally. Once a default `UserLocation` is set via `/settings`,
+  re-run `python scripts/backfill_elevation.py` to resolve the 62 indoor
+  activities and 180 pending-Strava rows.
+- **Phone-location PWA.** The `user_locations` + `location_id` schema is
+  the foundation. Add `navigator.geolocation` → `POST /api/location/ping`
+  → `location_pings` table → nightly timestamp-join to activities missing
+  coords. See the elevation plan doc in Warp Drive for the sketch.
+- **`/api/correlations/altitude-vs-effort`** — dedicated endpoint pairing
+  `base_elevation_m` against HR / suffer_score / pace for same-sport
+  activities. Low priority; the existing sleep-vs-activity matrix now
+  includes `base_elevation_m` so the signal already surfaces there.
 - **Classifier tuning** — Current distribution looks sensible after the
-  `max_pace_zone ≥ 3` gate, but only ~415 of 1754 activities are enriched.
-  Revisit once backfill completes.
+  `max_pace_zone ≥ 3` gate. Most activities now enriched (1,512 / 1,754
+  after elevation work). Revisit if specific sport mixes look off.
 - **Read rate limit header** — StravaClient doesn't parse
   `X-ReadRateLimit-Usage` separately. Cheap fix if we want to stop *before*
    429'ing instead of after.
 - **`/api/summary/weekly` filter** — UI doesn't yet filter activity list by
   clicking into a weekly summary card. Obvious follow-up.
-- **Tests** — Almost none for the new classifier / weekly summary / Strava
-  sync rewrite. The Eight Sleep work added 50 unit tests across clients,
-  sync, analytics, and correlations; the Strava side didn't.
+- **Strava-side tests** — Classifier, weekly summary, Strava sync rewrite
+  still under-tested. Elevation work added 29 tests (29 passing); Eight
+  Sleep work added 50. Strava side still catching up.
 
 ## Ambient state you should know about
-
 - `scripts/backfill_strava.py` was kicked off as a background process and
   may still be running (PID was 79610 at start; check `pgrep -f
   backfill_strava.py`). It's resumable, so killing it is safe.
-- Enrichment progress last checked: ~415 / 1754 complete.
+- Enrichment progress last checked: ~415 / 1754 complete. Note: the
+  elevation backfill ran against whatever subset was enriched at that
+  time; re-running `backfill_elevation.py --phase1-only` is safe and
+  picks up newly-enriched rows.
 - The ~230MB streams bloat has already been purged from the DB.
+- **Elevation backfill state:** 1,512 / 1,754 `elevation_enriched=True`;
+  62 indoor + 180 pending-Strava still `False`. Phase 2 deferred until a
+  default `UserLocation` is set (see the elevation section above).
+- **Another agent has uncommitted dashboard-insights work** in the working
+  tree (`backend/routers/insights.py`, `backend/services/insights.py`,
+  `backend/services/training_metrics.py`, `RecommendationCard.tsx`,
+  `LatestWorkoutCard.tsx`, `tests/test_services/test_insights.py`,
+  `tests/test_services/test_scheduler_jobs.py`, plus modifications to
+  `backend/config.py`, `backend/scheduler.py`, `backend/main.py`,
+  `backend/services/llm_providers.py`, `frontend/src/components/Dashboard.tsx`).
+  Do NOT commit these alongside elevation work — they're that agent's
+  scope and should land on their own branch.
 - User cleared with multi-day backfill being fine.
 
 ## Quick commands cheatsheet
@@ -347,7 +487,12 @@ curl http://localhost:8000/api/sync/status | jq '.strava_quota, .strava_enrichme
 
 # Reclassify everything after a threshold change
 python scripts/classify_all.py --force
-
 # Resume backfill in background
 nohup .venv/bin/python -u scripts/backfill_strava.py --no-list > backfill.log 2>&1 & disown
+# Elevation backfill — Phase 1 only (no API calls, ~few seconds)
+python scripts/backfill_elevation.py --phase1-only
+# Elevation backfill — full (Phase 1 + Open-Meteo fallback + default location)
+python scripts/backfill_elevation.py
+# Elevation distribution sanity-check
+sqlite3 health_tracker.db "SELECT COUNT(*), ROUND(AVG(base_elevation_m),1), ROUND(MAX(base_elevation_m),1), COUNT(CASE WHEN base_elevation_m >= 610 THEN 1 END) FROM activities WHERE base_elevation_m IS NOT NULL"
 ```
