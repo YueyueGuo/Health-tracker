@@ -41,9 +41,15 @@ SHORT_WINDOW_SLEEP_SECONDS = 15 * 60 + 30  # 15min + buffer
 
 
 def _fmt_quota(q: dict) -> str:
-    short = f"{q.get('short_used')}/{q.get('short_limit')}"
-    long = f"{q.get('long_used')}/{q.get('long_limit')}"
-    return f"short={short} daily={long}"
+    combined = (
+        f"short={q.get('short_used')}/{q.get('short_limit')} "
+        f"daily={q.get('long_used')}/{q.get('long_limit')}"
+    )
+    read = (
+        f"read-short={q.get('read_short_used')}/{q.get('read_short_limit')} "
+        f"read-daily={q.get('read_long_used')}/{q.get('read_long_limit')}"
+    )
+    return f"{combined} | {read}"
 
 
 async def _phase_a(strava: StravaClient) -> int:
@@ -103,6 +109,7 @@ async def main() -> int:
 
         iteration = 0
         total_enriched = 0
+        consecutive_empty = 0
         while True:
             iteration += 1
             pending = await _pending_count()
@@ -123,19 +130,31 @@ async def main() -> int:
             total_enriched += enriched
             print(f"Iteration {iteration}: enriched {enriched} activities.")
 
-            q = strava.quota_usage()
-            long_used = q.get("long_used") or 0
-            long_limit = q.get("long_limit") or 1000
-            if long_used >= long_limit * 0.98:
+            # Any daily quota (combined OR read) near ceiling = bail. 15-min
+            # sleeps cannot recover a daily counter; it only resets at UTC
+            # midnight, so looping is just burning cycles.
+            if StravaClient.daily_quota_exhausted(fraction=0.98):
+                hit = StravaClient.which_quota_exhausted(fraction=0.98)
                 print(
-                    f"\nDaily quota nearly exhausted ({long_used}/{long_limit}). "
-                    f"Stop and rerun tomorrow to continue."
+                    f"\nDaily quota exhausted ({', '.join(hit)}). "
+                    f"Quota snapshot: {_fmt_quota(strava.quota_usage())}. "
+                    f"Stop and rerun after UTC midnight to continue."
                 )
                 break
 
             if enriched == 0:
-                # Either rate-limited or a bunch of hard errors. If there are
-                # still pending rows, sleep one short-window and retry.
+                consecutive_empty += 1
+                # Safety: if we just slept 15min and STILL enriched zero, a
+                # daily ceiling (or an auth problem) is in play. Don't loop
+                # forever — bail after two back-to-back empties.
+                if consecutive_empty >= 2:
+                    print(
+                        "\nTwo consecutive empty iterations after sleeping. "
+                        "The short-window reset didn't unblock us, so a "
+                        "daily quota or auth issue is likely. "
+                        f"Quota: {_fmt_quota(strava.quota_usage())}."
+                    )
+                    break
                 if (await _pending_count()) > 0:
                     print(
                         f"Short-window quota likely hit; sleeping "
@@ -145,6 +164,8 @@ async def main() -> int:
                     time.sleep(SHORT_WINDOW_SLEEP_SECONDS)
                 else:
                     break
+            else:
+                consecutive_empty = 0
 
         counts = await _completion_counts()
         print(
