@@ -20,6 +20,10 @@ env/
 *.db
 *.sqlite
 *.sqlite3
+*.db-shm
+*.db-wal
+*.bak
+backfill.log
 
 # IDE
 .vscode/

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.models import SyncLog
+from backend.models import Activity, SyncLog
 
 router = APIRouter()
 
@@ -71,7 +71,9 @@ async def trigger_sync(req: SyncRequest, db: AsyncSession = Depends(get_db)):
 
 @router.get("/status")
 async def sync_status(db: AsyncSession = Depends(get_db)):
-    """Get the last sync status for each source."""
+    """Get the last sync status for each source, plus Strava enrichment state."""
+    from backend.clients.strava import StravaClient
+
     sources = ["strava", "eight_sleep", "whoop", "weather"]
     statuses = {}
 
@@ -92,6 +94,20 @@ async def sync_status(db: AsyncSession = Depends(get_db)):
             }
         else:
             statuses[source] = {"status": "never", "last_sync": None}
+
+    # Strava-specific: enrichment breakdown + quota usage
+    counts_rows = (await db.execute(
+        select(Activity.enrichment_status, func.count())
+        .group_by(Activity.enrichment_status)
+    )).all()
+    strava_enrichment = {row[0]: row[1] for row in counts_rows}
+    statuses["strava_enrichment"] = {
+        "pending": strava_enrichment.get("pending", 0),
+        "complete": strava_enrichment.get("complete", 0),
+        "failed": strava_enrichment.get("failed", 0),
+        "total": sum(strava_enrichment.values()),
+    }
+    statuses["strava_quota"] = StravaClient.quota_usage()
 
     return statuses
 

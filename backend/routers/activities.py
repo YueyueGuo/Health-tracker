@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.models import Activity, ActivityStream, WeatherSnapshot
+from backend.models import Activity, ActivityLap, ActivityStream, WeatherSnapshot
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -60,20 +62,26 @@ async def activity_stats(
 
 @router.get("/{activity_id}")
 async def get_activity(activity_id: int, db: AsyncSession = Depends(get_db)):
-    """Get full activity detail including streams and weather."""
+    """Get full activity detail including laps, zones, and weather.
+
+    Does NOT include streams — those are fetched on-demand via
+    `GET /{activity_id}/streams` (see below) so they can be fetched lazily
+    and cached.
+    """
     result = await db.execute(
         select(Activity).where(Activity.id == activity_id)
     )
     activity = result.scalar_one_or_none()
     if not activity:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    # Get streams
-    streams_result = await db.execute(
-        select(ActivityStream).where(ActivityStream.activity_id == activity_id)
+    # Get laps
+    laps_result = await db.execute(
+        select(ActivityLap)
+        .where(ActivityLap.activity_id == activity_id)
+        .order_by(ActivityLap.lap_index)
     )
-    streams = {s.stream_type: s.data for s in streams_result.scalars().all()}
+    laps = [_lap_dict(lap) for lap in laps_result.scalars().all()]
 
     # Get weather
     weather_result = await db.execute(
@@ -81,11 +89,90 @@ async def get_activity(activity_id: int, db: AsyncSession = Depends(get_db)):
     )
     weather = weather_result.scalar_one_or_none()
 
+    # Does the activity have cached streams already? (metadata only)
+    streams_count = (await db.execute(
+        select(ActivityStream).where(ActivityStream.activity_id == activity_id)
+    )).scalars().first()
+
     detail = _activity_summary(activity)
-    detail["streams"] = streams
+    detail["laps"] = laps
+    detail["zones"] = activity.zones_data
     detail["weather"] = _weather_dict(weather) if weather else None
+    detail["streams_cached"] = streams_count is not None
     detail["raw_data"] = activity.raw_data
     return detail
+
+
+@router.post("/{activity_id}/classify")
+async def classify_activity(
+    activity_id: int, db: AsyncSession = Depends(get_db)
+):
+    """(Re-)run the classifier on this activity and persist the result.
+
+    Useful for debugging classifier changes without touching enrichment.
+    """
+    from backend.services.classifier import classify_and_persist, dump
+
+    activity = (await db.execute(
+        select(Activity).where(Activity.id == activity_id)
+    )).scalar_one_or_none()
+    if not activity:
+        raise HTTPException(status_code=404, detail="Activity not found")
+
+    laps = (await db.execute(
+        select(ActivityLap)
+        .where(ActivityLap.activity_id == activity_id)
+        .order_by(ActivityLap.lap_index)
+    )).scalars().all()
+
+    result = classify_and_persist(activity, list(laps))
+    await db.commit()
+    if result is None:
+        return {"classified": False, "reason": f"no classifier for sport {activity.sport_type}"}
+    return {"classified": True, **dump(result)}
+
+
+@router.get("/{activity_id}/streams")
+async def get_activity_streams(
+    activity_id: int, db: AsyncSession = Depends(get_db)
+):
+    """Get per-sample streams for an activity. Lazy-fetched from Strava.
+
+    First call for a given activity pulls streams from Strava and caches
+    them in `activity_streams`. Subsequent calls return the cached data.
+    """
+    activity = (await db.execute(
+        select(Activity).where(Activity.id == activity_id)
+    )).scalar_one_or_none()
+    if not activity:
+        raise HTTPException(status_code=404, detail="Activity not found")
+
+    cached = (await db.execute(
+        select(ActivityStream).where(ActivityStream.activity_id == activity_id)
+    )).scalars().all()
+    if cached:
+        return {s.stream_type: s.data for s in cached}
+
+    # Fetch + cache
+    from backend.clients.strava import StravaClient
+    client = StravaClient()
+    try:
+        streams = await client.get_activity_streams(activity.strava_id)
+    except Exception as e:
+        logger.warning(f"Streams fetch failed for activity {activity_id}: {e}")
+        raise HTTPException(status_code=502, detail=f"Strava streams fetch failed: {e}")
+    finally:
+        await client.close()
+
+    for stream_type, data in streams.items():
+        if data:
+            db.add(ActivityStream(
+                activity_id=activity_id,
+                stream_type=stream_type,
+                data=data,
+            ))
+    await db.commit()
+    return streams
 
 
 def _activity_summary(a: Activity) -> dict:
@@ -105,11 +192,43 @@ def _activity_summary(a: Activity) -> dict:
         "average_speed": a.average_speed,
         "max_speed": a.max_speed,
         "average_power": a.average_power,
+        "max_power": a.max_power,
+        "weighted_avg_power": a.weighted_avg_power,
         "average_cadence": a.average_cadence,
         "calories": a.calories,
+        "kilojoules": a.kilojoules,
         "suffer_score": a.suffer_score,
-        "has_streams": a.has_streams,
+        "device_watts": a.device_watts,
+        "workout_type": a.workout_type,
+        "available_zones": a.available_zones,
+        "enrichment_status": a.enrichment_status,
+        "enriched_at": a.enriched_at.isoformat() if a.enriched_at else None,
+        "classification_type": a.classification_type,
+        "classification_flags": a.classification_flags,
+        "classified_at": a.classified_at.isoformat() if a.classified_at else None,
         "weather_enriched": a.weather_enriched,
+    }
+
+
+def _lap_dict(lap: ActivityLap) -> dict:
+    return {
+        "lap_index": lap.lap_index,
+        "name": lap.name,
+        "elapsed_time": lap.elapsed_time,
+        "moving_time": lap.moving_time,
+        "distance": lap.distance,
+        "start_date": lap.start_date.isoformat() if lap.start_date else None,
+        "average_speed": lap.average_speed,
+        "max_speed": lap.max_speed,
+        "average_heartrate": lap.average_heartrate,
+        "max_heartrate": lap.max_heartrate,
+        "average_cadence": lap.average_cadence,
+        "average_watts": lap.average_watts,
+        "total_elevation_gain": lap.total_elevation_gain,
+        "pace_zone": lap.pace_zone,
+        "split": lap.split,
+        "start_index": lap.start_index,
+        "end_index": lap.end_index,
     }
 
 
