@@ -4,7 +4,9 @@ Personal health & fitness analytics platform that pulls data from Strava, Eight 
 
 ## Features
 
-- **Strava Integration** — Sync all workout data (runs, rides, strength, etc.) with full time-series streams (HR, pace, power, cadence, elevation)
+- **Strava Integration** — Two-phase sync pulls summary + laps + time-in-zone distributions for every activity. Per-sample streams (HR, pace, power, cadence, elevation) are fetched lazily on demand and cached.
+- **Workout Classifier** — Rules-based classification of runs (easy / tempo / intervals / race) and rides (recovery / endurance / tempo / mixed / race), with flags for `is_long`, `has_speed_component`, `has_warmup_cooldown`, `is_hilly`. See [`backend/services/classifier.py`](backend/services/classifier.py).
+- **Weekly Summary** — `/api/summary/weekly` returns per-week totals, per-sport breakdown, classification mix, and flags (long run, speed session, long ride). Rendered on the dashboard as a 4-week strip.
 - **Eight Sleep Integration** — Sleep stages, HRV, heart rate, respiratory rate, bed temperature
 - **Whoop Integration** — Recovery score, strain, sleep, HRV, SpO2, skin temp (ready for when device arrives)
 - **Weather Enrichment** — Automatic weather data for outdoor activities via OpenWeatherMap
@@ -44,6 +46,17 @@ python scripts/setup_db.py
 ```bash
 python scripts/initial_sync.py
 ```
+
+For Strava specifically, a full-history backfill is often easier than the
+initial sync because it's resumable and rate-limit aware:
+
+```bash
+python scripts/backfill_strava.py              # full history, multi-day safe
+python scripts/backfill_strava.py --no-list    # skip Phase A, only enrich
+python scripts/classify_all.py                 # classify enriched activities
+```
+
+Agent context for future work lives in [`CLAUDE.md`](CLAUDE.md).
 
 ### 5. Start the App
 
