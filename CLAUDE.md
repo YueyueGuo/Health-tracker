@@ -453,9 +453,10 @@ safe to run while the backfill scheduler is writing.
    429'ing instead of after.
 - **`/api/summary/weekly` filter** — UI doesn't yet filter activity list by
   clicking into a weekly summary card. Obvious follow-up.
-- **Strava-side tests** — Classifier (48) + weekly summary (21) now
-  covered; Strava sync engine (`SyncEngine.sync_strava` phase A/B
-  glue) still relies on manual verification.
+- **Strava-side tests** — Classifier, weekly summary, and `SyncEngine`
+  phase A/B are now covered (48 + 21 + 26 new tests). The remaining
+  Strava gap is full HTTP-level coverage of `StravaClient` OAuth /
+  refresh / pagination (header parsing is already tested).
 
 ## Ambient state you should know about
 - `scripts/backfill_strava.py` was kicked off as a background process and
@@ -539,7 +540,7 @@ so stack traces land in the log.
   no-op when pending=0, skip when daily quota hit, phase-B runs when
   quota ok.
 
-## Classifier + weekly-summary tests
+## Classifier + weekly-summary + Strava sync tests
 
 - `tests/test_sync/test_classifier.py` (48) — sport dispatch (run,
   ride, unsupported), run intervals (primary zone-4 branch + CV
@@ -561,9 +562,28 @@ so stack traces land in the log.
   suffer-score fallback, `enrichment_pending` / `classification_pending`
   counters (unsupported sports don't inflate classification pending),
   ISO-week string format, and `weekly_summaries` newest-first ordering.
+- `tests/test_sync/test_strava_sync.py` (26) — `sync_strava` happy path
+  (SyncLog success + enrichment count) + unconfigured short-circuit +
+  error branch (SyncLog error + re-raise). Phase A: `full_history`
+  passes `after=None`, incremental uses `max(start_date) - 7d`, new
+  activities land as `enrichment_status="pending"`, mutable-field
+  refresh inside the lookback window, mutable-field refresh suppressed
+  outside the lookback, missing `start_latlng` tolerated. Phase B:
+  detail + zones applied, laps inserted, classifier called, pre-loop
+  quota-exhausted no-ops, mid-loop quota flip breaks cleanly, 429
+  breaks loop and leaves activity pending (not failed), generic
+  per-activity exception marks `failed` and continues, `limit` kwarg
+  honored, newest-first ordering, empty zones persist as NULL,
+  classifier failures don't abort enrichment. Helpers: full field
+  mapping in `_apply_detail_to_activity`, `elev_low` seeds
+  `base_elevation_m` + flips `elevation_enriched`, indoor (no
+  elev_high/low) leaves the flag untouched, malformed elev_low
+  ignored, `_lap_from_raw` field mapping + malformed/missing
+  start_date handling.
 
-**Total repo test count: 217 passing** (Eight Sleep 54 + elevation 29
-+ dashboard/scheduler 33 + classifier/weekly-summary 69 + other suites).
+**Total repo test count: 243 passing** (Eight Sleep 54 + elevation 29
++ dashboard/scheduler 33 + classifier 48 + weekly-summary 21 + Strava
+sync engine 26 + other suites).
 
 ## Quick commands cheatsheet
 
