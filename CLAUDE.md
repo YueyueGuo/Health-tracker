@@ -453,9 +453,9 @@ safe to run while the backfill scheduler is writing.
    429'ing instead of after.
 - **`/api/summary/weekly` filter** — UI doesn't yet filter activity list by
   clicking into a weekly summary card. Obvious follow-up.
-- **Strava-side tests** — Classifier, weekly summary, Strava sync rewrite
-  still under-tested. Elevation work added 29 tests (29 passing); Eight
-  Sleep work added 50. Strava side still catching up.
+- **Strava-side tests** — Classifier (48) + weekly summary (21) now
+  covered; Strava sync engine (`SyncEngine.sync_strava` phase A/B
+  glue) still relies on manual verification.
 
 ## Ambient state you should know about
 - `scripts/backfill_strava.py` was kicked off as a background process and
@@ -539,8 +539,31 @@ so stack traces land in the log.
   no-op when pending=0, skip when daily quota hit, phase-B runs when
   quota ok.
 
-**Total repo test count: 148 passing** (Eight Sleep 54 + elevation 29
-+ dashboard/scheduler 33 + other suites).
+## Classifier + weekly-summary tests
+
+- `tests/test_sync/test_classifier.py` (48) — sport dispatch (run,
+  ride, unsupported), run intervals (primary zone-4 branch + CV
+  fallback + walk-is-not-intervals regression), auto-split detection
+  blocking intervals, tempo / easy / unknown-shape fallthrough, `is_long`
+  / `has_speed_component` / `has_warmup_cooldown` flag rules, artifact
+  lap filtering (<30s AND <50m), ride race / recovery / mixed / tempo /
+  endurance branches, ride `is_long` / `is_hilly` flags, and
+  `classify_and_persist` mutation + `describe`/`dump`/`to_persist`
+  helpers. Existing `test_classifier_altitude.py` (8) continues to cover
+  the altitude tier flag.
+- `tests/test_services/test_weekly_summary.py` (21) — `iso_week_start`
+  snap-to-Monday, empty-week zeroed shape, non-Monday input snap,
+  week-boundary exclusion (prior Sunday / next Monday don't leak),
+  totals + `by_sport` + `run_breakdown` (only runs, unclassified
+  bucket), flag rules (`has_long_run` tracks max distance,
+  `has_speed_session` / `has_tempo` / `has_race` / `has_long_ride`,
+  all-false on recovery weeks), `notable` longest/hardest plus
+  suffer-score fallback, `enrichment_pending` / `classification_pending`
+  counters (unsupported sports don't inflate classification pending),
+  ISO-week string format, and `weekly_summaries` newest-first ordering.
+
+**Total repo test count: 217 passing** (Eight Sleep 54 + elevation 29
++ dashboard/scheduler 33 + classifier/weekly-summary 69 + other suites).
 
 ## Quick commands cheatsheet
 
