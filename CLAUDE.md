@@ -236,13 +236,20 @@ Endpoints:
   bounded window, otherwise walks back in 90-day chunks. Idempotent:
   unique `(source, date)` constraint + update-on-diff so ctrl-C + re-run
   is safe. Took ~40 seconds to pull 3 years of history against the live API.
+- `scripts/backfill_sleep_latency.py` — one-shot: recomputes `latency`
+  from existing `raw_data.interval.stages` using the pre-sleep-only
+  logic in `_wake_stats`. Idempotent; skips rows that lack interval
+  stages. Already run against the historical data; future nightly syncs
+  populate the new shape directly.
 
-### Tests (50 total, all passing)
+### Tests (54 total, all passing)
 - `tests/test_clients/test_eight_sleep.py` (10) — auth flow, refresh
   rotation, 401 re-auth, env persistence helper.
-- `tests/test_sync/test_eight_sleep_sync.py` (22) — field extraction under
+- `tests/test_sync/test_eight_sleep_sync.py` (26) — field extraction under
   multiple trend-shape variants, timeseries tuple parsing, night-date
-  alignment, tz conversion (DST-sensitive cases), wake-stats derivation.
+  alignment, tz conversion (DST-sensitive cases), wake-stats derivation,
+  pre-sleep latency extraction (+ `stageSummary.awakeBeforeSleepDuration`
+  preference, trend-fallback for archive nights).
 - `tests/test_sync/test_sleep_analytics.py` (9) — rolling / debt / best-worst
   / consistency, including circular-stats edge cases.
 - `tests/test_sync/test_correlations.py` (9) — join logic, sparse-pair
@@ -478,7 +485,10 @@ Three endpoints, all under `/api/insights/*`:
 
 Key files:
 - `backend/services/training_metrics.py` — deterministic snapshot
-  builders (no LLM).
+  builders (no LLM). `_get_latest_completed_activity(activity_id=X)`
+  requires `enrichment_status == "complete"` even when an ID is passed
+  explicitly — never feed a pending row (no laps, no weighted power) to
+  the LLM.
 - `backend/services/insights.py` — Pydantic schemas
   (`DailyRecommendation`, `WorkoutInsight`), cache helpers,
   `_call_llm_structured()` with fallback chain + self-correcting retry,
@@ -486,9 +496,15 @@ Key files:
   top-level key.
 - `backend/services/llm_providers.py` — added `query_structured()` on
   each provider: Anthropic (tool-use), OpenAI (`json_schema` strict →
-  `json_object` fallback), Gemini (inlined schema + `response_schema`
-  hint). `_pydantic_schema()` in `insights.py` inlines `$defs`/`$ref`
-  recursively — providers (especially Gemini) don't follow refs.
+  `json_object` fallback, narrowed to `openai.BadRequestError`), Gemini
+  (inlined schema + `response_schema` hint). `_pydantic_schema()` in
+  `insights.py` inlines `$defs`/`$ref` recursively (providers especially
+  Gemini don't follow refs) AND forces every `object` subschema to set
+  `additionalProperties: false` + list all properties in `required`.
+  Without that, OpenAI strict `json_schema` mode rejects the payload on
+  fields like `concerns`/`notable_segments`/`flags` that Pydantic marks
+  optional via `default_factory`, silently wasting a round-trip before
+  the `json_object` fallback.
 
 Config (`backend/config.py` → `LLMSettings`):
 - `dashboard_model` (default `claude-haiku`).
@@ -503,6 +519,28 @@ and skips when `StravaClient.daily_quota_exhausted()` is True. Calls
 `SyncEngine._strava_phase_b(limit=batch)` directly — does NOT re-list.
 Wired into the uvicorn lifespan (`backend/main.py`) alongside the
 existing `sync_all` job.
+
+**Only the Strava client is constructed** (EightSleep/Whoop/Weather
+are passed as `None` to `SyncEngine`). Phase B doesn't touch them, and
+instantiating them every 20 min triggered needless Eight Sleep token
+refreshes. Errors inside the drain are logged with `logger.exception`
+so stack traces land in the log.
+
+### Tests (33 total, all passing)
+- `tests/test_services/test_training_metrics.py` (17) — training-load
+  snapshot shape and math (ACWR, monotony, strain, days-since-hard,
+  latest-workout snapshot, sleep/recovery snapshot).
+- `tests/test_services/test_insights.py` (11) — LLM layer with all
+  providers mocked: happy path, cache hit/miss, refresh, fallback chain,
+  all-fail-raises, validation-error retry, schema tightening walk
+  (every object has `additionalProperties: false` + all keys required),
+  pending-id gate (never runs LLM against a non-complete row).
+- `tests/test_services/test_scheduler_jobs.py` (5) — drain guards:
+  no-op when pending=0, skip when daily quota hit, phase-B runs when
+  quota ok.
+
+**Total repo test count: 148 passing** (Eight Sleep 54 + elevation 29
++ dashboard/scheduler 33 + other suites).
 
 ## Quick commands cheatsheet
 
