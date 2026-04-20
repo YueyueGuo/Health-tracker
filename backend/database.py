@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+import pathlib
+
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from backend.config import settings
+
+
+def _ensure_sqlite_dir(url: str) -> None:
+    prefix = "sqlite+aiosqlite:///"
+    if url.startswith(prefix):
+        db_path = pathlib.Path(url[len(prefix):])
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+
+_ensure_sqlite_dir(settings.database_url)
 
 engine = create_async_engine(
     settings.database_url,

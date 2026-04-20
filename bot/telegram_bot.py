@@ -169,7 +169,9 @@ def create_telegram_app() -> Application:
 
 
 async def run_telegram_bot():
-    """Run the Telegram bot."""
+    """Run the Telegram bot. Stops cleanly when the task is cancelled."""
+    import asyncio
+
     if not settings.telegram.bot_token:
         logger.warning("TELEGRAM_BOT_TOKEN not set, skipping Telegram bot")
         return
@@ -178,3 +180,12 @@ async def run_telegram_bot():
     await app.start()
     await app.updater.start_polling()
     logger.info("Telegram bot started")
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except asyncio.CancelledError:
+        logger.info("Telegram bot stopping...")
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
+        raise

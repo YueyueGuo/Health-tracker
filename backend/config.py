@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import pathlib
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _env_file_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+
+_DEFAULT_DATA_DIR = pathlib.Path.home() / ".health-tracker"
+_DEFAULT_DB_URL = f"sqlite+aiosqlite:///{_DEFAULT_DATA_DIR / 'health_tracker.db'}"
 
 
 class StravaSettings(BaseSettings):
@@ -112,10 +117,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(**_env_file_config)
 
     # App
-    database_url: str = "sqlite+aiosqlite:///./health_tracker.db"
-    sync_interval_hours: int = 2
+    database_url: str = _DEFAULT_DB_URL
+    sync_interval_hours: float = 2
     host: str = "0.0.0.0"
     port: int = 8000
+    tailscale_hostname: str = ""
 
     # Weather provider. Supported values:
     #   "openmeteo"       — Open-Meteo ERA5 archive (default, free, no key)

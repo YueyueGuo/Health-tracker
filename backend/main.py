@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import pathlib
 from contextlib import asynccontextmanager
 
@@ -8,22 +10,43 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from backend.config import settings
 from backend.database import init_db
 from backend.scheduler import create_scheduler
+
+logger = logging.getLogger(__name__)
 
 FRONTEND_DIR = pathlib.Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
+    from bot.discord_bot import run_discord_bot
+    from bot.telegram_bot import run_telegram_bot
+
     await init_db()
+
     scheduler = create_scheduler()
     scheduler.start()
     app.state.scheduler = scheduler
-    yield
-    # Shutdown
-    scheduler.shutdown(wait=False)
+    logger.info("Scheduler started")
+
+    telegram_task = asyncio.create_task(run_telegram_bot(), name="telegram_bot")
+    discord_task = asyncio.create_task(run_discord_bot(), name="discord_bot")
+
+    try:
+        yield
+    finally:
+        for task in (telegram_task, discord_task):
+            task.cancel()
+        for task in (telegram_task, discord_task):
+            try:
+                await task
+            except (asyncio.CancelledError, Exception) as e:
+                if not isinstance(e, asyncio.CancelledError):
+                    logger.warning(f"Bot task ended with error: {e}")
+        scheduler.shutdown(wait=False)
+        logger.info("Scheduler stopped")
 
 
 def create_app() -> FastAPI:
@@ -34,9 +57,14 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    origins = ["http://localhost:5173", "http://localhost:3000"]
+    if settings.tailscale_hostname:
+        host = settings.tailscale_hostname
+        origins.extend([f"http://{host}", f"https://{host}", f"http://{host}:{settings.port}"])
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://localhost:3000"],
+        allow_origins=origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

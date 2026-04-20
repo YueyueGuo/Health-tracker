@@ -146,9 +146,16 @@ def create_discord_bot() -> HealthBot:
 
 
 async def run_discord_bot():
-    """Run the Discord bot."""
+    """Run the Discord bot. Stops cleanly when the task is cancelled."""
+    import asyncio
+
     if not settings.discord.bot_token:
         logger.warning("DISCORD_BOT_TOKEN not set, skipping Discord bot")
         return
     bot = create_discord_bot()
-    await bot.start(settings.discord.bot_token)
+    try:
+        await bot.start(settings.discord.bot_token)
+    except asyncio.CancelledError:
+        logger.info("Discord bot stopping...")
+        await bot.close()
+        raise
