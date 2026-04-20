@@ -433,7 +433,10 @@ def _wake_stats(interval: dict | None) -> dict[str, Any]:
         "wake_events": wake_events or None,
         # Latency is the single authoritative value in SECONDS derived
         # from the stages array (pre-sleep awake only, excludes WASO).
-        "latency_sec": latency_sec if latency_sec > 0 else None,
+        # 0 is a real observation (first stage was sleep) — don't coerce
+        # to None. The "no stages data" case is handled by the empty-dict
+        # early return above.
+        "latency_sec": int(latency_sec),
     }
 
 

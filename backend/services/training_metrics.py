@@ -31,15 +31,26 @@ HARD_CLASSIFICATIONS = {"intervals", "tempo", "race", "mixed"}
 
 
 def _stress_score(a: Activity) -> float:
-    """TRIMP-ish training stress proxy. Prefer Strava's suffer_score."""
+    """TRIMP-ish training stress proxy, scaled to Strava's suffer_score.
+
+    Three tiers of fidelity; all intended to land in roughly the same
+    0–200 range for typical sessions so ACWR / monotony don't get skewed
+    when HR is unavailable (e.g. strength sessions, indoor spin):
+
+    1. Strava ``suffer_score`` (watch-derived) — preferred; 0–300.
+    2. HR-based: ``duration_min * (avg_hr / 180) * 1.2`` — 60 min @
+       140 bpm ≈ 56, matching Strava's RE for a typical aerobic run.
+    3. Duration-only: ``duration_min``. Assumes moderate effort
+       (≈140 bpm). A 60-min strength session scores 60, comparable to
+       the HR-based path; previously this was ``duration_min / 2`` which
+       underweighted unlogged-HR sessions by ~2x and tilted ACWR.
+    """
     if a.suffer_score:
         return float(a.suffer_score)
     if a.moving_time and a.average_hr:
-        # Crude fallback: duration-weighted HR factor. Scaled so typical easy
-        # run ~40–60, hard run ~100–150, similar to Strava's Relative Effort.
         return (a.moving_time / 60.0) * (a.average_hr / 180.0) * 1.2
     if a.moving_time:
-        return a.moving_time / 120.0  # 30-min activity ≈ 15
+        return a.moving_time / 60.0
     return 0.0
 
 

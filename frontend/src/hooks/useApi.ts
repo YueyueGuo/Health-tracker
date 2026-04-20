@@ -22,5 +22,9 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: any[] = []) {
     load();
   }, [load]);
 
-  return { data, loading, error, reload: load };
+  // `setData` is exposed so callers doing an out-of-band fetch (e.g. a
+  // refresh button that calls the API with different params) can assign
+  // the result directly without triggering a second round trip via
+  // `reload()`.
+  return { data, loading, error, reload: load, setData };
 }

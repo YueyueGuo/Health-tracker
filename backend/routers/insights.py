@@ -30,9 +30,11 @@ async def daily_recommendation(
     """LLM-driven daily training recommendation. Cached per-day per-inputs-hash."""
     try:
         result = await insights.get_daily_recommendation(db, model=model, refresh=refresh)
-    except Exception as e:
+    except Exception:
+        # Full details in server logs; user gets a generic message so we
+        # don't leak SDK internals / keys / paths in the HTTP response.
         logger.exception("daily_recommendation failed")
-        raise HTTPException(status_code=502, detail=f"LLM error: {e}") from e
+        raise HTTPException(status_code=502, detail="LLM unavailable") from None
     return result.to_dict()
 
 
@@ -48,9 +50,9 @@ async def latest_workout_insight(
         result = await insights.get_latest_workout_insight(
             db, activity_id=activity_id, model=model, refresh=refresh
         )
-    except Exception as e:
+    except Exception:
         logger.exception("latest_workout_insight failed")
-        raise HTTPException(status_code=502, detail=f"LLM error: {e}") from e
+        raise HTTPException(status_code=502, detail="LLM unavailable") from None
     if not result:
         raise HTTPException(status_code=404, detail="No completed activities yet")
     return result.to_dict()

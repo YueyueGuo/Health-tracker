@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from backend.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -202,7 +205,6 @@ class OpenAIProvider(LLMProvider):
         max_tokens: int = 1024,
     ) -> dict:
         import json as _json
-        import openai
 
         expected_keys = list((schema.get("properties") or {}).keys())
         augmented_system = (
@@ -232,14 +234,13 @@ class OpenAIProvider(LLMProvider):
                 max_tokens=max_tokens,
                 response_format=strict_schema,
             )
-        except openai.BadRequestError as e:
-            # Older models / unsupported strict-schema features → fall back
-            # to the permissive json_object mode. Narrow to BadRequestError
-            # so transient network / auth errors still surface.
-            import logging as _logging
-            _logging.getLogger(__name__).info(
-                "OpenAI json_schema mode rejected (%s); falling back to json_object",
-                e,
+        except Exception as e:
+            # Older models (or models whose schema OpenAI rejects in
+            # strict mode) fall back to json_object. Log so a persistent
+            # fallback is visible rather than silently costing 2 RTTs.
+            logger.warning(
+                "OpenAI json_schema strict failed on %s, falling back to json_object: %s",
+                self._model_id, e,
             )
             response = await self._client.chat.completions.create(
                 model=self._model_id,
@@ -311,10 +312,9 @@ class GoogleProvider(LLMProvider):
         self.name = model_key
         self._model_id = self.MODELS.get(model_key, model_key)
         genai.configure(api_key=settings.llm.google_ai_api_key)
-        self._model = genai.GenerativeModel(
-            self._model_id,
-            system_instruction=None,  # Set per query
-        )
+        # NOTE: we intentionally don't cache a GenerativeModel instance
+        # here. Both ``query`` and ``query_structured`` create a fresh
+        # model per call so the system_instruction is request-scoped.
 
     async def query(
         self,
@@ -376,7 +376,15 @@ class GoogleProvider(LLMProvider):
                 max_output_tokens=max_tokens,
             )
             response = await model.generate_content_async(user_message, generation_config=config)
-        except Exception:
+        except Exception as e:
+            # Gemini's `response_schema` support is model-dependent; when
+            # it's rejected we still get JSON via mime_type + inlined
+            # schema in the system prompt. Log so the fallback isn't
+            # silent.
+            logger.warning(
+                "Gemini response_schema failed on %s, falling back to mime-only: %s",
+                self._model_id, e,
+            )
             config = genai.types.GenerationConfig(
                 response_mime_type="application/json",
                 max_output_tokens=max_tokens,

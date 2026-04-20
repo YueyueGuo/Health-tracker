@@ -103,11 +103,18 @@ class WorkoutInsight(BaseModel):
 
 # Convert pydantic schemas to JSON Schema for the LLM providers.
 def _pydantic_schema(model: type[BaseModel]) -> dict:
+    """Produce a JSON Schema usable by all provider structured-output modes.
+
+    - Inlines ``$defs`` / ``$ref`` (Gemini doesn't follow refs).
+    - Recursively enforces ``additionalProperties: false`` on every
+      object-typed node AND populates ``required`` with every property
+      key. OpenAI's ``json_schema`` strict mode requires both at every
+      level; other providers are tolerant of these extra constraints.
+    """
     schema = model.model_json_schema()
     defs = schema.pop("$defs", None) or schema.pop("definitions", None) or {}
 
     # Recursively inline $ref pointers so the schema is fully self-contained.
-    # Many providers (Gemini especially) don't follow $ref correctly.
     def _inline(node):
         if isinstance(node, dict):
             if "$ref" in node and isinstance(node["$ref"], str):
@@ -126,22 +133,22 @@ def _pydantic_schema(model: type[BaseModel]) -> dict:
 
     schema = _inline(schema)
 
-    # OpenAI strict-mode JSON Schema (and Anthropic tool-use) require every
-    # object to set `additionalProperties: false` AND every property listed
-    # under `required`. Pydantic marks fields with defaults / default_factory
-    # as optional, so we force them all into `required` here. Nullable
-    # optionals are still expressible via `type: [T, "null"]` / `anyOf`,
-    # which strict mode allows.
+    # Walk every object-typed node and apply OpenAI-strict constraints.
     def _tighten(node):
-        if isinstance(node, dict):
-            if node.get("type") == "object" and "properties" in node:
-                node.setdefault("additionalProperties", False)
-                node["required"] = list(node["properties"].keys())
-            for v in node.values():
-                _tighten(v)
-        elif isinstance(node, list):
-            for v in node:
-                _tighten(v)
+        if not isinstance(node, dict):
+            return node
+        if node.get("type") == "object" and "properties" in node:
+            node["additionalProperties"] = False
+            # OpenAI strict mode requires every property to appear in
+            # `required`. Pydantic marks only truly-required fields here,
+            # but all our Optional fields already have explicit defaults,
+            # so listing everything is safe.
+            node["required"] = list(node["properties"].keys())
+            for prop in node["properties"].values():
+                _tighten(prop)
+        if node.get("type") == "array" and "items" in node:
+            _tighten(node["items"])
+        return node
 
     _tighten(schema)
     return schema
@@ -170,7 +177,7 @@ Principles you care about:
 
 Be specific. Reference actual numbers. Avoid generic advice like "listen to your body".
 
-Output a single JSON object matching the schema provided via the tool."""
+Output a single JSON object matching the schema provided."""
 
 WORKOUT_INSIGHT_SYSTEM_PROMPT = """You are an exercise physiologist reviewing a single \
 workout for a personal athlete.
@@ -182,7 +189,7 @@ comparison against the last 90 days of similar workouts (percentile ranks).
 Your job: deliver a concise, data-driven takeaway. Be specific about lap numbers, \
 pace changes, and HR drift. Point out if pacing was disciplined or not.
 
-Output a single JSON object matching the schema provided via the tool. Keep the \
+Output a single JSON object matching the schema provided. Keep the \
 headline under 80 characters. Do not invent numbers not in the data."""
 
 
@@ -194,7 +201,19 @@ headline under 80 characters. Do not invent numbers not in the data."""
 def _hash_inputs(payload: dict | str) -> str:
     if isinstance(payload, dict):
         payload = json.dumps(payload, sort_keys=True, default=str)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _utcnow_naive() -> datetime:
+    """UTC “now” as a naive datetime.
+
+    The ``AnalysisCache.expires_at`` / ``created_at`` columns are stored
+    naive (no tzinfo), so we deliberately strip tzinfo here for a
+    consistent comparison. Using ``datetime.utcnow()`` is deprecated in
+    3.12+; ``datetime.now(timezone.utc).replace(tzinfo=None)`` is the
+    recommended equivalent.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 async def _cache_get(db: AsyncSession, key: str) -> dict | None:
@@ -204,7 +223,7 @@ async def _cache_get(db: AsyncSession, key: str) -> dict | None:
     hit = row.scalar_one_or_none()
     if not hit:
         return None
-    if hit.expires_at and hit.expires_at < datetime.utcnow():
+    if hit.expires_at and hit.expires_at < _utcnow_naive():
         return None
     try:
         return json.loads(hit.response_text)
@@ -225,12 +244,14 @@ async def _cache_put(
         select(AnalysisCache).where(AnalysisCache.query_hash == key)
     )
     e = existing.scalar_one_or_none()
+    now = _utcnow_naive()
+    expires = (now + ttl) if ttl else None
     if e:
         e.response_text = json.dumps(payload)
         e.model = model
         e.query_text = query_text
-        e.expires_at = datetime.utcnow() + ttl if ttl else None
-        e.created_at = datetime.utcnow()
+        e.expires_at = expires
+        e.created_at = now
     else:
         db.add(
             AnalysisCache(
@@ -238,7 +259,7 @@ async def _cache_put(
                 query_text=query_text,
                 response_text=json.dumps(payload),
                 model=model,
-                expires_at=datetime.utcnow() + ttl if ttl else None,
+                expires_at=expires,
             )
         )
     await db.commit()
@@ -410,10 +431,12 @@ async def get_daily_recommendation(
 ) -> DailyRecommendationResult:
     snapshot = await training_metrics.get_full_snapshot(db)
 
-    # Cache key: YYYY-MM-DD + hash of the inputs that matter.
+    # Cache key: YYYY-MM-DD + requested-model + hash of the inputs that matter.
     # We deliberately exclude the minute-by-minute activity list so the cache
     # remains valid across a day; but include the 7d load numbers so a new
-    # workout today invalidates cache.
+    # workout today invalidates cache. The *requested* model (primary, before
+    # fallback) is part of the key so explicit model overrides don't return
+    # output generated by a different model.
     signal = {
         "date": snapshot["today"],
         "training_load": snapshot["training_load"],
@@ -422,7 +445,8 @@ async def get_daily_recommendation(
         "latest_id": (snapshot.get("latest_workout") or {}).get("id"),
     }
     inputs_hash = _hash_inputs(signal)
-    cache_key = f"daily_rec:{snapshot['today']}:{inputs_hash}"
+    requested_model = model or settings.llm.dashboard_model
+    cache_key = f"daily_rec:{snapshot['today']}:{requested_model}:{inputs_hash}"
 
     if not refresh:
         hit = await _cache_get(db, cache_key)
@@ -485,7 +509,8 @@ async def get_latest_workout_insight(
     if not snapshot:
         return None
 
-    cache_key = f"workout_insight:{snapshot['id']}"
+    requested_model = model or settings.llm.dashboard_model
+    cache_key = f"workout_insight:{snapshot['id']}:{requested_model}"
 
     if not refresh:
         hit = await _cache_get(db, cache_key)

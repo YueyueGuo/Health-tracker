@@ -46,7 +46,7 @@ async def _run_strava_enrichment_drain(*, batch: int = 40):
         strava = StravaClient()
         engine = SyncEngine(db, strava, None, None, None)  # type: ignore[arg-type]
         try:
-            count = await engine._strava_phase_b(limit=batch)
+            count = await engine.drain_strava_enrichment(limit=batch)
             logger.info(
                 "Enrichment drain: enriched=%s pending_before=%s", count, pending
             )
