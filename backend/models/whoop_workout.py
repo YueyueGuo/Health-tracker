@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Float, Integer, String, func
+from sqlalchemy import DateTime, Float, Integer, String, func
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -22,8 +22,9 @@ class WhoopWorkout(Base):
     __tablename__ = "whoop_workouts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    # Whoop's own workout id (v2 returns numeric ids); unique per Whoop user.
-    whoop_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False, index=True)
+    # Whoop's own workout id; unique per Whoop user. v2 returns UUIDs
+    # (36 chars); v1 returned ints. Stored as string for compatibility.
+    whoop_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     start: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
     end: Mapped[datetime | None] = mapped_column(DateTime)
     timezone_offset: Mapped[str | None] = mapped_column(String(8))
