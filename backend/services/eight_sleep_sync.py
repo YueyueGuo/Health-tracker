@@ -368,7 +368,7 @@ def _wake_stats(interval: dict | None) -> dict[str, Any]:
     out_sec = 0
     wake_count = 0
     out_count = 0
-    latency_sec = 0          # sum of awake/out chunks BEFORE first sleep stage
+    latency_sec: int | None = None  # awake/out chunks BEFORE first sleep stage
 
     seen_sleep = False       # flipped True after first deep/rem/light chunk
     cum_offset_sec = 0       # running offset from the start of the interval
@@ -393,7 +393,7 @@ def _wake_stats(interval: dict | None) -> dict[str, Any]:
                 })
             else:
                 # Pre-sleep awake chunk — this is sleep latency, not WASO.
-                latency_sec += dur
+                latency_sec = (latency_sec or 0) + dur
         elif stage == "out":
             if seen_sleep:
                 out_count += 1
@@ -406,7 +406,7 @@ def _wake_stats(interval: dict | None) -> dict[str, Any]:
             else:
                 # Out-of-bed before falling asleep (e.g. bathroom trip
                 # after first getting in bed). Still counts as latency.
-                latency_sec += dur
+                latency_sec = (latency_sec or 0) + dur
 
         cum_offset_sec += dur
 
@@ -433,10 +433,7 @@ def _wake_stats(interval: dict | None) -> dict[str, Any]:
         "wake_events": wake_events or None,
         # Latency is the single authoritative value in SECONDS derived
         # from the stages array (pre-sleep awake only, excludes WASO).
-        # 0 is a real observation (first stage was sleep) — don't coerce
-        # to None. The "no stages data" case is handled by the empty-dict
-        # early return above.
-        "latency_sec": int(latency_sec),
+        "latency_sec": latency_sec,
     }
 
 

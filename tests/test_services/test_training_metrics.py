@@ -41,7 +41,7 @@ def _make_activity(
     suffer_score: int | None = 40,
     enrichment_status: str = "complete",
 ) -> Activity:
-    start = datetime.utcnow() - timedelta(days=days_ago)
+    start = datetime.now() - timedelta(days=days_ago)
     return Activity(
         strava_id=strava_id,
         name=f"Activity {strava_id}",
