@@ -1,6 +1,6 @@
 # Refactor Findings And Next Steps
 
-Current as of the frontend test-harness pass on April 23, 2026.
+Current as of the settings decomposition pass on April 23, 2026.
 
 ## Current Baseline
 
@@ -137,6 +137,30 @@ Remaining remote branches intentionally left alone during consolidation:
   - `frontend/src/components/GoalsSection.tsx`
 - Current frontend test count from this slice: 21 passing.
 
+### Settings / Goals / Location Decomposition
+
+- `frontend/src/pages/Settings.tsx` is now a composition-only page that renders `GoalsSection` plus a new `LocationSettingsSection`.
+- Extracted new hooks:
+  - `frontend/src/hooks/useGoals.ts`
+  - `frontend/src/hooks/useLocations.ts`
+- Extracted goal UI pieces:
+  - `frontend/src/components/settings/GoalForm.tsx`
+  - `frontend/src/components/settings/GoalRow.tsx`
+- Extracted location settings UI pieces:
+  - `frontend/src/components/settings/LocationSettingsSection.tsx`
+  - `frontend/src/components/settings/LocationRow.tsx`
+  - `frontend/src/components/settings/AddLocation.tsx`
+  - `frontend/src/components/settings/AdvancedLocationForm.tsx`
+- Extracted shared location picker UI:
+  - `frontend/src/components/location/SavedLocationPicker.tsx`
+- Added shared frontend error helper:
+  - `frontend/src/utils/errors.ts`
+- `frontend/src/components/LocationPicker.tsx` now reuses `useLocations()` and `SavedLocationPicker` while preserving the existing attach/create/detach behavior.
+- Verification after this pass:
+  - `npm test` -> 21 passed
+  - `npm run typecheck` -> passed
+  - `npm run build` -> passed, with Vite's existing large bundle warning
+
 ## Remaining Findings
 
 ### 1. Snapshot Contracts Are Still Manual Across Backend And Frontend
@@ -206,35 +230,26 @@ Recommended next steps:
 
 Suggested PR size: Small to medium.
 
-### 4. Settings And Location UI Are Partially Decomposed, But Not Done
+### 4. Settings And Location UI Decomposition — DONE
 
-Files:
+Files touched:
 
 - `frontend/src/pages/Settings.tsx`
-- `frontend/src/components/LocationPicker.tsx`
 - `frontend/src/components/GoalsSection.tsx`
+- `frontend/src/components/LocationPicker.tsx`
+- `frontend/src/components/settings/*`
+- `frontend/src/components/location/SavedLocationPicker.tsx`
+- `frontend/src/hooks/useGoals.ts`
+- `frontend/src/hooks/useLocations.ts`
+- `frontend/src/utils/errors.ts`
 
-Current state:
+What changed:
 
-- Shared search and GPS flows were extracted.
-- `Settings.tsx` still owns saved-location list, row mutation logic, add-location mode state, and advanced raw-coordinate form.
-- `GoalsSection.tsx` still owns add form, table, row mutations, and local formatting.
-- `LocationPicker.tsx` is smaller but still owns saved-picker state and attach/detach orchestration.
-
-Recommended next steps:
-
-- Extract:
-  - `LocationSettingsSection`
-  - `LocationRow`
-  - `AddLocation`
-  - `AdvancedLocationForm`
-  - `SavedLocationPicker`
-- Consider hooks:
-  - `useLocations()`
-  - `useLocationMutations()`
-- Consider decomposing `GoalsSection` into `GoalRow`, `GoalForm`, and `useGoals()`.
-
-Suggested PR size: Medium.
+- `Settings.tsx` now delegates saved-location loading/rendering to `LocationSettingsSection`, leaving the page itself as layout composition only.
+- Goal CRUD was decomposed into `GoalForm`, `GoalRow`, and `useGoals()`.
+- Location settings CRUD was decomposed into `AddLocation`, `AdvancedLocationForm`, `LocationRow`, `LocationSettingsSection`, and `useLocations()`.
+- `LocationPicker.tsx` now reuses the extracted saved-location picker and shared locations hook.
+- Shared `getErrorMessage()` handling removes repeated local `extractMessage()` helpers from the refactored surfaces.
 
 ### 5. Legacy Chat Analysis Path Consolidation — DONE
 
@@ -392,7 +407,9 @@ Verification:
 
 Goal: make settings easier to extend for phone-location PWA work.
 
-Scope:
+Status: complete.
+
+Completed:
 
 - Extract location settings section/rows/forms.
 - Extract goals row/form/hooks.
@@ -400,6 +417,7 @@ Scope:
 
 Verification:
 
+- `npm test`
 - `npm run typecheck`
 - `npm run build`
 - Manual smoke test of `/settings` and `/activities/:id`
@@ -420,5 +438,5 @@ Outcome:
 ## Suggested Prompt For Next Session
 
 ```text
-Please read REFACTOR_FINDINGS.md and implement the next refactor PR: decompose Settings and location/goals UI into smaller components/hooks without changing behavior. Run frontend test/build checks and update this handoff file with what changed.
+Please read REFACTOR_FINDINGS.md and implement the next remaining frontend refactor slice: add a lightweight backend/frontend snapshot type-sync checklist and expand Vitest coverage for one high-signal UI flow (preferably Settings CRUD or ActivityDetail lazy states). Run `npm test`, `npm run typecheck`, and `npm run build`, then update the handoff file with what changed.
 ```

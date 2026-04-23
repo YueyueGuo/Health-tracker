@@ -1,14 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   attachLocationToActivity,
   createLocation,
   detachLocationFromActivity,
-  listLocations,
-  type Location,
 } from "../api/locations";
 import GpsLocationForm from "./location/GpsLocationForm";
 import LocationSearchForm from "./location/LocationSearchForm";
+import SavedLocationPicker from "./location/SavedLocationPicker";
+import { useLocations } from "../hooks/useLocations";
 import { formatElevation, useUnits } from "../hooks/useUnits";
+import { getErrorMessage } from "../utils/errors";
 
 interface Props {
   activityId: number;
@@ -38,23 +39,8 @@ export default function LocationPicker({
 }: Props) {
   const { units } = useUnits();
   const [mode, setMode] = useState<Mode>("menu");
-  const [locations, setLocations] = useState<Location[] | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    listLocations()
-      .then((rows) => {
-        if (!cancelled) setLocations(rows);
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e?.message ?? "Failed to load locations");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { locations, error, setError, setLocations } = useLocations();
 
   const currentLocation = useMemo(
     () =>
@@ -71,8 +57,8 @@ export default function LocationPicker({
       await attachLocationToActivity(activityId, id);
       onChange();
       setMode("menu");
-    } catch (e) {
-      setError(extractMessage(e));
+    } catch (error) {
+      setError(getErrorMessage(error));
     } finally {
       setLoading(false);
     }
@@ -98,8 +84,8 @@ export default function LocationPicker({
       await attachLocationToActivity(activityId, loc.id);
       onChange();
       setMode("menu");
-    } catch (e) {
-      setError(extractMessage(e));
+    } catch (error) {
+      setError(getErrorMessage(error));
     } finally {
       setLoading(false);
     }
@@ -111,8 +97,8 @@ export default function LocationPicker({
     try {
       await detachLocationFromActivity(activityId);
       onChange();
-    } catch (e) {
-      setError(extractMessage(e));
+    } catch (error) {
+      setError(getErrorMessage(error));
     } finally {
       setLoading(false);
     }
@@ -179,7 +165,7 @@ export default function LocationPicker({
       )}
 
       {mode === "saved" && locations && (
-        <SavedPicker
+        <SavedLocationPicker
           locations={locations}
           onPick={attachById}
           onCancel={() => setMode("menu")}
@@ -209,64 +195,4 @@ export default function LocationPicker({
       )}
     </div>
   );
-}
-
-// ── Sub-pickers ───────────────────────────────────────────────────────
-
-function SavedPicker({
-  locations,
-  onPick,
-  onCancel,
-}: {
-  locations: Location[];
-  onPick: (id: number) => void;
-  onCancel: () => void;
-}) {
-  const { units } = useUnits();
-  return (
-    <div style={{ marginTop: 12 }}>
-      <ul
-        style={{
-          listStyle: "none",
-          padding: 0,
-          margin: 0,
-          display: "flex",
-          flexDirection: "column",
-          gap: 6,
-        }}
-      >
-        {locations.map((loc) => (
-          <li key={loc.id}>
-            <button
-              className="btn btn-ghost"
-              style={{ width: "100%", textAlign: "left" }}
-              onClick={() => onPick(loc.id)}
-            >
-              <strong>{loc.name}</strong>
-              {loc.is_default && (
-                <span className="chip" style={{ marginLeft: 8 }}>
-                  default
-                </span>
-              )}
-              {loc.elevation_m != null && (
-                <span style={{ color: "var(--text-muted)", marginLeft: 8 }}>
-                  · {formatElevation(loc.elevation_m, units)}
-                </span>
-              )}
-            </button>
-          </li>
-        ))}
-      </ul>
-      <div style={{ marginTop: 8 }}>
-        <button className="btn btn-ghost" onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function extractMessage(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  return "Something went wrong";
 }

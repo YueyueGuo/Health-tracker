@@ -3,6 +3,7 @@ import {
   searchLocations,
   type LocationSearchHit,
 } from "../api/locations";
+import { getErrorMessage } from "../utils/errors";
 
 export function useDebouncedLocationSearch(
   query: string,
@@ -29,8 +30,8 @@ export function useDebouncedLocationSearch(
       try {
         const rows = await searchLocations(trimmed, count);
         if (active) setResults(rows);
-      } catch (e) {
-        if (active) setError(extractMessage(e));
+      } catch (error) {
+        if (active) setError(getErrorMessage(error));
       } finally {
         if (active) setSearching(false);
       }
@@ -43,9 +44,4 @@ export function useDebouncedLocationSearch(
   }, [query, count, delayMs]);
 
   return { results, searching, error };
-}
-
-function extractMessage(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  return "Something went wrong";
 }
