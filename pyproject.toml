@@ -25,10 +25,6 @@ dependencies = [
     # Scheduling
     "apscheduler>=3.10,<4.0",
 
-    # Bots
-    "python-telegram-bot>=21.0",
-    "discord.py>=2.3",
-
     # Utilities
     "python-dotenv>=1.0",
 ]
@@ -41,7 +37,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["backend*", "bot*"]
+include = ["backend*"]
 
 [build-system]
 requires = ["setuptools>=68.0"]

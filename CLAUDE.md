@@ -6,8 +6,8 @@ workout-data-analysis work stream (April 2026).
 ## What this project is
 A personal health tracker that pulls data from Strava, Eight Sleep, Whoop,
 and OpenWeatherMap into a local SQLite DB, classifies workouts, and surfaces
-it via a React dashboard + FastAPI backend. Also has Telegram/Discord bots
-and an LLM analysis layer (Claude/GPT/Gemini).
+it via a React dashboard + FastAPI backend, with an LLM analysis layer
+(Claude/GPT/Gemini).
 
 Single-user, runs locally by default.
 

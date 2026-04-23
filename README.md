@@ -1,6 +1,6 @@
 # Health Tracker
 
-Personal health & fitness analytics platform that pulls data from Strava, Eight Sleep, and Whoop, enriches it with weather data, and provides AI-powered coaching insights through a web dashboard, Telegram bot, and Discord bot.
+Personal health & fitness analytics platform that pulls data from Strava, Eight Sleep, and Whoop, enriches it with weather data, and provides AI-powered coaching insights through a web dashboard.
 
 ## Features
 
@@ -12,8 +12,6 @@ Personal health & fitness analytics platform that pulls data from Strava, Eight 
 - **Weather Enrichment** — Automatic weather data for outdoor activities via OpenWeatherMap
 - **Multi-Model AI Analysis** — Query your data using Claude, GPT-4o, Gemini, or other LLMs. Swap models per-request
 - **Web Dashboard** — Interactive charts for activities, sleep trends, recovery, training load (CTL/ATL/TSB)
-- **Telegram Bot** — `/today`, `/last`, `/week`, `/ask` commands for on-the-go insights
-- **Discord Bot** — Slash commands with rich embeds for the same functionality
 - **Scheduled Sync** — Automatic background data pulls on a configurable interval
 
 ## Quick Start
@@ -116,22 +114,6 @@ Set your preferred default:
 DEFAULT_LLM_PROVIDER=claude-sonnet
 ```
 
-### Telegram Bot
-
-1. Message @BotFather on Telegram
-2. Create a new bot with `/newbot`
-3. Copy the token to `TELEGRAM_BOT_TOKEN` in `.env`
-4. Run: `python -m bot.telegram_bot`
-
-### Discord Bot
-
-1. Go to https://discord.com/developers/applications
-2. Create a new application and bot
-3. Enable "Message Content Intent" in the Bot settings
-4. Copy the bot token to `DISCORD_BOT_TOKEN` in `.env`
-5. Invite the bot to your server with the OAuth2 URL Generator (scopes: `bot`, `applications.commands`)
-6. Run: `python -m bot.discord_bot`
-
 ## API Endpoints
 
 | Endpoint | Method | Description |
@@ -163,11 +145,6 @@ Backend (FastAPI + SQLAlchemy + SQLite)
 ├── services/    → Sync engine, LLM providers, analysis engine, metrics
 ├── routers/     → FastAPI route handlers
 └── scheduler    → APScheduler for periodic syncs
-
-Bot (Telegram + Discord)
-├── handler.py   → Shared ChatHandler (bot-agnostic logic)
-├── telegram     → python-telegram-bot commands
-└── discord      → discord.py slash commands + embeds
 
 Frontend (React + Vite + Recharts)
 ├── Dashboard    → Overview with metric cards
