@@ -5,13 +5,13 @@ helpers against an in-memory SQLite DB.
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.database import Base
-from backend.models import StrengthSet
+from backend.models import Activity, ActivityStream, StrengthSet
 from backend.services.strength import (
     estimate_1rm,
     list_sessions,
@@ -152,6 +152,84 @@ async def test_progression_per_date_aggregates(db: AsyncSession):
     assert out[0]["total_volume_kg"] == pytest.approx(2 * 5 * 100)
     assert out[1]["max_weight_kg"] == 110
     assert out[1]["est_1rm_kg"] == pytest.approx(121.0, abs=0.01)
+
+
+async def test_session_summary_includes_hr_when_streams_cached(db: AsyncSession):
+    """With a linked activity, cached streams, and sets carrying
+    performed_at, session_summary emits hr_curve + per-set avg/max HR."""
+    start = datetime(2026, 4, 22, 9, 0, 0)
+    act = Activity(
+        strava_id=222,
+        name="Lift",
+        sport_type="WeightTraining",
+        start_date=start,
+        start_date_local=start,
+        moving_time=1800,
+    )
+    db.add(act)
+    await db.commit()
+    await db.refresh(act)
+
+    db.add(
+        ActivityStream(
+            activity_id=act.id, stream_type="time", data=list(range(1801))
+        )
+    )
+    hr = [110.0] * 1801
+    for i in range(555, 601):
+        hr[i] = 150.0
+    db.add(ActivityStream(activity_id=act.id, stream_type="heartrate", data=hr))
+    await db.commit()
+
+    today = date(2026, 4, 22)
+    await _seed(
+        db,
+        [
+            StrengthSet(
+                activity_id=act.id,
+                date=today,
+                exercise_name="Squat",
+                set_number=1,
+                reps=5,
+                weight_kg=100,
+                performed_at=start + timedelta(seconds=600),
+            ),
+        ],
+    )
+
+    summary = await session_summary(db, today)
+    assert summary is not None
+    assert summary["hr_curve"] is not None and len(summary["hr_curve"]) > 0
+    assert summary["activity_start_iso"] == start.isoformat()
+    set_dict = summary["exercises"][0]["sets"][0]
+    assert set_dict["performed_at"] is not None
+    assert set_dict["avg_hr"] is not None
+    assert set_dict["max_hr"] == 150.0
+
+
+async def test_session_summary_no_hr_when_no_streams(db: AsyncSession):
+    """Without cached streams, HR fields are None but the session still renders."""
+    today = date(2026, 4, 22)
+    await _seed(
+        db,
+        [
+            StrengthSet(
+                date=today,
+                exercise_name="Squat",
+                set_number=1,
+                reps=5,
+                weight_kg=100,
+            ),
+        ],
+    )
+    summary = await session_summary(db, today)
+    assert summary is not None
+    assert summary["hr_curve"] is None
+    assert summary["activity_start_iso"] is None
+    set_dict = summary["exercises"][0]["sets"][0]
+    assert set_dict["performed_at"] is None
+    assert set_dict["avg_hr"] is None
+    assert set_dict["max_hr"] is None
 
 
 async def test_search_exercises_prefix_match(db: AsyncSession):

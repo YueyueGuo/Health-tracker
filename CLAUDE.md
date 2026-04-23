@@ -400,9 +400,12 @@ Two phases, resumable via `elevation_enriched`:
     relative effort, **base altitude** — gated ≥ 610 m)
   - **LocationPicker** shown when the activity has no GPS coords (search /
     current location / pick-saved)
-  - Laps table with pace-zone row tinting
+  - Laps table with pace-zone row tinting (each lap gets an `hr_zone` label
+    via `assign_lap_hr_zones`)
   - Time-in-zone bar charts (HR / pace / power — whichever are available)
-  - "Load Streams" button (lazy) → uses `/api/activities/{id}/streams`
+  - **Streams auto-load on mount** via `/api/activities/{id}/streams`
+    (backend caches on first hit). StrictMode-safe via `useRef<number>()`
+    "latest requested id" pattern — not a cleanup-flag pattern.
 - `ClassificationBadge` component is reusable; map of types to colors lives
   in globals.css.
 - `Sleep.tsx` (route `/sleep`) renders sleep-score line chart, stacked-stages
@@ -411,8 +414,129 @@ Two phases, resumable via `elevation_enriched`:
   typed fetchers hitting `/api/sleep` + `/api/sleep/analytics/*`. Uses
   Recharts consistent with the rest of the frontend.
 
+## Strength training (live mode + per-set HR)
+
+Weight-training entry is at `/strength` (list + progression) and
+`/strength/new` (entry form). Sessions can be **linked to a Strava
+`WeightTraining` activity** so the cached HR stream can be sliced per set.
+
+### Entry modes (`frontend/src/pages/StrengthEntry.tsx`)
+- **Live mode** — default. Rest-timer chip at the top (`mm:ss since last
+  logged set`, resets each log). Each row has a "Log set" button that
+  stamps `performed_at = new Date()` (naive-local ISO) and auto-appends a
+  fresh row with the same exercise + next `set_number`, focus on reps.
+  After logging, the button swaps to `✓ 3:42 PM`; the row is still
+  editable.
+- **Retro mode** — original form unchanged. `performed_at` omitted from
+  payload → backend stores NULL → no per-set HR in the session detail
+  (graceful). Full-session HR curve still renders if the linked activity
+  has cached streams.
+
+Mode toggle is a pill-button pair above the rows. `canSave` gates the
+save button: live requires ≥1 logged row; retro requires all rows
+complete.
+
+### HR-per-set pipeline (`backend/services/strength_hr.py`)
+Two helpers, both pure/near-pure:
+- `_slice_hr_for_set(performed_at, activity_start, time_stream,
+  hr_stream, window_sec=45)` — returns `(avg_hr, max_hr)` over the 45s
+  window ending at `performed_at`. Skips zero/None dropout samples.
+  Tolerates mismatched stream lengths (truncates to shorter). Returns
+  `(None, None)` if the window falls outside the stream.
+- `attach_hr_to_sets(db, activity_id, sets, window_sec=45)` — reads
+  cached `activity_streams` rows, returns:
+  ```
+  {
+    "hr_by_set_id": {set_id: {"avg_hr": 145, "max_hr": 160}, ...},
+    "hr_curve": [[offset_sec, bpm], ...],  # decimated to ~300 points
+    "activity_start_iso": "2026-04-22T09:00:00",
+  }
+  ```
+  Empty dict when streams aren't cached, no HR stream, no sets have
+  `performed_at`, or the activity row is missing. **Never triggers a
+  Strava fetch.**
+
+Wired into `session_summary()` — if any set has a non-null `activity_id`
+AND any set has `performed_at`, calls `attach_hr_to_sets` and merges
+per-set `avg_hr`/`max_hr` + top-level `hr_curve` + `activity_start_iso`
+into the response.
+
+### Session detail UI (`frontend/src/pages/Strength.tsx`)
+- **HR curve chart** (Recharts `LineChart`) — renders when
+  `session.hr_curve?.length`. X-axis formatted `mm:ss`, y = bpm.
+  `ReferenceLine` per logged set labeled `Squat 60×5` via the `abbrev()`
+  helper. Chrome-light styling.
+- **Per-set HR column** in the exercise tables: shows `145 / 160 bpm`
+  when available, `—` otherwise.
+
+Both additions are guarded — retro sessions (no timestamps) render fine
+without markers/pills.
+
+### Schema
+- `strength_sets.performed_at` (DateTime, nullable) — naive-local wall
+  clock when the set was finished. Matches `Activity.start_date_local`
+  and Eight Sleep's `bed_time`/`wake_time` convention.
+- Migration `b3c6d9e8a1f4` adds the column. Chained after
+  `a7e2c5f8b1d3` (elevation).
+
+### Router (`backend/routers/strength.py`)
+- `StrengthSetInput` and `StrengthSetPatch` accept
+  `performed_at: datetime | None = None`.
+- `create_sets` passes it through to the model.
+- Response shape unchanged — `session_summary` now just emits the HR
+  fields.
+
+### Tests (15 new, all passing)
+- `tests/test_services/test_strength_hr.py` (13) — slice happy path,
+  window-before-start, window-after-stream-end, zero/None dropout
+  handling, empty stream, mismatched lengths, decimate short/large
+  stream, `attach_hr_to_sets` no-streams / no-performed_at /
+  missing-activity / full E2E / missing-one-stream-type.
+- `tests/test_services/test_strength.py` (+2) —
+  `test_session_summary_includes_hr_when_streams_cached` and
+  `test_session_summary_no_hr_when_no_streams`.
+
+## HR zones + cardiac drift (LLM context enrichment)
+
+Complements the daily-recommendation / workout-insight LLM calls. Gives
+the model structure-of-session signals rather than just scalar avg HR.
+
+### Helpers in `backend/services/training_metrics.py`
+- `summarize_hr_zones(zones_data)` — pure function. Takes Strava's
+  `zones_data` JSON (cached on the activity row), returns:
+  ```
+  {"z1_pct": 12, "z2_pct": 45, ..., "dominant_zone": 2,
+   "total_minutes": 62, "bucket_count": 5,
+   "ranges": [{"zone": 1, "min": 95, "max": 120}, ...]}
+  ```
+  Supports both 5-bucket and 7-bucket Strava profiles. Returns `None`
+  when HR zones aren't present (power-only zones, missing buckets).
+- `assign_lap_hr_zones(lap_avg_hr, zones_data)` — maps a lap's avg HR to
+  a 1-indexed zone. Handles Strava's `max == -1` open-upper-bound
+  convention. Clamps to zone 1 when HR falls below the lowest bucket.
+- `compute_hr_drift(db, activity_id)` — cardiac drift / aerobic
+  decoupling proxy. Reads cached `activity_streams`; returns `(2nd_half
+  - 1st_half) / 1st_half`, e.g. `0.042` = HR rose 4.2% over the session.
+  **Never triggers a stream fetch.** Returns `None` for under-10min
+  activities (drift is noise). `> 0.05` is meaningful.
+
+### LLM prompt updates (`backend/services/insights.py`)
+`DailyRecommendation` system prompt now references `latest_workout.hr_zones`
+for polarization judgement. `WorkoutInsight` prompt references `hr_zones`,
+`hr_drift`, and per-lap `hr_zone` so the model can describe session
+structure (warmup → threshold reps → cooldown) and call out
+classification mismatches.
+
+### Auto-load streams (`frontend/src/components/ActivityDetail.tsx`)
+The old "Load Streams" button is gone — streams now auto-load on mount.
+Uses a `useRef<number | null>()` pattern (not a cleanup-based cancel
+flag) to survive React 19 StrictMode's synthetic cleanup-then-remount.
+The ref tracks the most-recently-requested activity id; the fetch
+resolver only applies results if `ref === myId`. Pattern that should be
+copied for any similar mid-navigation fetch in this codebase.
+
 ## Alembic
-Linear chain: `initial → laps_zones_enrichment (a1c4f9d2e8b0) → eight_sleep_extra_fields (c3e7b18f92a4) → classification (b2d5e0f3c1a7) → sleep_wake_events (d89f2a41e6c3) → strength_sets (e4a9b1c3d5f7) → whoop_workouts (f5a1c7b2d4e9) → elevation_and_user_locations (a7e2c5f8b1d3)`.
+Linear chain: `initial → laps_zones_enrichment (a1c4f9d2e8b0) → eight_sleep_extra_fields (c3e7b18f92a4) → classification (b2d5e0f3c1a7) → sleep_wake_events (d89f2a41e6c3) → strength_sets (e4a9b1c3d5f7) → whoop_workouts (f5a1c7b2d4e9) → elevation_and_user_locations (a7e2c5f8b1d3) → strength_set_performed_at (b3c6d9e8a1f4)`.
 
 New migrations that add nullable columns should use plain `op.add_column`
 (not `batch_alter_table`) — SQLite does ADD COLUMN as metadata-only, which is
@@ -432,6 +556,9 @@ safe to run while the backfill scheduler is writing.
   the same branch.
 
 ## Open work / things to pick up
+
+**See `todo.md` in the repo root for the authoritative backlog** —
+this section is narrative background.
 
 - **Elevation — Phase 2 follow-up.** Backfill Phase 2 was skipped
   intentionally. Once a default `UserLocation` is set via `/settings`,
@@ -527,18 +654,22 @@ instantiating them every 20 min triggered needless Eight Sleep token
 refreshes. Errors inside the drain are logged with `logger.exception`
 so stack traces land in the log.
 
-### Tests (33 total, all passing)
-- `tests/test_services/test_training_metrics.py` (17) — training-load
-  snapshot shape and math (ACWR, monotony, strain, days-since-hard,
-  latest-workout snapshot, sleep/recovery snapshot).
-- `tests/test_services/test_insights.py` (11) — LLM layer with all
-  providers mocked: happy path, cache hit/miss, refresh, fallback chain,
-  all-fail-raises, validation-error retry, schema tightening walk
-  (every object has `additionalProperties: false` + all keys required),
-  pending-id gate (never runs LLM against a non-complete row).
-- `tests/test_services/test_scheduler_jobs.py` (5) — drain guards:
-  no-op when pending=0, skip when daily quota hit, phase-B runs when
-  quota ok.
+### Tests (33 base + HR-zones extensions)
+- `tests/test_services/test_training_metrics.py` (17 base + HR-zones /
+  lap-zone / drift tests) — training-load snapshot shape and math
+  (ACWR, monotony, strain, days-since-hard, latest-workout snapshot,
+  sleep/recovery snapshot), plus `summarize_hr_zones` 5/7-bucket shapes,
+  `assign_lap_hr_zones` boundary cases, and `compute_hr_drift`.
+  **Known issue:** 3 of the pre-HR-zones tests (`test_training_load_with_activities`,
+  `test_training_load_monotony_zero_stdev`, `test_full_snapshot_assembles_all_sections`)
+  fail when the test runs across a UTC/local day boundary — `_make_activity`
+  uses `datetime.utcnow()` but the service compares against `date.today()`
+  (local). Fix in `tests/test_services/test_training_metrics.py::_make_activity`:
+  replace `datetime.utcnow()` with `datetime.now()`. Not caused by the
+  strength/HR work; exists on HEAD.
+- `tests/test_services/test_insights.py` (11 + HR-zone-prompt smoke
+  tests) — LLM layer with all providers mocked.
+- `tests/test_services/test_scheduler_jobs.py` (5) — drain guards.
 
 ## Classifier + weekly-summary + Strava sync tests
 
@@ -581,9 +712,12 @@ so stack traces land in the log.
   ignored, `_lap_from_raw` field mapping + malformed/missing
   start_date handling.
 
-**Total repo test count: 243 passing** (Eight Sleep 54 + elevation 29
-+ dashboard/scheduler 33 + classifier 48 + weekly-summary 21 + Strava
-sync engine 26 + other suites).
+**Total repo test count: 269 passing, 3 pre-existing failures** (Eight
+Sleep 54 + elevation 29 + dashboard/scheduler 33 + classifier 48 +
+weekly-summary 21 + Strava sync engine 26 + strength + strength-HR 25
++ HR-zones extensions + other suites). The 3 failures are the UTC/local
+day-boundary issue in `test_training_metrics.py` — see Tests section
+above and `todo.md`.
 
 ## Quick commands cheatsheet
 
@@ -607,4 +741,16 @@ python scripts/backfill_elevation.py --phase1-only
 python scripts/backfill_elevation.py
 # Elevation distribution sanity-check
 sqlite3 health_tracker.db "SELECT COUNT(*), ROUND(AVG(base_elevation_m),1), ROUND(MAX(base_elevation_m),1), COUNT(CASE WHEN base_elevation_m >= 610 THEN 1 END) FROM activities WHERE base_elevation_m IS NOT NULL"
+
+# Strength: verify the performed_at column is present
+sqlite3 health_tracker.db ".schema strength_sets" | grep performed_at
+
+# Strength: one-shot E2E smoke test against a cached WeightTraining activity
+curl -s -X POST http://localhost:8000/api/strength/sets \
+  -H 'content-type: application/json' \
+  -d '{"date":"2026-04-22","activity_id":<id>,"sets":[
+    {"exercise_name":"squat","set_number":1,"reps":5,"weight_kg":60,
+     "rpe":null,"notes":null,"performed_at":"2026-04-22T09:03:00"}]}'
+curl -s http://localhost:8000/api/strength/session/2026-04-22 \
+  | jq '{curve_len:(.hr_curve|length), sets:[.sets[]|{exercise_name,set_number,avg_hr,max_hr}]}'
 ```

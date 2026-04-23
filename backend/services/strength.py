@@ -13,6 +13,7 @@ from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import StrengthSet
+from backend.services.strength_hr import attach_hr_to_sets
 
 
 # ── 1RM estimation ──────────────────────────────────────────────────
@@ -94,14 +95,22 @@ async def session_summary(
         return None
 
     activity_id: int | None = None
-    sets_payload: list[dict[str, Any]] = []
     by_exercise: dict[str, list[StrengthSet]] = {}
 
     for s in rows:
         if s.activity_id is not None and activity_id is None:
             activity_id = s.activity_id
-        sets_payload.append(_set_dict(s))
         by_exercise.setdefault(s.exercise_name, []).append(s)
+
+    # Attempt to enrich with HR stats from the linked activity's cached
+    # streams. Empty dict when streams aren't cached or no sets have
+    # performed_at — UI layers degrade gracefully.
+    hr_payload: dict[str, Any] = {}
+    if activity_id is not None:
+        hr_payload = await attach_hr_to_sets(db, activity_id, list(rows))
+    hr_by_id: dict[int, dict[str, float]] = hr_payload.get("hr_by_set_id", {})
+
+    sets_payload: list[dict[str, Any]] = [_set_dict(s, hr_by_id) for s in rows]
 
     exercises = []
     for name, sets in by_exercise.items():
@@ -121,7 +130,7 @@ async def session_summary(
         exercises.append(
             {
                 "name": name,
-                "sets": [_set_dict(s) for s in sets],
+                "sets": [_set_dict(s, hr_by_id) for s in sets],
                 "max_weight": max_weight,
                 "total_volume": total_volume,
                 "est_1rm": best_1rm,
@@ -133,6 +142,11 @@ async def session_summary(
         "activity_id": activity_id,
         "sets": sets_payload,
         "exercises": exercises,
+        # Populated only when the session is linked to an activity whose
+        # HR stream is cached. UI uses these for the HR-over-time chart
+        # with per-set markers.
+        "hr_curve": hr_payload.get("hr_curve"),
+        "activity_start_iso": hr_payload.get("activity_start_iso"),
     }
 
 
@@ -207,7 +221,11 @@ async def search_exercises(
     return [r[0] for r in rows]
 
 
-def _set_dict(s: StrengthSet) -> dict[str, Any]:
+def _set_dict(
+    s: StrengthSet,
+    hr_by_id: dict[int, dict[str, float]] | None = None,
+) -> dict[str, Any]:
+    hr = (hr_by_id or {}).get(s.id, {}) if s.id is not None else {}
     return {
         "id": s.id,
         "activity_id": s.activity_id,
@@ -218,6 +236,9 @@ def _set_dict(s: StrengthSet) -> dict[str, Any]:
         "weight_kg": s.weight_kg,
         "rpe": s.rpe,
         "notes": s.notes,
+        "performed_at": s.performed_at.isoformat() if s.performed_at else None,
+        "avg_hr": hr.get("avg_hr"),
+        "max_hr": hr.get("max_hr"),
         "created_at": s.created_at.isoformat() if s.created_at else None,
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
     }

@@ -25,6 +25,14 @@ export interface StrengthSet {
   weight_kg: number | null;
   rpe: number | null;
   notes: string | null;
+  /** Naive-local ISO datetime when the set was finished. Only populated
+   * in live entry mode. */
+  performed_at?: string | null;
+  /** Average HR (bpm) over the 45s window ending at `performed_at`. Only
+   * present when the linked activity's HR stream is cached. */
+  avg_hr?: number | null;
+  /** Peak HR (bpm) in the same window. */
+  max_hr?: number | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -50,6 +58,11 @@ export interface StrengthSessionDetail {
   activity_id: number | null;
   sets: StrengthSet[];
   exercises: ExerciseBreakdown[];
+  /** Decimated HR curve for the linked activity — [offset_sec, bpm]
+   * tuples. Null when activity isn't linked or streams aren't cached. */
+  hr_curve?: [number, number][] | null;
+  /** ISO datetime anchor for the `hr_curve` x-axis (activity start). */
+  activity_start_iso?: string | null;
 }
 
 export interface ProgressionPoint {
@@ -67,6 +80,9 @@ export interface StrengthSetInput {
   weight_kg: number | null;
   rpe: number | null;
   notes: string | null;
+  /** Naive-local ISO datetime (YYYY-MM-DDTHH:mm:ss) when the set
+   * finished. Omitted for retro entries. */
+  performed_at?: string | null;
 }
 
 export interface StrengthSessionCreate {
@@ -83,6 +99,7 @@ export interface StrengthSetPatch {
   rpe?: number | null;
   notes?: string | null;
   activity_id?: number | null;
+  performed_at?: string | null;
 }
 
 // ── Fetchers ────────────────────────────────────────────────────────────────

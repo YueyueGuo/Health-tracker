@@ -6,7 +6,7 @@ implicit grouping by `date` (see `backend/services/strength.py`).
 from __future__ import annotations
 
 import logging
-from datetime import date as date_type
+from datetime import date as date_type, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
@@ -38,6 +38,9 @@ class StrengthSetInput(BaseModel):
     weight_kg: float | None = Field(None, ge=0)
     rpe: float | None = Field(None, ge=0, le=10)
     notes: str | None = None
+    # Naive-local wall-clock time the set ended. Sent by the "live"
+    # entry mode; omitted from retro entries.
+    performed_at: datetime | None = None
 
 
 class StrengthSessionCreate(BaseModel):
@@ -58,6 +61,7 @@ class StrengthSetPatch(BaseModel):
     rpe: float | None = Field(None, ge=0, le=10)
     notes: str | None = None
     activity_id: int | None = None
+    performed_at: datetime | None = None
 
 
 # ── Endpoints ───────────────────────────────────────────────────────
@@ -107,6 +111,7 @@ async def create_sets(
             weight_kg=s.weight_kg,
             rpe=s.rpe,
             notes=s.notes,
+            performed_at=s.performed_at,
         )
         db.add(row)
         created.append(row)
@@ -151,6 +156,7 @@ async def update_set(
         "weight_kg": row.weight_kg,
         "rpe": row.rpe,
         "notes": row.notes,
+        "performed_at": row.performed_at.isoformat() if row.performed_at else None,
     }
 
 

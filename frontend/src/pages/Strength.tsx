@@ -1,5 +1,14 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceLine,
+} from "recharts";
 import { useApi } from "../hooks/useApi";
 import {
   fetchStrengthSessions,
@@ -8,6 +17,7 @@ import {
   fetchStrengthExercises,
   deleteStrengthSet,
   type StrengthSessionDetail,
+  type StrengthSet as StrengthSetType,
 } from "../api/strength";
 import StrengthProgressionChart from "../components/StrengthProgressionChart";
 
@@ -198,9 +208,23 @@ function SessionDetail({
   session: StrengthSessionDetail;
   onDelete: (id: number) => void | Promise<void>;
 }) {
+  // Only show the HR column when at least one set in the session has HR.
+  // (Retro sessions without performed_at keep the old 6-column layout.)
+  const anyHr = session.sets.some(
+    (s) => s.avg_hr != null || s.max_hr != null
+  );
+  const hasCurve = !!session.hr_curve && session.hr_curve.length > 0;
+
   return (
     <div className="card">
       <h2>{formatLongDate(session.date)}</h2>
+      {hasCurve && session.activity_start_iso && (
+        <HrCurveChart
+          curve={session.hr_curve as [number, number][]}
+          activityStartIso={session.activity_start_iso}
+          sets={session.sets}
+        />
+      )}
       {session.exercises.map((ex) => (
         <div key={ex.name} className="exercise-block">
           <div
@@ -225,6 +249,7 @@ function SessionDetail({
                 <th>Reps</th>
                 <th>Weight</th>
                 <th>RPE</th>
+                {anyHr && <th>HR (avg/max)</th>}
                 <th>Notes</th>
                 <th></th>
               </tr>
@@ -236,6 +261,13 @@ function SessionDetail({
                   <td>{s.reps}</td>
                   <td>{s.weight_kg != null ? `${s.weight_kg} kg` : "—"}</td>
                   <td>{s.rpe ?? "—"}</td>
+                  {anyHr && (
+                    <td style={{ fontVariantNumeric: "tabular-nums" }}>
+                      {s.avg_hr != null
+                        ? `${Math.round(s.avg_hr)} / ${Math.round(s.max_hr ?? s.avg_hr)}`
+                        : "—"}
+                    </td>
+                  )}
                   <td
                     style={{
                       color: "var(--text-muted)",
@@ -266,6 +298,110 @@ function SessionDetail({
       ))}
     </div>
   );
+}
+
+/** Full-session HR line chart with a vertical marker for each set that
+ *  has a `performed_at`. x-axis is minutes since activity start. */
+function HrCurveChart({
+  curve,
+  activityStartIso,
+  sets,
+}: {
+  curve: [number, number][];
+  activityStartIso: string;
+  sets: StrengthSetType[];
+}) {
+  const data = curve.map(([t, hr]) => ({ t, hr }));
+  const activityStart = new Date(activityStartIso).getTime();
+  const markers = sets
+    .filter((s) => s.performed_at)
+    .map((s) => {
+      const offsetSec = Math.round(
+        (new Date(s.performed_at as string).getTime() - activityStart) / 1000
+      );
+      const weight = s.weight_kg != null ? `${s.weight_kg}` : "bw";
+      return {
+        id: s.id,
+        offsetSec,
+        label: `${abbrev(s.exercise_name)} ${weight}×${s.reps}`,
+      };
+    });
+  const xMax = data.length ? data[data.length - 1].t : 0;
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
+        <strong style={{ fontSize: 13 }}>HR during session</strong>
+        <span style={{ color: "var(--text-muted)", fontSize: 11 }}>
+          {markers.length > 0
+            ? `${markers.length} set${markers.length === 1 ? "" : "s"} marked`
+            : "no per-set markers — sets weren't logged live"}
+        </span>
+      </div>
+      <ResponsiveContainer width="100%" height={180}>
+        <LineChart data={data} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+          <XAxis
+            dataKey="t"
+            type="number"
+            domain={[0, xMax]}
+            tickFormatter={formatMinSec}
+            stroke="var(--text-muted)"
+            fontSize={10}
+          />
+          <YAxis
+            dataKey="hr"
+            domain={["dataMin - 5", "dataMax + 5"]}
+            stroke="var(--text-muted)"
+            fontSize={10}
+            width={36}
+          />
+          <Tooltip
+            contentStyle={{
+              background: "var(--bg-card)",
+              border: "1px solid var(--border)",
+              fontSize: 12,
+            }}
+            labelFormatter={(v) => `t = ${formatMinSec(v as number)}`}
+            formatter={(v) => [`${Math.round(v as number)} bpm`, "HR"]}
+          />
+          <Line
+            type="monotone"
+            dataKey="hr"
+            stroke="var(--accent)"
+            strokeWidth={1.5}
+            dot={false}
+            isAnimationActive={false}
+          />
+          {markers.map((m) => (
+            <ReferenceLine
+              key={m.id}
+              x={m.offsetSec}
+              stroke="var(--text-muted)"
+              strokeDasharray="2 3"
+              label={{
+                value: m.label,
+                position: "top",
+                fill: "var(--text-muted)",
+                fontSize: 9,
+              }}
+            />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function formatMinSec(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.abs(Math.round(sec - m * 60));
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/** Short marker label — first word of exercise name, max 10 chars. */
+function abbrev(name: string): string {
+  const first = name.trim().split(/\s+/)[0] ?? name;
+  return first.slice(0, 10);
 }
 
 function formatShortDate(iso: string): string {

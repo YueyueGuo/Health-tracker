@@ -45,6 +45,11 @@ class StrengthSet(Base):
     weight_kg: Mapped[float | None] = mapped_column(Float, nullable=True)
     rpe: Mapped[float | None] = mapped_column(Float, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Naive-local wall clock when the set was finished. Only populated in
+    # "live" entry mode (user taps "Log set" between reps). Used to slice
+    # the Strava HR stream into per-set windows. NULL on retro entries —
+    # the session still renders cleanly, just without per-set HR.
+    performed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
