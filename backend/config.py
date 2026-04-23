@@ -97,26 +97,6 @@ class LLMSettings(BaseSettings):
         return v
 
 
-class TelegramSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="TELEGRAM_", **_env_file_config)
-
-    bot_token: str = ""
-
-
-class DiscordSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="DISCORD_", **_env_file_config)
-
-    bot_token: str = ""
-    guild_id: int | None = None
-
-    @field_validator("guild_id", mode="before")
-    @classmethod
-    def empty_str_to_none(cls, v):
-        if v == "" or v is None:
-            return None
-        return int(v)
-
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(**_env_file_config)
 
@@ -139,8 +119,6 @@ class Settings(BaseSettings):
     whoop: WhoopSettings = Field(default_factory=WhoopSettings)
     weather: WeatherSettings = Field(default_factory=WeatherSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
-    telegram: TelegramSettings = Field(default_factory=TelegramSettings)
-    discord: DiscordSettings = Field(default_factory=DiscordSettings)
 
 
 settings = Settings()

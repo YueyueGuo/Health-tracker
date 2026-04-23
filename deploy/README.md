@@ -6,7 +6,7 @@ This guide sets up Health Tracker to run 24/7 on your Mac with a single `launchd
 
 - **Process manager**: macOS `launchd` — auto-starts on boot, restarts on crash.
 - **Remote access**: Tailscale — private network between your Mac and phone; no port forwarding or public internet exposure.
-- **All-in-one**: The FastAPI process runs the web server, the APScheduler, and both bots in its lifespan.
+- **All-in-one**: The FastAPI process runs the web server and the APScheduler in its lifespan.
 
 ## Prerequisites
 
@@ -18,7 +18,7 @@ This guide sets up Health Tracker to run 24/7 on your Mac with a single `launchd
    .venv/bin/pip install -e .
    ```
 3. Node.js for the frontend build (`brew install node`).
-4. `.env` populated with your credentials (Strava tokens, API keys, bot tokens).
+4. `.env` populated with your credentials (Strava tokens, API keys).
 
 ## Step 1 — Install Tailscale
 
@@ -68,7 +68,7 @@ curl http://localhost:8000/api/health
 # {"status":"ok","version":"0.1.0"}
 
 tail -f ~/.health-tracker/logs/stdout.log
-# Expect: "Scheduler started", "Telegram bot started" (if token set)
+# Expect: "Scheduler started"
 ```
 
 From your phone (on cellular, not home Wi-Fi):
@@ -119,7 +119,5 @@ tail -f ~/.health-tracker/logs/stderr.log
 **Port 8000 already in use** — kill any stray `uvicorn` process: `pkill -f 'uvicorn backend.main'`.
 
 **Dashboard loads but sync fails on phone** — CORS. Confirm `TAILSCALE_HOSTNAME` in `.env` matches the hostname you're opening, then restart: `launchctl kickstart -k gui/$(id -u)/com.healthtracker`.
-
-**Bots not responding** — check `stdout.log` for "Telegram bot started" / Discord warnings. If the token is missing the bot will quietly no-op.
 
 **Mac sleeps and the service stops responding** — `launchd` resumes the process when the Mac wakes. If you want strictly zero downtime, go to System Settings → Battery → Prevent your Mac from automatically sleeping when the display is off.

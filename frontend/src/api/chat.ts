@@ -13,16 +13,6 @@ export function askQuestion(question: string, model?: string) {
   });
 }
 
-export function fetchDailyBriefing(model?: string) {
-  const qs = model ? `?model=${model}` : "";
-  return fetchJson<ChatResponse>(`/chat/daily-briefing${qs}`);
-}
-
-export function fetchWorkoutAnalysis(activityId: number, model?: string) {
-  const qs = model ? `?model=${model}` : "";
-  return fetchJson<ChatResponse>(`/chat/workout/${activityId}${qs}`);
-}
-
 export function fetchAvailableModels() {
   return fetchJson<{ models: string[] }>("/chat/models");
 }

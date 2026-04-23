@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import pathlib
 from contextlib import asynccontextmanager
@@ -21,9 +20,6 @@ FRONTEND_DIR = pathlib.Path(__file__).resolve().parent.parent / "frontend" / "di
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from bot.discord_bot import run_discord_bot
-    from bot.telegram_bot import run_telegram_bot
-
     await init_db()
 
     scheduler = create_scheduler()
@@ -31,20 +27,9 @@ async def lifespan(app: FastAPI):
     app.state.scheduler = scheduler
     logger.info("Scheduler started")
 
-    telegram_task = asyncio.create_task(run_telegram_bot(), name="telegram_bot")
-    discord_task = asyncio.create_task(run_discord_bot(), name="discord_bot")
-
     try:
         yield
     finally:
-        for task in (telegram_task, discord_task):
-            task.cancel()
-        for task in (telegram_task, discord_task):
-            try:
-                await task
-            except (asyncio.CancelledError, Exception) as e:
-                if not isinstance(e, asyncio.CancelledError):
-                    logger.warning(f"Bot task ended with error: {e}")
         scheduler.shutdown(wait=False)
         logger.info("Scheduler stopped")
 

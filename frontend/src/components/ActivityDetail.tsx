@@ -18,7 +18,10 @@ import {
   reclassifyActivity,
   type ZoneDistribution,
 } from "../api/activities";
-import { fetchWorkoutAnalysis } from "../api/chat";
+import {
+  fetchLatestWorkoutInsight,
+  type WorkoutInsight,
+} from "../api/insights";
 import { getActivityWeather } from "../api/weather";
 import { useState } from "react";
 import ClassificationBadge from "./ClassificationBadge";
@@ -62,7 +65,9 @@ export default function ActivityDetail() {
     () => getActivityWeather(activityId, { raw: true }),
     [activityId]
   );
-  const [analysis, setAnalysis] = useState<string | null>(null);
+  const [insight, setInsight] = useState<WorkoutInsight | null>(null);
+  const [insightModel, setInsightModel] = useState<string | null>(null);
+  const [insightError, setInsightError] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [streams, setStreams] = useState<Record<string, number[]> | null>(null);
   const [streamsLoading, setStreamsLoading] = useState(false);
@@ -71,11 +76,13 @@ export default function ActivityDetail() {
 
   const handleAnalyze = async () => {
     setAnalyzing(true);
+    setInsightError(null);
     try {
-      const result = await fetchWorkoutAnalysis(activityId);
-      setAnalysis(result.answer);
+      const result = await fetchLatestWorkoutInsight({ activityId });
+      setInsight(result.insight);
+      setInsightModel(result.model);
     } catch (e: any) {
-      setAnalysis(`Error: ${e.message}`);
+      setInsightError(e.message || "Analysis failed");
     } finally {
       setAnalyzing(false);
     }
@@ -326,13 +333,16 @@ export default function ActivityDetail() {
 
       <div className="card">
         <h2>AI Analysis</h2>
-        {!analysis && (
+        {!insight && !insightError && (
           <button className="btn" onClick={handleAnalyze} disabled={analyzing}>
             {analyzing ? "Analyzing..." : "Analyze This Workout"}
           </button>
         )}
-        {analysis && (
-          <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.7 }}>{analysis}</div>
+        {insightError && (
+          <div className="error" style={{ marginBottom: 12 }}>{insightError}</div>
+        )}
+        {insight && (
+          <WorkoutInsightView insight={insight} model={insightModel} />
         )}
       </div>
     </div>
@@ -340,6 +350,61 @@ export default function ActivityDetail() {
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────
+
+function WorkoutInsightView({
+  insight,
+  model,
+}: {
+  insight: WorkoutInsight;
+  model: string | null;
+}) {
+  return (
+    <div style={{ lineHeight: 1.6 }}>
+      <h3 style={{ marginTop: 0 }}>{insight.headline}</h3>
+      <p style={{ marginTop: 0 }}>{insight.takeaway}</p>
+      {insight.notable_segments.length > 0 && (
+        <>
+          <h4 style={{ marginBottom: 4 }}>Notable segments</h4>
+          <ul style={{ marginTop: 0 }}>
+            {insight.notable_segments.map((s, i) => (
+              <li key={i}>
+                <strong>{s.label}:</strong> {s.detail}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {insight.vs_history && (
+        <>
+          <h4 style={{ marginBottom: 4 }}>vs. history</h4>
+          <p style={{ marginTop: 0 }}>{insight.vs_history}</p>
+        </>
+      )}
+      {insight.flags.length > 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+          {insight.flags.map((f) => (
+            <span
+              key={f}
+              style={{
+                background: "var(--bg-hover)",
+                padding: "2px 8px",
+                borderRadius: 4,
+                fontSize: 12,
+              }}
+            >
+              {f}
+            </span>
+          ))}
+        </div>
+      )}
+      {model && (
+        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 12 }}>
+          Model: {model}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ZoneChart({ zone }: { zone: ZoneDistribution }) {
   const data = zone.distribution_buckets.map((b, i) => ({
