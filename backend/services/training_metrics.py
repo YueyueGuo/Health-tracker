@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models import (
     Activity,
     ActivityLap,
+    Goal,
+    RecommendationFeedback,
     Recovery,
     SleepSession,
     WeatherSnapshot,
@@ -31,15 +33,26 @@ HARD_CLASSIFICATIONS = {"intervals", "tempo", "race", "mixed"}
 
 
 def _stress_score(a: Activity) -> float:
-    """TRIMP-ish training stress proxy. Prefer Strava's suffer_score."""
+    """TRIMP-ish training stress proxy, scaled to Strava's suffer_score.
+
+    Three tiers of fidelity; all intended to land in roughly the same
+    0–200 range for typical sessions so ACWR / monotony don't get skewed
+    when HR is unavailable (e.g. strength sessions, indoor spin):
+
+    1. Strava ``suffer_score`` (watch-derived) — preferred; 0–300.
+    2. HR-based: ``duration_min * (avg_hr / 180) * 1.2`` — 60 min @
+       140 bpm ≈ 56, matching Strava's RE for a typical aerobic run.
+    3. Duration-only: ``duration_min``. Assumes moderate effort
+       (≈140 bpm). A 60-min strength session scores 60, comparable to
+       the HR-based path; previously this was ``duration_min / 2`` which
+       underweighted unlogged-HR sessions by ~2x and tilted ACWR.
+    """
     if a.suffer_score:
         return float(a.suffer_score)
     if a.moving_time and a.average_hr:
-        # Crude fallback: duration-weighted HR factor. Scaled so typical easy
-        # run ~40–60, hard run ~100–150, similar to Strava's Relative Effort.
         return (a.moving_time / 60.0) * (a.average_hr / 180.0) * 1.2
     if a.moving_time:
-        return a.moving_time / 120.0  # 30-min activity ≈ 15
+        return a.moving_time / 60.0
     return 0.0
 
 
@@ -426,6 +439,203 @@ async def get_latest_workout_snapshot(
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Goals snapshot
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _periodization_phase(weeks_until: int) -> str:
+    """Map weeks-until-goal to a training phase.
+
+    Values cross-reference the LLM system prompt so the recommendation can
+    name the phase explicitly.
+    """
+    if weeks_until <= 2:
+        return "peak"
+    if weeks_until <= 4:
+        return "taper"
+    if weeks_until <= 12:
+        return "build"
+    return "base"
+
+
+def _goal_to_dict(g: Goal) -> dict:
+    days_until = (g.target_date - date.today()).days
+    weeks_until = max(0, days_until // 7)
+    return {
+        "id": g.id,
+        "race_type": g.race_type,
+        "description": g.description,
+        "target_date": g.target_date.isoformat(),
+        "days_until": days_until,
+        "weeks_until": weeks_until,
+        "phase": _periodization_phase(weeks_until) if days_until >= 0 else "post",
+        "is_primary": g.is_primary,
+        "status": g.status,
+    }
+
+
+async def get_goals_snapshot(db: AsyncSession) -> dict:
+    """Return the user's active goals, split into primary + secondary."""
+    rows = await db.execute(
+        select(Goal)
+        .where(Goal.status == "active")
+        .order_by(Goal.is_primary.desc(), Goal.target_date.asc())
+    )
+    goals = list(rows.scalars().all())
+    primary = next((g for g in goals if g.is_primary), None)
+    secondary = [g for g in goals if not g.is_primary]
+    return {
+        "primary": _goal_to_dict(primary) if primary else None,
+        "secondary": [_goal_to_dict(g) for g in secondary],
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Baselines — 90-day mean/sd per sport
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _mean_sd(values: list[float]) -> tuple[float, float] | None:
+    clean = [v for v in values if v is not None]
+    if len(clean) < 2:
+        return None
+    return statistics.mean(clean), statistics.pstdev(clean)
+
+
+async def get_baselines(db: AsyncSession, days: int = 90) -> dict:
+    """Mean + stdev of pace / HR / power per sport over the last ``days``.
+
+    Returns ``None`` for sports with fewer than 10 complete activities —
+    sparse baselines are worse than no baseline for the LLM's reasoning.
+    """
+    cutoff_dt = datetime.combine(date.today() - timedelta(days=days), datetime.min.time())
+    rows = await db.execute(
+        select(Activity).where(
+            Activity.start_date >= cutoff_dt,
+            Activity.enrichment_status == "complete",
+        )
+    )
+    by_sport: dict[str, list[Activity]] = {}
+    for a in rows.scalars().all():
+        by_sport.setdefault(a.sport_type, []).append(a)
+
+    out: dict[str, dict | None] = {}
+    for sport, items in by_sport.items():
+        if len(items) < 10:
+            out[sport] = None
+            continue
+
+        def _round_pair(pair):
+            if pair is None:
+                return None
+            return {"mean": round(pair[0], 2), "sd": round(pair[1], 2)}
+
+        pace_values = [1000.0 / a.average_speed for a in items if a.average_speed]
+        hr_values = [a.average_hr for a in items if a.average_hr]
+        power_values = [a.average_power for a in items if a.average_power]
+        out[sport] = {
+            "sample_size": len(items),
+            "pace_s_per_km": _round_pair(_mean_sd(pace_values)),
+            "avg_hr": _round_pair(_mean_sd(hr_values)),
+            "avg_power_w": _round_pair(_mean_sd(power_values)),
+        }
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Recent RPE (user-reported effort)
+# ──────────────────────────────────────────────────────────────────────────
+
+
+async def get_recent_rpe(db: AsyncSession, days: int = 14, limit: int = 10) -> list[dict]:
+    """Compact list of recent workouts where the user rated perceived effort.
+
+    Empty list when nothing has been rated yet — the LLM knows to skip
+    that branch of the prompt in that case.
+    """
+    cutoff_dt = datetime.combine(date.today() - timedelta(days=days), datetime.min.time())
+    rows = await db.execute(
+        select(Activity)
+        .where(
+            Activity.start_date >= cutoff_dt,
+            Activity.rpe.is_not(None),
+        )
+        .order_by(Activity.start_date.desc())
+        .limit(limit)
+    )
+    out: list[dict] = []
+    for a in rows.scalars().all():
+        out.append(
+            {
+                "activity_id": a.id,
+                "date": (a.start_date_local or a.start_date).strftime("%Y-%m-%d"),
+                "sport_type": a.sport_type,
+                "classification": a.classification_type,
+                "rpe": a.rpe,
+                "notes": a.user_notes,
+                "avg_hr": round(a.average_hr) if a.average_hr else None,
+                "suffer_score": a.suffer_score,
+            }
+        )
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Feedback summary — past thumbs-up/down on daily recommendations
+# ──────────────────────────────────────────────────────────────────────────
+
+
+async def get_feedback_summary(db: AsyncSession, days: int = 30) -> dict:
+    cutoff = date.today() - timedelta(days=days)
+    rows = await db.execute(
+        select(RecommendationFeedback)
+        .where(RecommendationFeedback.recommendation_date >= cutoff)
+        .order_by(RecommendationFeedback.recommendation_date.desc())
+    )
+    items = list(rows.scalars().all())
+    up = sum(1 for r in items if r.vote == "up")
+    down = sum(1 for r in items if r.vote == "down")
+    recent_declines = [
+        {
+            "date": r.recommendation_date.isoformat(),
+            "reason": r.reason,
+        }
+        for r in items
+        if r.vote == "down"
+    ][:5]
+    return {
+        "accepted": up,
+        "declined": down,
+        "total": len(items),
+        "recent_declines": recent_declines,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Environmental snapshot (best-effort: last night's sleep temp)
+# ──────────────────────────────────────────────────────────────────────────
+
+
+async def get_environmental_snapshot(db: AsyncSession) -> dict | None:
+    """Environmental context for today: last-night bed-temp + next-workout weather.
+
+    Returns ``None`` when we have neither. Intentionally small — the LLM
+    doesn't need a full weather forecast, just a nudge when conditions
+    are unusual.
+    """
+    last_sleep = (await db.execute(
+        select(SleepSession).order_by(SleepSession.date.desc()).limit(1)
+    )).scalar_one_or_none()
+    bed_temp_c = last_sleep.bed_temp if last_sleep else None
+    if bed_temp_c is None:
+        return None
+    return {
+        "last_night_bed_temp_c": bed_temp_c,
+        "last_night_date": last_sleep.date.isoformat() if last_sleep else None,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Combined snapshot used by the daily recommendation
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -435,6 +645,11 @@ async def get_full_snapshot(db: AsyncSession) -> dict:
     sleep = await get_sleep_snapshot(db)
     recovery = await get_recovery_snapshot(db)
     latest = await get_latest_workout_snapshot(db)
+    goals = await get_goals_snapshot(db)
+    baselines = await get_baselines(db)
+    recent_rpe = await get_recent_rpe(db)
+    feedback = await get_feedback_summary(db)
+    environmental = await get_environmental_snapshot(db)
 
     # A compact list of the last 10 activities (summaries) for LLM context
     rows = await db.execute(
@@ -465,4 +680,9 @@ async def get_full_snapshot(db: AsyncSession) -> dict:
         "recovery": recovery,
         "latest_workout": latest,
         "recent_activities": recent,
+        "goals": goals,
+        "baselines": baselines,
+        "recent_rpe": recent_rpe,
+        "feedback_summary": feedback,
+        "environmental": environmental,
     }

@@ -29,14 +29,16 @@ function formatDate(iso: string | null): string {
 
 export default function LatestWorkoutCard() {
   const { units } = useUnits();
-  const { data, loading, error, reload } = useApi(() => fetchLatestWorkoutInsight());
+  const { data, loading, error, setData } = useApi(() => fetchLatestWorkoutInsight());
   const [refreshing, setRefreshing] = useState(false);
 
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      await fetchLatestWorkoutInsight({ refresh: true });
-      await reload();
+      // Single round trip: refresh=true returns the fresh payload and
+      // primes the backend cache in one call.
+      const fresh = await fetchLatestWorkoutInsight({ refresh: true });
+      setData(fresh);
     } finally {
       setRefreshing(false);
     }

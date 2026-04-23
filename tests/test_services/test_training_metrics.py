@@ -7,7 +7,13 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.database import Base
-from backend.models import Activity, Recovery, SleepSession
+from backend.models import (
+    Activity,
+    Goal,
+    RecommendationFeedback,
+    Recovery,
+    SleepSession,
+)
 from backend.services import training_metrics
 
 
@@ -35,7 +41,7 @@ def _make_activity(
     suffer_score: int | None = 40,
     enrichment_status: str = "complete",
 ) -> Activity:
-    start = datetime.utcnow() - timedelta(days=days_ago)
+    start = datetime.now() - timedelta(days=days_ago)
     return Activity(
         strava_id=strava_id,
         name=f"Activity {strava_id}",
@@ -279,3 +285,193 @@ async def test_full_snapshot_assembles_all_sections(db):
     assert snap["recovery"]["today_score"] == 70
     assert snap["latest_workout"] is not None
     assert len(snap["recent_activities"]) == 1
+    # New keys must be present so the cache signal is stable.
+    assert "goals" in snap
+    assert "baselines" in snap
+    assert "recent_rpe" in snap
+    assert "feedback_summary" in snap
+    assert "environmental" in snap
+
+
+# ── Goals snapshot ────────────────────────────────────────────────────
+
+
+async def test_goals_snapshot_empty(db):
+    snap = await training_metrics.get_goals_snapshot(db)
+    assert snap == {"primary": None, "secondary": []}
+
+
+async def test_goals_snapshot_primary_and_secondary(db):
+    today = date.today()
+    await _seed(
+        db,
+        [
+            Goal(
+                race_type="Marathon",
+                target_date=today + timedelta(weeks=9),
+                is_primary=True,
+            ),
+            Goal(
+                race_type="5k",
+                target_date=today + timedelta(weeks=3),
+                is_primary=False,
+            ),
+            Goal(
+                race_type="Old race",
+                target_date=today - timedelta(weeks=2),
+                is_primary=False,
+                status="completed",
+            ),
+        ],
+    )
+    snap = await training_metrics.get_goals_snapshot(db)
+    assert snap["primary"]["race_type"] == "Marathon"
+    assert snap["primary"]["weeks_until"] == 9
+    assert snap["primary"]["phase"] == "build"
+    assert snap["primary"]["is_primary"] is True
+    # secondary keeps active 5k but excludes the completed row
+    assert len(snap["secondary"]) == 1
+    assert snap["secondary"][0]["race_type"] == "5k"
+    assert snap["secondary"][0]["phase"] == "taper"
+
+
+async def test_goals_snapshot_phase_mapping(db):
+    today = date.today()
+    await _seed(
+        db,
+        [
+            Goal(race_type="Peak soon", target_date=today + timedelta(days=10), is_primary=True),
+        ],
+    )
+    snap = await training_metrics.get_goals_snapshot(db)
+    assert snap["primary"]["phase"] == "peak"
+
+
+async def test_goals_snapshot_post_race(db):
+    today = date.today()
+    await _seed(
+        db,
+        [
+            Goal(race_type="Raced yesterday", target_date=today - timedelta(days=1), is_primary=True),
+        ],
+    )
+    snap = await training_metrics.get_goals_snapshot(db)
+    assert snap["primary"]["phase"] == "post"
+
+
+# ── Baselines ─────────────────────────────────────────────────────────
+
+
+async def test_baselines_sparse_returns_none(db):
+    # 9 activities → below the min-10 gate
+    acts = [
+        _make_activity(strava_id=i, days_ago=i, average_speed=3.0, average_hr=150)
+        for i in range(1, 10)
+    ]
+    await _seed(db, acts)
+    snap = await training_metrics.get_baselines(db)
+    assert snap["Run"] is None
+
+
+async def test_baselines_dense_returns_stats(db):
+    # 12 activities → above the gate
+    acts = [
+        _make_activity(strava_id=i, days_ago=i, average_speed=3.0, average_hr=150)
+        for i in range(1, 13)
+    ]
+    await _seed(db, acts)
+    snap = await training_metrics.get_baselines(db)
+    assert snap["Run"] is not None
+    assert snap["Run"]["sample_size"] == 12
+    assert snap["Run"]["pace_s_per_km"]["mean"] == pytest.approx(333.33, abs=0.1)
+    assert snap["Run"]["avg_hr"]["mean"] == 150.0
+
+
+# ── Recent RPE ────────────────────────────────────────────────────────
+
+
+async def test_recent_rpe_empty_returns_empty_list(db):
+    snap = await training_metrics.get_recent_rpe(db)
+    assert snap == []
+
+
+async def test_recent_rpe_only_rated(db):
+    # Two within window, one rated one not; plus one outside window
+    a_rated = _make_activity(strava_id=1, days_ago=2)
+    a_rated.rpe = 8
+    a_rated.user_notes = "legs wrecked"
+    a_unrated = _make_activity(strava_id=2, days_ago=3)
+    a_old_rated = _make_activity(strava_id=3, days_ago=30)
+    a_old_rated.rpe = 5
+    await _seed(db, [a_rated, a_unrated, a_old_rated])
+
+    snap = await training_metrics.get_recent_rpe(db, days=14)
+    assert len(snap) == 1
+    assert snap[0]["activity_id"] == a_rated.id
+    assert snap[0]["rpe"] == 8
+    assert snap[0]["notes"] == "legs wrecked"
+
+
+async def test_recent_rpe_limit_caps_output(db):
+    acts = []
+    for i in range(1, 13):
+        a = _make_activity(strava_id=i, days_ago=i % 14)
+        a.rpe = 5
+        acts.append(a)
+    await _seed(db, acts)
+    snap = await training_metrics.get_recent_rpe(db, days=14, limit=5)
+    assert len(snap) == 5
+
+
+# ── Feedback summary ──────────────────────────────────────────────────
+
+
+async def test_feedback_summary_empty(db):
+    snap = await training_metrics.get_feedback_summary(db)
+    assert snap == {"accepted": 0, "declined": 0, "total": 0, "recent_declines": []}
+
+
+async def test_feedback_summary_counts_and_declines(db):
+    today = date.today()
+    await _seed(
+        db,
+        [
+            RecommendationFeedback(
+                recommendation_date=today - timedelta(days=1), vote="up"
+            ),
+            RecommendationFeedback(
+                recommendation_date=today - timedelta(days=2),
+                vote="down",
+                reason="too hard",
+            ),
+            RecommendationFeedback(
+                recommendation_date=today - timedelta(days=3),
+                vote="down",
+                reason="wrong sport",
+            ),
+        ],
+    )
+    snap = await training_metrics.get_feedback_summary(db)
+    assert snap["accepted"] == 1
+    assert snap["declined"] == 2
+    assert snap["total"] == 3
+    assert len(snap["recent_declines"]) == 2
+    assert snap["recent_declines"][0]["reason"] == "too hard"
+
+
+async def test_feedback_summary_window_excludes_old(db):
+    today = date.today()
+    await _seed(
+        db,
+        [
+            RecommendationFeedback(
+                recommendation_date=today - timedelta(days=60), vote="up"
+            ),
+            RecommendationFeedback(
+                recommendation_date=today - timedelta(days=1), vote="down"
+            ),
+        ],
+    )
+    snap = await training_metrics.get_feedback_summary(db, days=30)
+    assert snap["total"] == 1
+    assert snap["declined"] == 1

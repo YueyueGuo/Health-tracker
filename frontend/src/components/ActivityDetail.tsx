@@ -23,6 +23,7 @@ import { getActivityWeather } from "../api/weather";
 import { useState } from "react";
 import ClassificationBadge from "./ClassificationBadge";
 import LocationPicker from "./LocationPicker";
+import RPECard from "./RPECard";
 import WeatherCard from "./WeatherCard";
 import {
   formatDistance,
@@ -233,6 +234,14 @@ export default function ActivityDetail() {
           </div>
         )}
       </div>
+
+      <RPECard
+        activityId={activityId}
+        initialRpe={activity.rpe}
+        initialNotes={activity.user_notes}
+        ratedAt={activity.rated_at}
+        onSaved={reload}
+      />
 
       <WeatherCard weather={weather} />
 

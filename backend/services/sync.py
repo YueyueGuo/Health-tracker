@@ -189,6 +189,18 @@ class SyncEngine:
         await self.db.commit()
         return new_count
 
+    async def drain_strava_enrichment(self, *, limit: int | None = None) -> int:
+        """Public entry point for the enrichment scheduler.
+
+        Runs Phase B only — does NOT re-list via Phase A. Returns the count
+        of activities enriched in this call. Stops early on quota exhaustion
+        or after ``limit`` activities.
+
+        This is a stable wrapper around ``_strava_phase_b`` so background
+        jobs don't depend on private method names.
+        """
+        return await self._strava_phase_b(limit=limit)
+
     async def _strava_phase_b(self, *, limit: int | None) -> int:
         """Enrich pending activities with detail + zones.
 

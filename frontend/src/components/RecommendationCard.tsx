@@ -5,6 +5,7 @@ import {
   type DailyRecommendationResponse,
   type Intensity,
 } from "../api/insights";
+import ThumbsFeedback from "./ThumbsFeedback";
 
 const INTENSITY_COLOR: Record<Intensity, string> = {
   rest: "#8b8fa3",
@@ -35,17 +36,17 @@ function timeAgo(iso: string): string {
 }
 
 export default function RecommendationCard() {
-  const { data, loading, error, reload } = useApi(() => fetchDailyRecommendation(false));
+  const { data, loading, error, setData } = useApi(() => fetchDailyRecommendation(false));
   const [refreshing, setRefreshing] = useState(false);
   const [showInputs, setShowInputs] = useState(false);
 
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      // Hit the endpoint with refresh=true, then reload normally so the
-      // cache is populated and subsequent renders are instant.
-      await fetchDailyRecommendation(true);
-      await reload();
+      // Single round trip: the refresh=true call itself returns the fresh
+      // payload AND primes the backend cache for subsequent page loads.
+      const fresh = await fetchDailyRecommendation(true);
+      setData(fresh);
     } finally {
       setRefreshing(false);
     }
@@ -181,6 +182,11 @@ function RecommendationCardView({
           </ul>
         </div>
       )}
+
+      <ThumbsFeedback
+        recommendationDate={data.recommendation_date}
+        cacheKey={data.cache_key}
+      />
 
       <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 12 }}>
         <button

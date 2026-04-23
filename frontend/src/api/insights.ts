@@ -100,6 +100,8 @@ export interface DailyRecommendationResponse {
   model: string;
   generated_at: string;
   cached: boolean;
+  cache_key: string;
+  recommendation_date: string;
 }
 
 export interface NotableSegment {

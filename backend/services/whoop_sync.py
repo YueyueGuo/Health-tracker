@@ -273,7 +273,7 @@ async def _upsert_workout(db: AsyncSession, rec: dict) -> str | None:
 
     existing = (
         await db.execute(
-            select(WhoopWorkout).where(WhoopWorkout.whoop_id == int(whoop_id))
+            select(WhoopWorkout).where(WhoopWorkout.whoop_id == str(whoop_id))
         )
     ).scalar_one_or_none()
     if existing:
@@ -284,5 +284,5 @@ async def _upsert_workout(db: AsyncSession, rec: dict) -> str | None:
                 dirty = True
         return "workouts_updated" if dirty else None
 
-    db.add(WhoopWorkout(whoop_id=int(whoop_id), **fields))
+    db.add(WhoopWorkout(whoop_id=str(whoop_id), **fields))
     return "workouts_new"

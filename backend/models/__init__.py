@@ -1,4 +1,6 @@
 from backend.models.activity import Activity, ActivityLap, ActivityStream
+from backend.models.goal import Goal
+from backend.models.recommendation_feedback import RecommendationFeedback
 from backend.models.recovery import Recovery
 from backend.models.sleep import SleepSession
 from backend.models.strength import StrengthSet
@@ -12,6 +14,8 @@ __all__ = [
     "ActivityLap",
     "ActivityStream",
     "AnalysisCache",
+    "Goal",
+    "RecommendationFeedback",
     "Recovery",
     "SleepSession",
     "StrengthSet",
