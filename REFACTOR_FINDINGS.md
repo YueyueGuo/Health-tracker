@@ -1,6 +1,6 @@
 # Refactor Findings And Next Steps
 
-Current as of the backend module-split refactor pass on April 23, 2026.
+Current as of the frontend test-harness pass on April 23, 2026.
 
 ## Current Baseline
 
@@ -11,6 +11,7 @@ Current as of the backend module-split refactor pass on April 23, 2026.
   - `.venv/bin/ruff check .` -> passed
   - `.venv/bin/python -m pytest` -> 291 passed, no `datetime.utcnow()` warnings
 - Frontend verification after the latest insight type-tightening/module-split pass:
+  - `npm test` -> passed (Vitest, 21 tests)
   - `npm run typecheck` -> passed
   - `npm run build` -> passed, with Vite's existing large bundle warning
 - Local `main` was fast-forwarded to `origin/main` after PR #5. Any
@@ -118,6 +119,21 @@ Remaining remote branches intentionally left alone during consolidation:
 - Replaced remaining API-level `any` placeholders in `frontend/src/api/insights.ts`.
 - Added typed frontend mirrors for latest-workout laps, weather, pre-workout sleep, historical comparison, recent activities, goals, baselines, recent RPE, feedback summary, and environmental context.
 - Updated `FullSnapshot` so it now includes the richer backend snapshot fields instead of only the original training/sleep/recovery/latest/recent-activity subset.
+
+### Frontend Test Harness And Shared Coverage
+
+- Added Vitest + React Testing Library to the frontend toolchain.
+- Added `npm test` in `frontend/package.json`.
+- Added shared test setup via `frontend/src/test/setup.ts`.
+- Added focused frontend tests for:
+  - `frontend/src/api/http.ts`
+  - `frontend/src/hooks/useDebouncedLocationSearch.ts`
+  - `frontend/src/hooks/useCurrentPosition.ts`
+  - `frontend/src/components/location/LocationSearchForm.tsx`
+  - `frontend/src/components/location/GpsLocationForm.tsx`
+  - `frontend/src/components/LocationPicker.tsx`
+  - `frontend/src/components/GoalsSection.tsx`
+- Current frontend test count from this slice: 21 passing.
 
 ## Remaining Findings
 
@@ -251,25 +267,29 @@ What changed:
 Only `/api/chat/ask` (free-form Q&A, still used by `ChatPanel`) and
 `/api/chat/models` remain under `/api/chat`.
 
-### 6. Frontend Test Coverage Is Still Missing
+### 6. Frontend Test Coverage Exists, But Is Still Thin
 
 Files/areas:
 
-- No `frontend/src/**/*.test.*` or Vitest setup currently exists.
+- `frontend/src/api/http.test.ts`
+- `frontend/src/hooks/useDebouncedLocationSearch.test.tsx`
+- `frontend/src/hooks/useCurrentPosition.test.tsx`
+- `frontend/src/components/location/LocationSearchForm.test.tsx`
+- `frontend/src/components/location/GpsLocationForm.test.tsx`
+- `frontend/src/components/LocationPicker.test.tsx`
+- `frontend/src/components/GoalsSection.test.tsx`
 
 Risk:
 
-- API helper behavior, hooks, and location forms are covered only by TypeScript/build checks.
+- Shared HTTP behavior and the extracted location hooks/forms now have regression coverage.
 - UI regressions in Settings, Activity Detail, and dashboard cards can slip through.
 
 Recommended next steps:
 
-- Add Vitest + React Testing Library.
-- Start with low-maintenance tests for:
-  - `api/http.ts` error parsing and 204 handling
-  - `useDebouncedLocationSearch`
-  - `useCurrentPosition` geolocation unavailable/error paths
-  - `LocationSearchForm` basic pick flow
+- Expand the new Vitest setup to cover:
+  - `Settings` location CRUD flows
+  - one or two dashboard cards that consume nested API payloads
+  - `ActivityDetail` detail-page composition around lazy API states
 
 Suggested PR size: Small.
 
@@ -353,17 +373,18 @@ Verification:
 
 Goal: make frontend contracts safer after the API split.
 
+Status: mostly complete; shared-surface tests exist now.
+
 Scope:
 
 - Add or document a frontend/backend snapshot type-sync checklist.
-- Add Vitest + React Testing Library.
-- Test `api/http.ts` and the location hooks/forms.
+- Expand the new Vitest setup into a few more high-signal frontend flows.
 
 Verification:
 
+- `npm test`
 - `npm run typecheck`
 - `npm run build`
-- frontend test command once added
 
 ### PR 3: Settings/Goals Decomposition
 
@@ -397,5 +418,5 @@ Outcome:
 ## Suggested Prompt For Next Session
 
 ```text
-Please read REFACTOR_FINDINGS.md and implement the next refactor PR: add frontend tests with Vitest + React Testing Library, starting with api/http.ts and the shared location hooks/forms. Keep behavior stable, run typecheck/build/test, and update this handoff file with what changed.
+Please read REFACTOR_FINDINGS.md and implement the next refactor PR: decompose Settings and location/goals UI into smaller components/hooks without changing behavior. Run frontend test/build checks and update this handoff file with what changed.
 ```
