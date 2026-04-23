@@ -3,11 +3,17 @@
 The public API still returns plain dictionaries for compatibility, but these
 models validate the shape at assembly time and give the frontend a concrete
 backend source of truth to mirror.
+
+Type-sync checklist for changes in this file:
+1. Update the matching TypeScript interfaces in ``frontend/src/api/insights.ts``.
+2. Check nullability and optional-vs-required semantics explicitly.
+3. Run backend snapshot tests plus ``npm test``, ``npm run typecheck``, and
+   ``npm run build`` from ``frontend/``.
 """
 
 from __future__ import annotations
 
-from typing import Any, TypeVar
+from typing import TypeVar
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
@@ -100,7 +106,7 @@ class LatestWorkoutSnapshot(SnapshotModel):
     name: str
     sport_type: str
     classification_type: str | None
-    classification_flags: list[Any]
+    classification_flags: list[str]
     start_date: str | None
     start_date_local: str | None
     distance_m: float | None

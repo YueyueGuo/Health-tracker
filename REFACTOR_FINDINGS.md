@@ -1,6 +1,6 @@
 # Refactor Findings And Next Steps
 
-Current as of the settings decomposition pass on April 23, 2026.
+Current as of the snapshot type-sync + ActivityDetail coverage pass on April 23, 2026.
 
 ## Current Baseline
 
@@ -135,8 +135,26 @@ Remaining remote branches intentionally left alone during consolidation:
   - `frontend/src/components/location/GpsLocationForm.tsx`
   - `frontend/src/components/LocationPicker.tsx`
   - `frontend/src/components/GoalsSection.tsx`
+  - `frontend/src/components/ActivityDetail.tsx`
   - `frontend/src/pages/Settings.tsx`
-- Current frontend test count from this slice: 23 passing.
+- Current frontend test count from this slice: 25 passing.
+
+### Snapshot Type Sync Checklist And ActivityDetail Follow-Up
+
+- Added an explicit snapshot type-sync checklist to:
+  - `backend/services/snapshot_models.py`
+  - `frontend/src/api/insights.ts`
+- Tightened `LatestWorkoutSnapshot.classification_flags` in `snapshot_models.py` from `list[Any]` to `list[str]` to match the actual payload and the frontend contract.
+- `frontend/src/components/ActivityDetail.tsx` now uses shared `getErrorMessage()` handling for lazy insight/stream errors instead of local `any` catches.
+- Added `frontend/src/components/ActivityDetail.test.tsx` covering:
+  - lazy latest-workout insight loading
+  - lazy stream loading
+  - surfaced error states for both lazy actions
+- Verification after this pass:
+  - `npm test` -> 25 passed
+  - `npm run typecheck` -> passed
+  - `npm run build` -> passed, with Vite's existing large bundle warning
+  - `.venv/bin/python -m pytest tests/test_services/test_insights.py tests/test_services/test_training_metrics.py` -> 44 passed
 
 ### Settings / Goals / Location Decomposition
 
@@ -158,7 +176,7 @@ Remaining remote branches intentionally left alone during consolidation:
   - `frontend/src/utils/errors.ts`
 - `frontend/src/components/LocationPicker.tsx` now reuses `useLocations()` and `SavedLocationPicker` while preserving the existing attach/create/detach behavior.
 - Verification after this pass:
-  - `npm test` -> 23 passed
+  - `npm test` -> 25 passed
   - `npm run typecheck` -> passed
   - `npm run build` -> passed, with Vite's existing large bundle warning
 
@@ -175,11 +193,11 @@ Current state:
 
 - Backend snapshot assembly is split into focused modules and validates against `snapshot_models.py`.
 - Public API boundaries intentionally still return plain dicts.
-- The frontend mirrors nested insight snapshot shapes manually in `frontend/src/api/insights.ts`; there is still no generated contract pipeline or documented type-sync checklist.
+- The frontend mirrors nested insight snapshot shapes manually in `frontend/src/api/insights.ts`.
+- A lightweight type-sync checklist now lives in both `snapshot_models.py` and `frontend/src/api/insights.ts`, but there is still no generated contract pipeline.
 
 Recommended next steps:
 
-- Add a lightweight type-sync checklist for `snapshot_models.py` -> `frontend/src/api/insights.ts`.
 - Consider generating JSON Schema/TypeScript types from the backend Pydantic models if this surface changes often.
 
 Suggested PR size: Small.
@@ -222,6 +240,7 @@ Current state:
 - `ActivityDetail.weather` and `raw_data` now use `Record<string, unknown>`.
 - Dashboard/recovery/sleep chart `any` usage was reduced.
 - `frontend/src/api/insights.ts` no longer has API-level `any` placeholders for insight snapshots.
+- `ActivityDetail.tsx` no longer uses local `any` catches for lazy insight/stream error handling.
 - There are still no generated or backend-sourced frontend contracts.
 
 Recommended next steps:
@@ -296,18 +315,18 @@ Files/areas:
 - `frontend/src/components/location/GpsLocationForm.test.tsx`
 - `frontend/src/components/LocationPicker.test.tsx`
 - `frontend/src/components/GoalsSection.test.tsx`
+- `frontend/src/components/ActivityDetail.test.tsx`
+- `frontend/src/pages/Settings.test.tsx`
 
 Risk:
 
-- Shared HTTP behavior and the extracted location hooks/forms now have regression coverage.
-- UI regressions in Settings, Activity Detail, and dashboard cards can slip through.
+- Shared HTTP behavior, Settings CRUD, extracted location hooks/forms, and Activity Detail lazy API states now have regression coverage.
+- Dashboard cards and a few other nested-payload consumers can still regress without frontend tests.
 
 Recommended next steps:
 
 - Expand the new Vitest setup to cover:
-  - `Settings` location CRUD flows
   - one or two dashboard cards that consume nested API payloads
-  - `ActivityDetail` detail-page composition around lazy API states
 
 Suggested PR size: Small.
 
@@ -391,12 +410,17 @@ Verification:
 
 Goal: make frontend contracts safer after the API split.
 
-Status: mostly complete; shared-surface tests exist now.
+Status: complete enough for now; generated contracts remain optional future work.
 
-Scope:
+Completed:
 
-- Add or document a frontend/backend snapshot type-sync checklist.
-- Expand the new Vitest setup into a few more high-signal frontend flows.
+- Documented a frontend/backend snapshot type-sync checklist.
+- Expanded Vitest coverage into high-signal `Settings` and `ActivityDetail` flows.
+
+Remaining:
+
+- Consider generated schema/type export if snapshot churn increases.
+- Add one or two dashboard-card tests if UI regressions start slipping through.
 
 Verification:
 
@@ -439,5 +463,5 @@ Outcome:
 ## Suggested Prompt For Next Session
 
 ```text
-Please read REFACTOR_FINDINGS.md and implement the next remaining frontend refactor slice: add a lightweight backend/frontend snapshot type-sync checklist and expand Vitest coverage for one high-signal UI flow (preferably Settings CRUD or ActivityDetail lazy states). Run `npm test`, `npm run typecheck`, and `npm run build`, then update the handoff file with what changed.
+Please read REFACTOR_FINDINGS.md and implement the next remaining refactor slice: continue the backend date/time follow-up by replacing a small batch of direct wall-clock calls with shared helpers where it improves determinism, add focused midnight-boundary tests where behavior is user-visible, run targeted pytest, and update the handoff file with what changed.
 ```

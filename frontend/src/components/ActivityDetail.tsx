@@ -36,6 +36,7 @@ import {
   useUnits,
   type UnitSystem,
 } from "../hooks/useUnits";
+import { getErrorMessage } from "../utils/errors";
 
 // Mirrors the tier thresholds in backend/services/classifier.py. Kept in
 // sync manually — if you change one, change the other.
@@ -81,8 +82,8 @@ export default function ActivityDetail() {
       const result = await fetchLatestWorkoutInsight({ activityId });
       setInsight(result.insight);
       setInsightModel(result.model);
-    } catch (e: any) {
-      setInsightError(e.message || "Analysis failed");
+    } catch (error) {
+      setInsightError(getErrorMessage(error));
     } finally {
       setAnalyzing(false);
     }
@@ -94,8 +95,8 @@ export default function ActivityDetail() {
     try {
       const s = await fetchActivityStreams(activityId);
       setStreams(s);
-    } catch (e: any) {
-      setStreamsError(e.message || "Failed to load streams");
+    } catch (error) {
+      setStreamsError(getErrorMessage(error));
     } finally {
       setStreamsLoading(false);
     }

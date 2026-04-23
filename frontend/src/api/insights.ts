@@ -1,6 +1,17 @@
 // ── Types ──────────────────────────────────────────────────────────────
 // Keep these in sync with backend/services/insight_schemas.py and
 // backend/services/snapshot_models.py.
+//
+// Snapshot type-sync checklist:
+// 1. When a backend Pydantic snapshot model changes, update the matching
+//    interface here in the same PR.
+// 2. Check nullability carefully: backend ``foo: X | None = None`` usually
+//    maps to ``foo: X | null`` unless the field is intentionally omitted.
+// 3. Verify nested latest-workout fields against
+//    ``backend/services/workout_snapshot.py`` because that payload is still
+//    assembled manually before Pydantic validation.
+// 4. Re-run ``npm test``, ``npm run typecheck``, and ``npm run build`` after
+//    changing either side of the contract.
 
 import { fetchJson } from "./http";
 
