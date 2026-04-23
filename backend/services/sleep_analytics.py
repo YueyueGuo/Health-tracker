@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import SleepSession
+from backend.services.time_utils import local_today
 
 
 EIGHT_SLEEP = "eight_sleep"
@@ -35,10 +36,11 @@ _ROLLING_METRICS = (
 
 
 async def _fetch_sessions(
-    db: AsyncSession, days: int
+    db: AsyncSession, days: int, today: date | None = None
 ) -> list[SleepSession]:
     """Return Eight Sleep sessions in the last ``days`` days (inclusive)."""
-    cutoff = date.today() - timedelta(days=days - 1)
+    today = today or local_today()
+    cutoff = today - timedelta(days=days - 1)
     result = await db.execute(
         select(SleepSession)
         .where(SleepSession.source == EIGHT_SLEEP)
@@ -88,15 +90,17 @@ def _circular_std_hours(hours: list[float]) -> float | None:
 # ── Public analytics functions ──────────────────────────────────────
 
 
-async def get_rolling_averages(db: AsyncSession, days: int = 30) -> dict:
+async def get_rolling_averages(
+    db: AsyncSession, days: int = 30, today: date | None = None
+) -> dict:
     """Return 7-day and ``days``-day rolling averages for a set of metrics.
 
     The 7-day average always covers the most-recent 7 days; the long-window
     average covers the most-recent ``days`` days (default 30). Both windows
     are computed from the same DB query so we can return them together.
     """
-    sessions = await _fetch_sessions(db, days=max(days, 7))
-    today = date.today()
+    today = today or local_today()
+    sessions = await _fetch_sessions(db, days=max(days, 7), today=today)
     short_cutoff = today - timedelta(days=6)   # last 7 days (inclusive)
     long_cutoff = today - timedelta(days=days - 1)
 
@@ -124,14 +128,17 @@ async def get_rolling_averages(db: AsyncSession, days: int = 30) -> dict:
 
 
 async def get_sleep_debt(
-    db: AsyncSession, target_hours: float = 8.0, days: int = 14
+    db: AsyncSession,
+    target_hours: float = 8.0,
+    days: int = 14,
+    today: date | None = None,
 ) -> dict:
     """Compute per-night and cumulative sleep debt over the window.
 
     Debt is expressed in hours: ``target_hours - actual_hours``. Positive
     values mean the user slept less than the target.
     """
-    sessions = await _fetch_sessions(db, days=days)
+    sessions = await _fetch_sessions(db, days=days, today=today)
 
     per_night: list[dict] = []
     cumulative = 0.0
@@ -161,10 +168,10 @@ async def get_sleep_debt(
 
 
 async def get_best_worst_nights(
-    db: AsyncSession, days: int = 90, top_n: int = 5
+    db: AsyncSession, days: int = 90, top_n: int = 5, today: date | None = None
 ) -> dict:
     """Return the top-N best and worst nights (by sleep_score) in the window."""
-    sessions = await _fetch_sessions(db, days=days)
+    sessions = await _fetch_sessions(db, days=days, today=today)
     scored = [s for s in sessions if s.sleep_score is not None]
 
     # Sort copies so we don't mutate the original list's order.
@@ -193,7 +200,9 @@ def _night_stats(s: SleepSession) -> dict:
     }
 
 
-async def get_consistency_metrics(db: AsyncSession, days: int = 30) -> dict:
+async def get_consistency_metrics(
+    db: AsyncSession, days: int = 30, today: date | None = None
+) -> dict:
     """Standard deviations of bed_time, wake_time, and total_duration.
 
     - ``bed_time_std_hours`` / ``wake_time_std_hours`` use circular statistics
@@ -204,7 +213,7 @@ async def get_consistency_metrics(db: AsyncSession, days: int = 30) -> dict:
 
     Lower stdev → more consistent.
     """
-    sessions = await _fetch_sessions(db, days=days)
+    sessions = await _fetch_sessions(db, days=days, today=today)
 
     bed_hours = [h for h in (_hour_of_day(s.bed_time) for s in sessions) if h is not None]
     wake_hours = [h for h in (_hour_of_day(s.wake_time) for s in sessions) if h is not None]

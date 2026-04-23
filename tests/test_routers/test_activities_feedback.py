@@ -1,12 +1,13 @@
 """Tests for PATCH /api/activities/{id}/feedback (RPE + notes)."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 
 from backend.models import Activity
 from backend.routers.activities import router as activities_router
+from backend.services.time_utils import utc_now_naive
 
 from .conftest import make_client
 
@@ -19,7 +20,7 @@ async def client(db_and_sessionmaker):
 
 
 async def _seed_activity(db) -> Activity:
-    start = datetime.utcnow() - timedelta(days=1)
+    start = utc_now_naive() - timedelta(days=1)
     a = Activity(
         strava_id=12345,
         name="Morning run",

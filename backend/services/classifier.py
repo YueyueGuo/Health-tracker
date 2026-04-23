@@ -185,15 +185,15 @@ def _run_features(
     activity: Activity, laps: list[ActivityLap]
 ) -> dict:
     usable = [
-        l for l in laps
-        if (l.moving_time or 0) >= _ARTIFACT_MIN_MOVING_S
-        or (l.distance or 0) >= _ARTIFACT_MAX_DISTANCE_M
+        lap for lap in laps
+        if (lap.moving_time or 0) >= _ARTIFACT_MIN_MOVING_S
+        or (lap.distance or 0) >= _ARTIFACT_MAX_DISTANCE_M
     ]
 
-    speeds = [l.average_speed for l in usable if l.average_speed]
-    distances = [l.distance for l in usable if l.distance]
-    pace_zones = [l.pace_zone for l in usable if l.pace_zone is not None]
-    hrs = [l.average_heartrate for l in usable if l.average_heartrate]
+    speeds = [lap.average_speed for lap in usable if lap.average_speed]
+    distances = [lap.distance for lap in usable if lap.distance]
+    pace_zones = [lap.pace_zone for lap in usable if lap.pace_zone is not None]
+    hrs = [lap.average_heartrate for lap in usable if lap.average_heartrate]
 
     is_auto_splits = _detect_auto_splits(distances)
 
@@ -246,9 +246,12 @@ def _run_flags(
         flags.append("has_speed_component")
 
     # Warmup/cooldown: first and last usable lap both slower than the middle.
-    usable = [l for l in laps if (l.moving_time or 0) >= _ARTIFACT_MIN_MOVING_S]
+    usable = [
+        lap for lap in laps
+        if (lap.moving_time or 0) >= _ARTIFACT_MIN_MOVING_S
+    ]
     if len(usable) >= 4:
-        speeds = [l.average_speed for l in usable if l.average_speed]
+        speeds = [lap.average_speed for lap in usable if lap.average_speed]
         if len(speeds) >= 4:
             middle = speeds[1:-1]
             middle_avg = sum(middle) / len(middle)

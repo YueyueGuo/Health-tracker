@@ -46,17 +46,14 @@ That's why the DB stays small.
 ### Rate limiting
 `backend/clients/strava.py`:
 
-- Parses `X-Ratelimit-Usage`/`X-Ratelimit-Limit` on every response.
+- Parses both Strava quota families on every response:
+  `X-Ratelimit-Usage`/`X-Ratelimit-Limit` and
+  `X-ReadRateLimit-Usage`/`X-ReadRateLimit-Limit`.
 - Module-level `_quota_state` shared across all client instances.
-- `StravaClient.quota_exhausted(fraction=0.95)` returns True at 95% of either
-  reported limit. Strava's default is 100/15min + 1000/day for the
-  read-only limit, but the authenticated app we use is on 200/15min + 2000/day.
+- `StravaClient.quota_exhausted(fraction=0.95)` returns True at 95% of any
+  reported combined/read short or daily limit. `daily_quota_exhausted()`
+  distinguishes daily ceilings from 15-minute ceilings for backfill loops.
 - On 429 → raises `StravaRateLimitError` so the sync loop stops cleanly.
-
-**Known gap**: we don't parse the separate `X-ReadRateLimit-Usage` header.
-Strava has a distinct *read* rate limit (100/15min) that can hit before the
-overall counter hits 95% of 200. Low priority; the backfill handles it by
-sleeping 15min when it gets a 429.
 
 ### Schema (see `backend/models/activity.py`)
 
@@ -410,6 +407,14 @@ Two phases, resumable via `elevation_enriched`:
   30/60/90-day range selector. All data comes from `frontend/src/api/sleep.ts`
   typed fetchers hitting `/api/sleep` + `/api/sleep/analytics/*`. Uses
   Recharts consistent with the rest of the frontend.
+- Frontend API modules now share `frontend/src/api/http.ts` for `/api`
+  requests, FastAPI `detail` error parsing, 204/205 handling, and optional
+  404-as-null behavior. `frontend/src/api/client.ts` is only a compatibility
+  barrel; new UI imports should use domain modules directly (`activities`,
+  `dashboard`, `summary`, `chat`, `sync`, etc.).
+- Location search/GPS flows are shared between Settings and Activity Detail
+  via `frontend/src/components/location/{LocationSearchForm,GpsLocationForm}.tsx`
+  plus `frontend/src/hooks/{useDebouncedLocationSearch,useCurrentPosition}.ts`.
 
 ## Alembic
 Linear chain: `initial → laps_zones_enrichment (a1c4f9d2e8b0) → eight_sleep_extra_fields (c3e7b18f92a4) → classification (b2d5e0f3c1a7) → sleep_wake_events (d89f2a41e6c3) → strength_sets (e4a9b1c3d5f7) → whoop_workouts (f5a1c7b2d4e9) → elevation_and_user_locations (a7e2c5f8b1d3)`.
@@ -425,6 +430,8 @@ safe to run while the backfill scheduler is writing.
 - Backend: Python 3.11+. `pyproject.toml` is authoritative for deps.
 - Frontend: React 19. `npm run typecheck` and `npm run build` should be clean
   before committing frontend changes.
+- CI lives in `.github/workflows/ci.yml` and runs Ruff, pytest, frontend
+  typecheck, and frontend build on PRs/pushes to `main`.
 - Commit messages include `Co-Authored-By: Oz <oz-agent@warp.dev>` per Warp
   convention.
 - When working in parallel with another agent, each agent should be on its
@@ -448,15 +455,17 @@ safe to run while the backfill scheduler is writing.
 - **Classifier tuning** — Current distribution looks sensible after the
   `max_pace_zone ≥ 3` gate. Most activities now enriched (1,512 / 1,754
   after elevation work). Revisit if specific sport mixes look off.
-- **Read rate limit header** — StravaClient doesn't parse
-  `X-ReadRateLimit-Usage` separately. Cheap fix if we want to stop *before*
-   429'ing instead of after.
 - **`/api/summary/weekly` filter** — UI doesn't yet filter activity list by
   clicking into a weekly summary card. Obvious follow-up.
 - **Strava-side tests** — Classifier, weekly summary, and `SyncEngine`
   phase A/B are now covered (48 + 21 + 26 new tests). The remaining
   Strava gap is full HTTP-level coverage of `StravaClient` OAuth /
   refresh / pagination (header parsing is already tested).
+- **Refactor follow-up** — see `REFACTOR_FINDINGS.md` for the active queue:
+  backend snapshot Pydantic models / `training_metrics.py` split,
+  `datetime.utcnow()` cleanup with a small time helper, remaining frontend
+  insight type tightening, Settings/Goals decomposition, frontend tests, and
+  legacy chat-vs-insights consolidation.
 
 ## Ambient state you should know about
 - `scripts/backfill_strava.py` was kicked off as a background process and
@@ -581,9 +590,9 @@ so stack traces land in the log.
   ignored, `_lap_from_raw` field mapping + malformed/missing
   start_date handling.
 
-**Total repo test count: 243 passing** (Eight Sleep 54 + elevation 29
-+ dashboard/scheduler 33 + classifier 48 + weekly-summary 21 + Strava
-sync engine 26 + other suites).
+**Latest repo test count: 286 passing** after the stabilization/frontend API
+refactor pass. Existing warnings are `datetime.utcnow()` deprecations; see
+`REFACTOR_FINDINGS.md` for the planned time-helper cleanup.
 
 ## Quick commands cheatsheet
 

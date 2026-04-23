@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { askQuestion, fetchAvailableModels } from "../api/client";
+import { askQuestion, fetchAvailableModels } from "../api/chat";
 import { useApi } from "../hooks/useApi";
 
 interface Message {

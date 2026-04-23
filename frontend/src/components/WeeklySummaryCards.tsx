@@ -1,5 +1,5 @@
 import { useApi } from "../hooks/useApi";
-import { fetchWeeklySummaries, type WeeklySummary } from "../api/client";
+import { fetchWeeklySummaries, type WeeklySummary } from "../api/summary";
 import { formatDistanceShort, useUnits } from "../hooks/useUnits";
 
 interface Props {

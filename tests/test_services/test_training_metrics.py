@@ -14,6 +14,7 @@ from backend.models import (
     Recovery,
     SleepSession,
 )
+from backend.services.snapshot_models import FullSnapshot, daily_recommendation_cache_signal
 from backend.services import training_metrics
 
 
@@ -146,6 +147,34 @@ async def test_training_load_monotony_zero_stdev(db):
     await _seed(db, acts)
     snap = await training_metrics.get_training_load_snapshot(db)
     assert snap["monotony"] is None  # stdev=0 → can't compute
+
+
+async def test_training_load_accepts_explicit_today(db):
+    anchor = date(2026, 1, 8)
+    start = datetime.combine(anchor - timedelta(days=6), datetime.min.time())
+    await _seed(
+        db,
+        [
+            Activity(
+                strava_id=10,
+                name="Fixed hard run",
+                sport_type="Run",
+                start_date=start,
+                start_date_local=start,
+                moving_time=1800,
+                distance=5000,
+                suffer_score=70,
+                classification_type="intervals",
+                enrichment_status="complete",
+            )
+        ],
+    )
+
+    snap = await training_metrics.get_training_load_snapshot(db, today=anchor)
+
+    assert snap["acute_load_7d"] == 70.0
+    assert snap["days_since_hard"] == 6
+    assert snap["last_hard_date"] == "2026-01-02"
 
 
 # ── Sleep snapshot ────────────────────────────────────────────────────
@@ -291,6 +320,48 @@ async def test_full_snapshot_assembles_all_sections(db):
     assert "recent_rpe" in snap
     assert "feedback_summary" in snap
     assert "environmental" in snap
+
+
+async def test_full_snapshot_validates_against_contract_and_cache_signal(db):
+    anchor = date(2026, 1, 8)
+    start = datetime.combine(anchor, datetime.min.time())
+    await _seed(
+        db,
+        [
+            Activity(
+                strava_id=77,
+                name="Anchor workout",
+                sport_type="Run",
+                start_date=start,
+                start_date_local=start,
+                moving_time=1800,
+                distance=5000,
+                average_hr=145,
+                average_speed=2.8,
+                suffer_score=55,
+                classification_type="easy",
+                enrichment_status="complete",
+            ),
+            Recovery(source="whoop", date=anchor, recovery_score=70),
+        ],
+    )
+
+    snap = await training_metrics.get_full_snapshot(db, today=anchor)
+    model = FullSnapshot.model_validate(snap)
+    signal = daily_recommendation_cache_signal(snap)
+
+    assert model.today == "2026-01-08"
+    assert signal == {
+        "date": "2026-01-08",
+        "training_load": snap["training_load"],
+        "sleep": snap["sleep"],
+        "recovery": snap["recovery"],
+        "latest_id": snap["latest_workout"]["id"],
+        "goals": snap["goals"],
+        "recent_rpe": snap["recent_rpe"],
+        "feedback_summary": snap["feedback_summary"],
+        "environmental": snap["environmental"],
+    }
 
 
 # ── Goals snapshot ────────────────────────────────────────────────────

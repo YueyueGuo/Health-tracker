@@ -1,17 +1,20 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import Activity, SleepSession, Recovery
+from backend.services.time_utils import local_today
 
 
-async def get_weekly_stats(db: AsyncSession, weeks: int = 4) -> list[dict]:
+async def get_weekly_stats(
+    db: AsyncSession, weeks: int = 4, today: date | None = None
+) -> list[dict]:
     """Get weekly training volume stats."""
     results = []
-    today = date.today()
+    today = today or local_today()
 
     for i in range(weeks):
         week_end = today - timedelta(days=today.weekday()) - timedelta(weeks=i)
@@ -45,9 +48,12 @@ async def get_weekly_stats(db: AsyncSession, weeks: int = 4) -> list[dict]:
     return results
 
 
-async def get_sleep_trends(db: AsyncSession, days: int = 30) -> list[dict]:
+async def get_sleep_trends(
+    db: AsyncSession, days: int = 30, today: date | None = None
+) -> list[dict]:
     """Get sleep trend data for the last N days."""
-    cutoff = date.today() - timedelta(days=days)
+    today = today or local_today()
+    cutoff = today - timedelta(days=days)
     result = await db.execute(
         select(SleepSession)
         .where(SleepSession.date >= cutoff)
@@ -73,9 +79,12 @@ async def get_sleep_trends(db: AsyncSession, days: int = 30) -> list[dict]:
     ]
 
 
-async def get_recovery_trends(db: AsyncSession, days: int = 30) -> list[dict]:
+async def get_recovery_trends(
+    db: AsyncSession, days: int = 30, today: date | None = None
+) -> list[dict]:
     """Get recovery trend data."""
-    cutoff = date.today() - timedelta(days=days)
+    today = today or local_today()
+    cutoff = today - timedelta(days=days)
     result = await db.execute(
         select(Recovery)
         .where(Recovery.date >= cutoff)
@@ -96,9 +105,12 @@ async def get_recovery_trends(db: AsyncSession, days: int = 30) -> list[dict]:
     ]
 
 
-async def get_training_load(db: AsyncSession, days: int = 42) -> dict:
+async def get_training_load(
+    db: AsyncSession, days: int = 42, today: date | None = None
+) -> dict:
     """Calculate training load metrics (simplified CTL/ATL/TSB)."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    today = today or local_today()
+    cutoff = datetime.combine(today - timedelta(days=days), datetime.min.time())
     result = await db.execute(
         select(Activity)
         .where(Activity.start_date >= cutoff)
@@ -117,7 +129,6 @@ async def get_training_load(db: AsyncSession, days: int = 42) -> dict:
         daily_load[day] = daily_load.get(day, 0) + stress
 
     # Calculate rolling averages
-    today = date.today()
     ctl_data = []  # Chronic (42-day)
     atl_data = []  # Acute (7-day)
     tsb_data = []  # Training stress balance

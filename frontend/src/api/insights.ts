@@ -2,6 +2,8 @@
 // Keep these in sync with backend/services/insights.py (Pydantic models)
 // and backend/services/training_metrics.py (snapshot dicts).
 
+import { fetchJson } from "./http";
+
 export type Intensity = "rest" | "recovery" | "easy" | "moderate" | "quality";
 export type Confidence = "high" | "medium" | "low";
 
@@ -127,20 +129,6 @@ export interface WorkoutInsightResponse {
 }
 
 // ── Fetchers ───────────────────────────────────────────────────────────
-
-const BASE_URL = "/api";
-
-async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
-  const resp = await fetch(`${BASE_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => resp.statusText);
-    throw new Error(`API error ${resp.status}: ${text}`);
-  }
-  return resp.json();
-}
 
 export function fetchTrainingMetrics() {
   return fetchJson<FullSnapshot>("/insights/training-metrics");

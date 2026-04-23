@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,8 +13,6 @@ from backend.clients.whoop import WhoopClient
 from backend.models import (
     Activity,
     ActivityLap,
-    Recovery,
-    SleepSession,
     SyncLog,
     WeatherSnapshot,
 )

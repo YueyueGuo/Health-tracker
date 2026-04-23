@@ -1,5 +1,6 @@
 import { useApi } from "../hooks/useApi";
-import { fetchDashboardOverview, triggerSync } from "../api/client";
+import { fetchDashboardOverview } from "../api/dashboard";
+import { triggerSync } from "../api/sync";
 import { useState } from "react";
 import { useUnits } from "../hooks/useUnits";
 import WeeklySummaryCards from "./WeeklySummaryCards";

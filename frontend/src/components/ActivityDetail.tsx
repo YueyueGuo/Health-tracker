@@ -15,10 +15,10 @@ import { useApi } from "../hooks/useApi";
 import {
   fetchActivity,
   fetchActivityStreams,
-  fetchWorkoutAnalysis,
   reclassifyActivity,
   type ZoneDistribution,
-} from "../api/client";
+} from "../api/activities";
+import { fetchWorkoutAnalysis } from "../api/chat";
 import { getActivityWeather } from "../api/weather";
 import { useState } from "react";
 import ClassificationBadge from "./ClassificationBadge";

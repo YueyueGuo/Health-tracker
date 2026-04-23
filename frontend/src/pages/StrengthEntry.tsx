@@ -6,7 +6,7 @@ import {
   fetchStrengthExercises,
   type StrengthSetInput,
 } from "../api/strength";
-import { fetchActivities, type ActivitySummary } from "../api/client";
+import { fetchActivities, type ActivitySummary } from "../api/activities";
 
 /**
  * Form for adding a strength session.

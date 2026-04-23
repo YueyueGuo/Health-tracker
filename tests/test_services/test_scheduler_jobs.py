@@ -5,13 +5,14 @@ We don't exercise APScheduler itself — just the guard logic in
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 
 from backend import scheduler as scheduler_module
 from backend.database import Base
 from backend.models import Activity
+from backend.services.time_utils import utc_now_naive
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -59,7 +60,7 @@ async def test_drain_skips_when_daily_quota_hit(setup_db, monkeypatch, caplog):
                 strava_id=1,
                 name="Pending",
                 sport_type="Run",
-                start_date=datetime.utcnow() - timedelta(days=1),
+                start_date=utc_now_naive() - timedelta(days=1),
                 enrichment_status="pending",
             )
         )
@@ -99,7 +100,7 @@ async def test_drain_runs_phase_b_when_pending_and_quota_ok(setup_db, monkeypatc
                 strava_id=1,
                 name="Pending",
                 sport_type="Run",
-                start_date=datetime.utcnow() - timedelta(days=1),
+                start_date=utc_now_naive() - timedelta(days=1),
                 enrichment_status="pending",
             )
         )

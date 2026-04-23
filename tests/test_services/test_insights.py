@@ -5,7 +5,7 @@ deterministic and never hit a real API.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Any
 
 import pytest
@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from backend.database import Base
 from backend.models import Activity, Goal, RecommendationFeedback, Recovery, SleepSession
 from backend.services import insights
+from backend.services.time_utils import utc_now_naive
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────
@@ -32,7 +33,7 @@ async def db() -> AsyncSession:
 
 async def _seed_basic(db: AsyncSession) -> None:
     today = date.today()
-    now = datetime.utcnow()
+    now = utc_now_naive()
     db.add(
         Activity(
             strava_id=1,
@@ -272,8 +273,8 @@ async def test_workout_insight_skips_pending_activity_by_id(db, monkeypatch):
         strava_id=999,
         name="Pending",
         sport_type="Run",
-        start_date=datetime.utcnow(),
-        start_date_local=datetime.utcnow(),
+        start_date=utc_now_naive(),
+        start_date_local=utc_now_naive(),
         enrichment_status="pending",
     )
     db.add(pending)

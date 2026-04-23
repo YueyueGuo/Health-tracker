@@ -12,7 +12,7 @@ import {
 } from "recharts";
 import { useState } from "react";
 import { useApi } from "../hooks/useApi";
-import { fetchSleepTrends } from "../api/client";
+import { fetchSleepTrends } from "../api/sleep";
 
 export default function SleepChart() {
   const [days, setDays] = useState(30);
@@ -31,7 +31,7 @@ export default function SleepChart() {
     );
   }
 
-  const chartData = data.map((s: any) => ({
+  const chartData = data.map((s) => ({
     date: new Date(s.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
     score: s.sleep_score,
     total: s.total_duration ? Math.round(s.total_duration / 60 * 10) / 10 : null,
@@ -86,7 +86,7 @@ export default function SleepChart() {
         </ResponsiveContainer>
       </div>
 
-      {chartData.some((d: any) => d.hrv != null) && (
+      {chartData.some((d) => d.hrv != null) && (
         <div className="card">
           <h2>HRV Trend</h2>
           <ResponsiveContainer width="100%" height={200}>

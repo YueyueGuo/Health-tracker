@@ -1,4 +1,4 @@
-import type { ClassificationType } from "../api/client";
+import type { ClassificationType } from "../api/activities";
 
 interface Props {
   type: ClassificationType;

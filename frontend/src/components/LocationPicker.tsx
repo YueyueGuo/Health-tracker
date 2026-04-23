@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   attachLocationToActivity,
   createLocation,
   detachLocationFromActivity,
   listLocations,
-  searchLocations,
   type Location,
-  type LocationSearchHit,
 } from "../api/locations";
+import GpsLocationForm from "./location/GpsLocationForm";
+import LocationSearchForm from "./location/LocationSearchForm";
 import { formatElevation, useUnits } from "../hooks/useUnits";
 
 interface Props {
@@ -187,16 +187,22 @@ export default function LocationPicker({
       )}
 
       {mode === "search" && (
-        <SearchPicker
-          onPick={(hit, displayName) =>
-            createAndAttach(displayName, hit.lat, hit.lng, hit.elevation_m)
+        <LocationSearchForm
+          onPick={(name, hit) =>
+            createAndAttach(name, hit.lat, hit.lng, hit.elevation_m)
           }
           onCancel={() => setMode("menu")}
         />
       )}
 
       {mode === "gps" && (
-        <GpsPicker
+        <GpsLocationForm
+          busy={loading}
+          intro={
+            "We'll ask your browser for the current location and look up its elevation via Open-Meteo."
+          }
+          namePlaceholder="Name this place (e.g. Home gym)"
+          saveLabel="Save & attach"
           onPick={(name, lat, lng) => createAndAttach(name, lat, lng)}
           onCancel={() => setMode("menu")}
         />
@@ -258,195 +264,6 @@ function SavedPicker({
       </div>
     </div>
   );
-}
-
-function SearchPicker({
-  onPick,
-  onCancel,
-}: {
-  onPick: (hit: LocationSearchHit, displayName: string) => void;
-  onCancel: () => void;
-}) {
-  const { units } = useUnits();
-  const [q, setQ] = useState("");
-  const [results, setResults] = useState<LocationSearchHit[] | null>(null);
-  const [searching, setSearching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (!q.trim()) {
-      setResults(null);
-      return;
-    }
-    debounceRef.current = setTimeout(async () => {
-      setSearching(true);
-      setError(null);
-      try {
-        const rows = await searchLocations(q.trim(), 5);
-        setResults(rows);
-      } catch (e) {
-        setError(extractMessage(e));
-      } finally {
-        setSearching(false);
-      }
-    }, 300);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [q]);
-
-  return (
-    <div style={{ marginTop: 12 }}>
-      <input
-        autoFocus
-        placeholder="e.g. Boulder, CO"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        style={{ width: "100%", padding: "6px 10px" }}
-      />
-      {searching && (
-        <div style={{ color: "var(--text-muted)", marginTop: 8 }}>
-          Searching…
-        </div>
-      )}
-      {error && <div className="error">{error}</div>}
-      {results && results.length === 0 && !searching && (
-        <div style={{ color: "var(--text-muted)", marginTop: 8 }}>
-          No matches.
-        </div>
-      )}
-      {results && results.length > 0 && (
-        <ul
-          style={{
-            listStyle: "none",
-            padding: 0,
-            margin: "8px 0 0 0",
-            display: "flex",
-            flexDirection: "column",
-            gap: 6,
-          }}
-        >
-          {results.map((hit, idx) => {
-            const label = formatSearchHit(hit);
-            return (
-              <li key={`${hit.lat},${hit.lng},${idx}`}>
-                <button
-                  className="btn btn-ghost"
-                  style={{ width: "100%", textAlign: "left" }}
-                  onClick={() => onPick(hit, label)}
-                >
-                  <strong>{label}</strong>
-                  {hit.elevation_m != null && (
-                    <span style={{ color: "var(--text-muted)", marginLeft: 8 }}>
-                      · {formatElevation(hit.elevation_m, units)}
-                    </span>
-                  )}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      <div style={{ marginTop: 8 }}>
-        <button className="btn btn-ghost" onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function GpsPicker({
-  onPick,
-  onCancel,
-}: {
-  onPick: (name: string, lat: number, lng: number) => void;
-  onCancel: () => void;
-}) {
-  const [name, setName] = useState("");
-  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [fetching, setFetching] = useState(false);
-
-  const requestCoords = () => {
-    if (!("geolocation" in navigator)) {
-      setError("Geolocation is not available in this browser.");
-      return;
-    }
-    setFetching(true);
-    setError(null);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setCoords({
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-        });
-        setFetching(false);
-      },
-      (err) => {
-        setError(err.message || "Failed to get current location.");
-        setFetching(false);
-      },
-      { enableHighAccuracy: true, timeout: 10_000 }
-    );
-  };
-
-  return (
-    <div style={{ marginTop: 12 }}>
-      {!coords && (
-        <>
-          <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
-            We'll ask your browser for the current location and look up its
-            elevation via Open-Meteo.
-          </p>
-          <button
-            className="btn"
-            onClick={requestCoords}
-            disabled={fetching}
-          >
-            {fetching ? "Getting location…" : "Get current location"}
-          </button>
-        </>
-      )}
-      {coords && (
-        <>
-          <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
-            Got it: {coords.lat.toFixed(5)}, {coords.lng.toFixed(5)}
-          </div>
-          <input
-            autoFocus
-            placeholder="Name this place (e.g. Home gym)"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            style={{ width: "100%", padding: "6px 10px", marginTop: 8 }}
-          />
-          <div style={{ marginTop: 8 }}>
-            <button
-              className="btn"
-              disabled={!name.trim()}
-              onClick={() => onPick(name.trim(), coords.lat, coords.lng)}
-            >
-              Save &amp; attach
-            </button>
-          </div>
-        </>
-      )}
-      {error && <div className="error">{error}</div>}
-      <div style={{ marginTop: 8 }}>
-        <button className="btn btn-ghost" onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── helpers ───────────────────────────────────────────────────────────
-
-function formatSearchHit(hit: LocationSearchHit): string {
-  return [hit.name, hit.admin1, hit.country].filter(Boolean).join(", ");
 }
 
 function extractMessage(e: unknown): string {

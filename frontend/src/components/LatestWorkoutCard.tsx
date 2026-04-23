@@ -7,7 +7,7 @@ import {
   type WorkoutInsightResponse,
 } from "../api/insights";
 import ClassificationBadge from "./ClassificationBadge";
-import type { ClassificationType } from "../api/client";
+import type { ClassificationType } from "../api/activities";
 
 function formatDuration(seconds: number | null): string {
   if (!seconds) return "—";

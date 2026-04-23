@@ -237,7 +237,9 @@ async def update_location(
     if loc is None:
         raise HTTPException(status_code=404, detail="Location not found")
 
-    if payload.name is not None and payload.name != loc.name:
+    fields_set = payload.model_fields_set
+
+    if "name" in fields_set and payload.name is not None and payload.name != loc.name:
         clash = (await db.execute(
             select(UserLocation).where(
                 UserLocation.name == payload.name,
@@ -252,24 +254,24 @@ async def update_location(
         loc.name = payload.name
 
     coord_changed = False
-    if payload.lat is not None:
+    if "lat" in fields_set and payload.lat is not None:
         loc.lat = payload.lat
         coord_changed = True
-    if payload.lng is not None:
+    if "lng" in fields_set and payload.lng is not None:
         loc.lng = payload.lng
         coord_changed = True
 
     # Accept explicit elevation_m on PATCH; if coords changed but no elevation
     # was provided, nudge it to None so a later re-save resolves it.
-    if payload.elevation_m is not None:
+    if "elevation_m" in fields_set:
         loc.elevation_m = payload.elevation_m
     elif coord_changed:
         loc.elevation_m = None
 
-    if payload.is_default is True:
+    if "is_default" in fields_set and payload.is_default is True:
         loc.is_default = True
         await _clear_other_defaults(db, keep_id=loc.id)
-    elif payload.is_default is False:
+    elif "is_default" in fields_set and payload.is_default is False:
         loc.is_default = False
 
     await db.commit()

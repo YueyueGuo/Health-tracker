@@ -10,7 +10,7 @@ import {
 } from "recharts";
 import { useState } from "react";
 import { useApi } from "../hooks/useApi";
-import { fetchRecoveryTrends } from "../api/client";
+import { fetchRecoveryTrends } from "../api/recovery";
 
 export default function RecoveryPanel() {
   const [days, setDays] = useState(30);
@@ -29,7 +29,7 @@ export default function RecoveryPanel() {
     );
   }
 
-  const chartData = data.map((r: any) => ({
+  const chartData = data.map((r) => ({
     date: new Date(r.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
     recovery: r.recovery_score,
     hrv: r.hrv,

@@ -85,6 +85,48 @@ async def test_patch_goal(client):
     assert data["status"] == "completed"
 
 
+async def test_patch_goal_description_to_null_clears_value(client):
+    target = (date.today() + timedelta(weeks=12)).isoformat()
+    created = (await client.post(
+        "/api/goals",
+        json={
+            "race_type": "Marathon",
+            "description": "Original note",
+            "target_date": target,
+        },
+    )).json()
+
+    resp = await client.patch(
+        f"/api/goals/{created['id']}",
+        json={"description": None},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["description"] is None
+
+
+async def test_patch_goal_omitted_description_keeps_value(client):
+    target = (date.today() + timedelta(weeks=12)).isoformat()
+    created = (await client.post(
+        "/api/goals",
+        json={
+            "race_type": "Marathon",
+            "description": "Keep me",
+            "target_date": target,
+        },
+    )).json()
+
+    resp = await client.patch(
+        f"/api/goals/{created['id']}",
+        json={"race_type": "Half"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["race_type"] == "Half"
+    assert data["description"] == "Keep me"
+
+
 async def test_patch_unknown_returns_404(client):
     resp = await client.patch("/api/goals/999", json={"race_type": "X"})
     assert resp.status_code == 404

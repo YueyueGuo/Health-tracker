@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import Activity, SleepSession
+from backend.services.time_utils import local_today
 
 # Sleep metrics to correlate against (attribute names on SleepSession).
 SLEEP_METRICS: tuple[str, ...] = (
@@ -49,6 +50,7 @@ async def sleep_vs_activity(
     *,
     days: int = 60,
     sport_type: str | None = None,
+    today: date | None = None,
 ) -> dict[str, Any]:
     """Correlate prior-night sleep metrics against same-day activity metrics.
 
@@ -67,7 +69,8 @@ async def sleep_vs_activity(
           - `correlations`: nested dict {sleep_metric: {activity_metric: r|null}}.
             `null` returned when fewer than MIN_PAIRED_SAMPLES non-null pairs.
     """
-    cutoff_dt = datetime.combine(date.today() - timedelta(days=days), datetime.min.time())
+    today = today or local_today()
+    cutoff_dt = datetime.combine(today - timedelta(days=days), datetime.min.time())
 
     activity_q = (
         select(Activity)

@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import Activity, ActivityStream, Recovery, SleepSession, WeatherSnapshot
-from backend.services.llm_providers import LLMResponse, get_provider
+from backend.services.llm_providers import get_provider
 
 SYSTEM_PROMPT = """You are a personal health and fitness analyst with deep expertise in \
 exercise physiology, sleep science, and recovery optimization.

@@ -3,7 +3,7 @@ from __future__ import annotations
 import secrets
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 
 from backend.clients.eight_sleep import _default_env_path, _persist_env_var

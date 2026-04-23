@@ -415,7 +415,7 @@ async def test_phase_b_enriches_pending_activity_with_laps_and_zones(db):
     lap_rows = (
         await db.execute(select(ActivityLap).order_by(ActivityLap.lap_index))
     ).scalars().all()
-    assert [l.lap_index for l in lap_rows] == [0, 1, 2, 3]
+    assert [lap.lap_index for lap in lap_rows] == [0, 1, 2, 3]
 
 
 async def test_phase_b_replaces_existing_lap_rows(db):

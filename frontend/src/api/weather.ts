@@ -1,4 +1,4 @@
-const BASE_URL = "/api";
+import { fetchJson, fetchOptionalJson } from "./http";
 
 export interface WeatherSnapshot {
   id: number;
@@ -18,7 +18,7 @@ export interface WeatherSnapshot {
    * Full OpenWeatherMap payload. Only present when ``?raw=true`` was
    * passed; needed to render the weather icon (``data[0].weather[0].icon``).
    */
-  raw_data?: Record<string, any> | null;
+  raw_data?: Record<string, unknown> | null;
 }
 
 export interface WeatherBackfillResult {
@@ -42,16 +42,9 @@ export async function getActivityWeather(
   options: { raw?: boolean } = {}
 ): Promise<WeatherSnapshot | null> {
   const qs = options.raw ? "?raw=true" : "";
-  const resp = await fetch(`${BASE_URL}/activities/${activityId}/weather${qs}`, {
-    headers: { "Content-Type": "application/json" },
-  });
-  if (resp.status === 404) {
-    return null;
-  }
-  if (!resp.ok) {
-    throw new Error(`Weather API error: ${resp.status} ${resp.statusText}`);
-  }
-  return resp.json();
+  return fetchOptionalJson<WeatherSnapshot>(
+    `/activities/${activityId}/weather${qs}`
+  );
 }
 
 /**
@@ -60,16 +53,11 @@ export async function getActivityWeather(
 export async function backfillWeather(
   params: { batch?: number; dry_run?: boolean } = {}
 ): Promise<WeatherBackfillResult> {
-  const resp = await fetch(`${BASE_URL}/weather/backfill`, {
+  return fetchJson<WeatherBackfillResult>("/weather/backfill", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       batch: params.batch ?? 50,
       dry_run: params.dry_run ?? false,
     }),
   });
-  if (!resp.ok) {
-    throw new Error(`Weather backfill error: ${resp.status} ${resp.statusText}`);
-  }
-  return resp.json();
 }

@@ -8,7 +8,7 @@ No rules, no prescriptions — just the numbers. Anything interpretive lives in
 from __future__ import annotations
 
 import statistics
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,22 @@ from backend.models import (
     SleepSession,
     WeatherSnapshot,
 )
+from backend.services.snapshot_models import (
+    EnvironmentalSnapshot,
+    FeedbackSummarySnapshot,
+    FullSnapshot,
+    GoalsSnapshot,
+    LatestWorkoutSnapshot,
+    RecentActivitySnapshot,
+    RecentRpeSnapshot,
+    RecoverySnapshot,
+    SleepSnapshot,
+    TrainingLoadSnapshot,
+    validate_baselines,
+    validate_snapshot,
+    validate_snapshot_list,
+)
+from backend.services.time_utils import local_today, utc_now_naive
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -56,7 +72,9 @@ def _stress_score(a: Activity) -> float:
     return 0.0
 
 
-async def get_training_load_snapshot(db: AsyncSession, days: int = 42) -> dict:
+async def get_training_load_snapshot(
+    db: AsyncSession, days: int = 42, today: date | None = None
+) -> dict:
     """Snapshot of the user's recent training load.
 
     Returns a dict with:
@@ -67,7 +85,7 @@ async def get_training_load_snapshot(db: AsyncSession, days: int = 42) -> dict:
       - classification_counts_7d / _28d
       - daily_loads (chronological list of {date, value} for 28d)
     """
-    today = date.today()
+    today = today or local_today()
     window_start = today - timedelta(days=days)
     cutoff_dt = datetime.combine(window_start, datetime.min.time())
 
@@ -135,7 +153,7 @@ async def get_training_load_snapshot(db: AsyncSession, days: int = 42) -> dict:
         for i in range(28)
     ]
 
-    return {
+    payload = {
         "acute_load_7d": round(acute_7d, 1),
         "chronic_load_28d": round(chronic_28d, 1),
         "acwr": round(acwr, 2) if acwr is not None else None,
@@ -151,6 +169,7 @@ async def get_training_load_snapshot(db: AsyncSession, days: int = 42) -> dict:
             if (today - (a.start_date_local or a.start_date).date()).days < 7
         ),
     }
+    return validate_snapshot(payload, TrainingLoadSnapshot)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -159,9 +178,13 @@ async def get_training_load_snapshot(db: AsyncSession, days: int = 42) -> dict:
 
 
 async def get_sleep_snapshot(
-    db: AsyncSession, days: int = 14, target_hours: float = 8.0
+    db: AsyncSession,
+    days: int = 14,
+    target_hours: float = 8.0,
+    today: date | None = None,
 ) -> dict:
-    cutoff = date.today() - timedelta(days=days)
+    today = today or local_today()
+    cutoff = today - timedelta(days=days)
     rows = await db.execute(
         select(SleepSession)
         .where(SleepSession.date >= cutoff)
@@ -170,7 +193,7 @@ async def get_sleep_snapshot(
     sessions = list(rows.scalars().all())
 
     if not sessions:
-        return {
+        payload = {
             "last_night_score": None,
             "last_night_duration_min": None,
             "last_night_hrv": None,
@@ -180,6 +203,7 @@ async def get_sleep_snapshot(
             "sleep_debt_min": None,
             "nights_of_data": 0,
         }
+        return validate_snapshot(payload, SleepSnapshot)
 
     last = sessions[0]
     last_7 = sessions[:7]
@@ -192,7 +216,7 @@ async def get_sleep_snapshot(
     durations_7 = [s.total_duration for s in last_7 if s.total_duration is not None]
     sleep_debt = sum(max(0, target_min - d) for d in durations_7) if durations_7 else None
 
-    return {
+    payload = {
         "last_night_date": last.date.isoformat(),
         "last_night_score": last.sleep_score,
         "last_night_duration_min": last.total_duration,
@@ -206,6 +230,7 @@ async def get_sleep_snapshot(
         "sleep_debt_min": sleep_debt,
         "nights_of_data": len(sessions),
     }
+    return validate_snapshot(payload, SleepSnapshot)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -213,8 +238,11 @@ async def get_sleep_snapshot(
 # ──────────────────────────────────────────────────────────────────────────
 
 
-async def get_recovery_snapshot(db: AsyncSession, days: int = 7) -> dict:
-    cutoff = date.today() - timedelta(days=days)
+async def get_recovery_snapshot(
+    db: AsyncSession, days: int = 7, today: date | None = None
+) -> dict:
+    today = today or local_today()
+    cutoff = today - timedelta(days=days)
     rows = await db.execute(
         select(Recovery)
         .where(Recovery.date >= cutoff)
@@ -223,13 +251,14 @@ async def get_recovery_snapshot(db: AsyncSession, days: int = 7) -> dict:
     records = list(rows.scalars().all())
 
     if not records:
-        return {
+        payload = {
             "today_score": None,
             "today_hrv": None,
             "today_resting_hr": None,
             "avg_score_7d": None,
             "trend": None,
         }
+        return validate_snapshot(payload, RecoverySnapshot)
 
     def _avg(attr: str) -> float | None:
         values = [getattr(r, attr) for r in records if getattr(r, attr) is not None]
@@ -247,7 +276,7 @@ async def get_recovery_snapshot(db: AsyncSession, days: int = 7) -> dict:
         else:
             trend = "stable"
 
-    return {
+    payload = {
         "today_date": today_r.date.isoformat(),
         "today_score": today_r.recovery_score,
         "today_hrv": today_r.hrv,
@@ -255,6 +284,7 @@ async def get_recovery_snapshot(db: AsyncSession, days: int = 7) -> dict:
         "avg_score_7d": avg_7,
         "trend": trend,
     }
+    return validate_snapshot(payload, RecoverySnapshot)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -364,7 +394,7 @@ async def get_latest_workout_snapshot(
     # Rank this activity on pace / HR-normalized pace / duration.
     historical = None
     if activity.classification_type and activity.sport_type in ("Run", "TrailRun", "VirtualRun"):
-        hist_cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+        hist_cutoff = utc_now_naive() - timedelta(days=90)
         hist_rows = await db.execute(
             select(Activity)
             .where(
@@ -407,7 +437,7 @@ async def get_latest_workout_snapshot(
                 "effort_percentile": effort_percentile,
             }
 
-    return {
+    payload = {
         "id": activity.id,
         "strava_id": activity.strava_id,
         "name": activity.name,
@@ -436,6 +466,7 @@ async def get_latest_workout_snapshot(
         "pre_workout_sleep": pre_sleep,
         "historical_comparison": historical,
     }
+    return validate_snapshot(payload, LatestWorkoutSnapshot)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -458,8 +489,8 @@ def _periodization_phase(weeks_until: int) -> str:
     return "base"
 
 
-def _goal_to_dict(g: Goal) -> dict:
-    days_until = (g.target_date - date.today()).days
+def _goal_to_dict(g: Goal, today: date) -> dict:
+    days_until = (g.target_date - today).days
     weeks_until = max(0, days_until // 7)
     return {
         "id": g.id,
@@ -474,8 +505,9 @@ def _goal_to_dict(g: Goal) -> dict:
     }
 
 
-async def get_goals_snapshot(db: AsyncSession) -> dict:
+async def get_goals_snapshot(db: AsyncSession, today: date | None = None) -> dict:
     """Return the user's active goals, split into primary + secondary."""
+    today = today or local_today()
     rows = await db.execute(
         select(Goal)
         .where(Goal.status == "active")
@@ -484,10 +516,11 @@ async def get_goals_snapshot(db: AsyncSession) -> dict:
     goals = list(rows.scalars().all())
     primary = next((g for g in goals if g.is_primary), None)
     secondary = [g for g in goals if not g.is_primary]
-    return {
-        "primary": _goal_to_dict(primary) if primary else None,
-        "secondary": [_goal_to_dict(g) for g in secondary],
+    payload = {
+        "primary": _goal_to_dict(primary, today) if primary else None,
+        "secondary": [_goal_to_dict(g, today) for g in secondary],
     }
+    return validate_snapshot(payload, GoalsSnapshot)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -502,13 +535,16 @@ def _mean_sd(values: list[float]) -> tuple[float, float] | None:
     return statistics.mean(clean), statistics.pstdev(clean)
 
 
-async def get_baselines(db: AsyncSession, days: int = 90) -> dict:
+async def get_baselines(
+    db: AsyncSession, days: int = 90, today: date | None = None
+) -> dict:
     """Mean + stdev of pace / HR / power per sport over the last ``days``.
 
     Returns ``None`` for sports with fewer than 10 complete activities —
     sparse baselines are worse than no baseline for the LLM's reasoning.
     """
-    cutoff_dt = datetime.combine(date.today() - timedelta(days=days), datetime.min.time())
+    today = today or local_today()
+    cutoff_dt = datetime.combine(today - timedelta(days=days), datetime.min.time())
     rows = await db.execute(
         select(Activity).where(
             Activity.start_date >= cutoff_dt,
@@ -539,7 +575,7 @@ async def get_baselines(db: AsyncSession, days: int = 90) -> dict:
             "avg_hr": _round_pair(_mean_sd(hr_values)),
             "avg_power_w": _round_pair(_mean_sd(power_values)),
         }
-    return out
+    return validate_baselines(out)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -547,13 +583,19 @@ async def get_baselines(db: AsyncSession, days: int = 90) -> dict:
 # ──────────────────────────────────────────────────────────────────────────
 
 
-async def get_recent_rpe(db: AsyncSession, days: int = 14, limit: int = 10) -> list[dict]:
+async def get_recent_rpe(
+    db: AsyncSession,
+    days: int = 14,
+    limit: int = 10,
+    today: date | None = None,
+) -> list[dict]:
     """Compact list of recent workouts where the user rated perceived effort.
 
     Empty list when nothing has been rated yet — the LLM knows to skip
     that branch of the prompt in that case.
     """
-    cutoff_dt = datetime.combine(date.today() - timedelta(days=days), datetime.min.time())
+    today = today or local_today()
+    cutoff_dt = datetime.combine(today - timedelta(days=days), datetime.min.time())
     rows = await db.execute(
         select(Activity)
         .where(
@@ -577,7 +619,7 @@ async def get_recent_rpe(db: AsyncSession, days: int = 14, limit: int = 10) -> l
                 "suffer_score": a.suffer_score,
             }
         )
-    return out
+    return validate_snapshot_list(out, RecentRpeSnapshot)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -585,8 +627,11 @@ async def get_recent_rpe(db: AsyncSession, days: int = 14, limit: int = 10) -> l
 # ──────────────────────────────────────────────────────────────────────────
 
 
-async def get_feedback_summary(db: AsyncSession, days: int = 30) -> dict:
-    cutoff = date.today() - timedelta(days=days)
+async def get_feedback_summary(
+    db: AsyncSession, days: int = 30, today: date | None = None
+) -> dict:
+    today = today or local_today()
+    cutoff = today - timedelta(days=days)
     rows = await db.execute(
         select(RecommendationFeedback)
         .where(RecommendationFeedback.recommendation_date >= cutoff)
@@ -603,12 +648,13 @@ async def get_feedback_summary(db: AsyncSession, days: int = 30) -> dict:
         for r in items
         if r.vote == "down"
     ][:5]
-    return {
+    payload = {
         "accepted": up,
         "declined": down,
         "total": len(items),
         "recent_declines": recent_declines,
     }
+    return validate_snapshot(payload, FeedbackSummarySnapshot)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -629,10 +675,11 @@ async def get_environmental_snapshot(db: AsyncSession) -> dict | None:
     bed_temp_c = last_sleep.bed_temp if last_sleep else None
     if bed_temp_c is None:
         return None
-    return {
+    payload = {
         "last_night_bed_temp_c": bed_temp_c,
         "last_night_date": last_sleep.date.isoformat() if last_sleep else None,
     }
+    return validate_snapshot(payload, EnvironmentalSnapshot)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -640,15 +687,16 @@ async def get_environmental_snapshot(db: AsyncSession) -> dict | None:
 # ──────────────────────────────────────────────────────────────────────────
 
 
-async def get_full_snapshot(db: AsyncSession) -> dict:
-    training = await get_training_load_snapshot(db)
-    sleep = await get_sleep_snapshot(db)
-    recovery = await get_recovery_snapshot(db)
+async def get_full_snapshot(db: AsyncSession, today: date | None = None) -> dict:
+    today = today or local_today()
+    training = await get_training_load_snapshot(db, today=today)
+    sleep = await get_sleep_snapshot(db, today=today)
+    recovery = await get_recovery_snapshot(db, today=today)
     latest = await get_latest_workout_snapshot(db)
-    goals = await get_goals_snapshot(db)
-    baselines = await get_baselines(db)
-    recent_rpe = await get_recent_rpe(db)
-    feedback = await get_feedback_summary(db)
+    goals = await get_goals_snapshot(db, today=today)
+    baselines = await get_baselines(db, today=today)
+    recent_rpe = await get_recent_rpe(db, today=today)
+    feedback = await get_feedback_summary(db, today=today)
     environmental = await get_environmental_snapshot(db)
 
     # A compact list of the last 10 activities (summaries) for LLM context
@@ -673,8 +721,10 @@ async def get_full_snapshot(db: AsyncSession) -> dict:
             }
         )
 
-    return {
-        "today": date.today().isoformat(),
+    validate_snapshot_list(recent, RecentActivitySnapshot)
+
+    payload = {
+        "today": today.isoformat(),
         "training_load": training,
         "sleep": sleep,
         "recovery": recovery,
@@ -686,3 +736,4 @@ async def get_full_snapshot(db: AsyncSession) -> dict:
         "feedback_summary": feedback,
         "environmental": environmental,
     }
+    return validate_snapshot(payload, FullSnapshot)

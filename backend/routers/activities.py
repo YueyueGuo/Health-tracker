@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -10,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.models import Activity, ActivityLap, ActivityStream, WeatherSnapshot
+from backend.services.time_utils import utc_now_naive
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -36,11 +36,11 @@ async def list_activities(
     db: AsyncSession = Depends(get_db),
 ):
     """List activities with optional filtering."""
-    from datetime import timedelta, timezone
+    from datetime import timedelta
 
     query = select(Activity).order_by(Activity.start_date.desc())
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = utc_now_naive() - timedelta(days=days)
     query = query.where(Activity.start_date >= cutoff)
 
     if sport_type:
@@ -142,7 +142,7 @@ async def patch_activity_feedback(
         activity.rpe = payload.rpe
     if "user_notes" in fields_set:
         activity.user_notes = payload.user_notes
-    activity.rated_at = datetime.utcnow()
+    activity.rated_at = utc_now_naive()
 
     await db.commit()
     await db.refresh(activity)

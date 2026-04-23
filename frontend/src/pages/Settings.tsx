@@ -1,14 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   createLocation,
   deleteLocation,
   listLocations,
   patchLocation,
-  searchLocations,
   setDefaultLocation,
   type Location,
-  type LocationSearchHit,
 } from "../api/locations";
+import GpsLocationForm from "../components/location/GpsLocationForm";
+import LocationSearchForm from "../components/location/LocationSearchForm";
 import GoalsSection from "../components/GoalsSection";
 import { formatElevation, useUnits } from "../hooks/useUnits";
 
@@ -261,17 +261,20 @@ function AddLocation({ onAdded }: { onAdded: () => void }) {
       )}
       {error && <div className="error">{error}</div>}
       {mode === "search" && (
-        <SearchForm
+        <LocationSearchForm
           busy={busy}
+          requireName
           onCancel={() => setMode("idle")}
-          onPick={submit}
+          onPick={(name, hit) =>
+            submit(name, hit.lat, hit.lng, hit.elevation_m)
+          }
         />
       )}
       {mode === "gps" && (
-        <GpsForm
+        <GpsLocationForm
           busy={busy}
           onCancel={() => setMode("idle")}
-          onSubmit={submit}
+          onPick={submit}
         />
       )}
       {mode === "advanced" && (
@@ -281,229 +284,6 @@ function AddLocation({ onAdded }: { onAdded: () => void }) {
           onSubmit={submit}
         />
       )}
-    </div>
-  );
-}
-
-function SearchForm({
-  busy,
-  onCancel,
-  onPick,
-}: {
-  busy: boolean;
-  onCancel: () => void;
-  onPick: (
-    name: string,
-    lat: number,
-    lng: number,
-    elevation_m?: number | null
-  ) => void;
-}) {
-  const { units } = useUnits();
-  const [q, setQ] = useState("");
-  const [results, setResults] = useState<LocationSearchHit[] | null>(null);
-  const [searching, setSearching] = useState(false);
-  const [pickedName, setPickedName] = useState<string>("");
-  const [picked, setPicked] = useState<LocationSearchHit | null>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (!q.trim()) {
-      setResults(null);
-      return;
-    }
-    debounceRef.current = setTimeout(async () => {
-      setSearching(true);
-      try {
-        setResults(await searchLocations(q.trim(), 5));
-      } finally {
-        setSearching(false);
-      }
-    }, 300);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [q]);
-
-  if (picked) {
-    return (
-      <div style={{ marginTop: 12 }}>
-        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
-          {[picked.name, picked.admin1, picked.country]
-            .filter(Boolean)
-            .join(", ")}
-          {picked.elevation_m != null && (
-            <> &middot; {formatElevation(picked.elevation_m, units)}</>
-          )}
-        </div>
-        <input
-          autoFocus
-          placeholder="Name this location (e.g. Tahoe cabin)"
-          value={pickedName}
-          onChange={(e) => setPickedName(e.target.value)}
-          style={{ width: "100%", padding: "6px 10px", marginTop: 8 }}
-        />
-        <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-          <button
-            className="btn"
-            disabled={busy || !pickedName.trim()}
-            onClick={() =>
-              onPick(
-                pickedName.trim(),
-                picked.lat,
-                picked.lng,
-                picked.elevation_m
-              )
-            }
-          >
-            Save
-          </button>
-          <button className="btn btn-ghost" onClick={() => setPicked(null)}>
-            Back
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ marginTop: 12 }}>
-      <input
-        autoFocus
-        placeholder="e.g. Boulder, CO"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        style={{ width: "100%", padding: "6px 10px" }}
-      />
-      {searching && (
-        <div style={{ color: "var(--text-muted)", marginTop: 8 }}>
-          Searching…
-        </div>
-      )}
-      {results && results.length === 0 && !searching && (
-        <div style={{ color: "var(--text-muted)", marginTop: 8 }}>
-          No matches.
-        </div>
-      )}
-      {results && results.length > 0 && (
-        <ul
-          style={{
-            listStyle: "none",
-            padding: 0,
-            margin: "8px 0 0 0",
-            display: "flex",
-            flexDirection: "column",
-            gap: 6,
-          }}
-        >
-          {results.map((hit, idx) => (
-            <li key={`${hit.lat},${hit.lng},${idx}`}>
-              <button
-                className="btn btn-ghost"
-                style={{ width: "100%", textAlign: "left" }}
-                onClick={() => {
-                  setPicked(hit);
-                  setPickedName(hit.name ?? "");
-                }}
-              >
-                <strong>
-                  {[hit.name, hit.admin1, hit.country]
-                    .filter(Boolean)
-                    .join(", ")}
-                </strong>
-                {hit.elevation_m != null && (
-                  <span style={{ color: "var(--text-muted)", marginLeft: 8 }}>
-                    · {formatElevation(hit.elevation_m, units)}
-                  </span>
-                )}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <div style={{ marginTop: 8 }}>
-        <button className="btn btn-ghost" onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function GpsForm({
-  busy,
-  onCancel,
-  onSubmit,
-}: {
-  busy: boolean;
-  onCancel: () => void;
-  onSubmit: (name: string, lat: number, lng: number) => void;
-}) {
-  const [name, setName] = useState("");
-  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [fetching, setFetching] = useState(false);
-
-  const requestCoords = () => {
-    if (!("geolocation" in navigator)) {
-      setError("Geolocation is not available in this browser.");
-      return;
-    }
-    setFetching(true);
-    setError(null);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setFetching(false);
-      },
-      (err) => {
-        setError(err.message || "Failed to get current location.");
-        setFetching(false);
-      },
-      { enableHighAccuracy: true, timeout: 10_000 }
-    );
-  };
-
-  return (
-    <div style={{ marginTop: 12 }}>
-      {!coords && (
-        <button className="btn" onClick={requestCoords} disabled={fetching}>
-          {fetching ? "Getting location…" : "Get current location"}
-        </button>
-      )}
-      {coords && (
-        <>
-          <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
-            {coords.lat.toFixed(5)}, {coords.lng.toFixed(5)}
-          </div>
-          <input
-            autoFocus
-            placeholder="Name this location (e.g. Home)"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            style={{ width: "100%", padding: "6px 10px", marginTop: 8 }}
-          />
-          <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-            <button
-              className="btn"
-              disabled={busy || !name.trim()}
-              onClick={() => onSubmit(name.trim(), coords.lat, coords.lng)}
-            >
-              Save
-            </button>
-            <button className="btn btn-ghost" onClick={() => setCoords(null)}>
-              Retry
-            </button>
-          </div>
-        </>
-      )}
-      {error && <div className="error">{error}</div>}
-      <div style={{ marginTop: 8 }}>
-        <button className="btn btn-ghost" onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
     </div>
   );
 }

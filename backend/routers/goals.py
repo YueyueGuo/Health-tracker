@@ -100,19 +100,21 @@ async def update_goal(
     if goal is None:
         raise HTTPException(status_code=404, detail="Goal not found")
 
-    if payload.race_type is not None:
+    fields_set = payload.model_fields_set
+
+    if "race_type" in fields_set and payload.race_type is not None:
         goal.race_type = payload.race_type
-    if payload.description is not None:
+    if "description" in fields_set:
         goal.description = payload.description
-    if payload.target_date is not None:
+    if "target_date" in fields_set and payload.target_date is not None:
         goal.target_date = payload.target_date
-    if payload.status is not None:
+    if "status" in fields_set and payload.status is not None:
         goal.status = payload.status
 
-    if payload.is_primary is True:
+    if "is_primary" in fields_set and payload.is_primary is True:
         goal.is_primary = True
         await _clear_other_primaries(db, keep_id=goal.id)
-    elif payload.is_primary is False:
+    elif "is_primary" in fields_set and payload.is_primary is False:
         goal.is_primary = False
 
     await db.commit()

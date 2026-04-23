@@ -12,7 +12,7 @@ import {
   ReferenceLine,
 } from "recharts";
 import { useApi } from "../hooks/useApi";
-import { fetchDashboardOverview } from "../api/client";
+import { fetchDashboardOverview } from "../api/dashboard";
 
 export default function TrainingLoad() {
   const { data, loading, error } = useApi(fetchDashboardOverview);
@@ -24,14 +24,14 @@ export default function TrainingLoad() {
   const { ctl, atl, tsb, daily_load } = data.training_load;
 
   // Merge CTL, ATL, TSB into one chart dataset
-  const fitnessData = ctl.map((c: any, i: number) => ({
+  const fitnessData = ctl.map((c, i) => ({
     date: new Date(c.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
     fitness: c.value,
     fatigue: atl[i]?.value,
     form: tsb[i]?.value,
   }));
 
-  const loadData = daily_load.map((d: any) => ({
+  const loadData = daily_load.map((d) => ({
     date: new Date(d.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
     load: d.value,
   }));
@@ -90,7 +90,7 @@ export default function TrainingLoad() {
               </tr>
             </thead>
             <tbody>
-              {data.weekly_stats.map((w: any) => (
+              {data.weekly_stats.map((w) => (
                 <tr key={w.week_start}>
                   <td>{w.week_start}</td>
                   <td>{w.total_activities}</td>

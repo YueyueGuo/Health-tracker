@@ -6,31 +6,7 @@
  * activity-attach endpoints mounted under /api/activities/{id}/location.
  */
 
-const BASE_URL = "/api";
-
-async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
-  const resp = await fetch(`${BASE_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
-  if (!resp.ok) {
-    let detail = "";
-    try {
-      const body = await resp.json();
-      if (body && typeof body === "object" && "detail" in body) {
-        detail = String((body as { detail?: unknown }).detail ?? "");
-      }
-    } catch {
-      // not JSON
-    }
-    throw new Error(
-      detail || `API error: ${resp.status} ${resp.statusText}`
-    );
-  }
-  // 204 No Content
-  if (resp.status === 204) return undefined as T;
-  return resp.json();
-}
+import { fetchJson } from "./http";
 
 export interface Location {
   id: number;

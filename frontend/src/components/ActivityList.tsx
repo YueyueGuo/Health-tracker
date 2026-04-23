@@ -6,7 +6,7 @@ import {
   fetchSportTypes,
   type ActivitySummary,
   type ClassificationType,
-} from "../api/client";
+} from "../api/activities";
 import {
   formatDistance,
   formatPaceOrSpeed,
