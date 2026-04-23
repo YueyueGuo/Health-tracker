@@ -64,6 +64,9 @@ export interface ActivitySummary {
   location_id: number | null;
   start_lat: number | null;
   start_lng: number | null;
+  rpe: number | null;
+  user_notes: string | null;
+  rated_at: string | null;
 }
 
 export interface ActivityLap {

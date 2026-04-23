@@ -5,6 +5,7 @@ import {
   type DailyRecommendationResponse,
   type Intensity,
 } from "../api/insights";
+import ThumbsFeedback from "./ThumbsFeedback";
 
 const INTENSITY_COLOR: Record<Intensity, string> = {
   rest: "#8b8fa3",
@@ -181,6 +182,11 @@ function RecommendationCardView({
           </ul>
         </div>
       )}
+
+      <ThumbsFeedback
+        recommendationDate={data.recommendation_date}
+        cacheKey={data.cache_key}
+      />
 
       <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 12 }}>
         <button

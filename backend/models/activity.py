@@ -81,6 +81,12 @@ class Activity(Base):
     location_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("user_locations.id", ondelete="SET NULL"), index=True
     )
+    # User-supplied workout context. ``rpe`` is the Borg CR-10 rating of
+    # perceived exertion (1 = very light, 10 = max). Validated at the
+    # router layer. Fed into the daily-recommendation LLM snapshot.
+    rpe: Mapped[int | None] = mapped_column(Integer)
+    user_notes: Mapped[str | None] = mapped_column(Text)
+    rated_at: Mapped[datetime | None] = mapped_column(DateTime)
     raw_data: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

@@ -9,6 +9,7 @@ import {
   type Location,
   type LocationSearchHit,
 } from "../api/locations";
+import GoalsSection from "../components/GoalsSection";
 import { formatElevation, useUnits } from "../hooks/useUnits";
 
 /**
@@ -47,6 +48,8 @@ export default function Settings() {
       </div>
 
       {error && <div className="error">{error}</div>}
+
+      <GoalsSection />
 
       <div className="card" style={{ padding: 20, marginBottom: 16 }}>
         <h2 style={{ marginTop: 0 }}>Add a location</h2>

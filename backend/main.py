@@ -77,6 +77,7 @@ def create_app() -> FastAPI:
         chat,
         correlations,
         dashboard,
+        goals,
         insights,
         locations,
         recovery,
@@ -105,6 +106,7 @@ def create_app() -> FastAPI:
     app.include_router(weather.router, prefix="/api/weather", tags=["weather"])
     app.include_router(insights.router, prefix="/api/insights", tags=["insights"])
     app.include_router(locations.router, prefix="/api/locations", tags=["locations"])
+    app.include_router(goals.router, prefix="/api/goals", tags=["goals"])
 
     @app.get("/api/health")
     async def health_check():

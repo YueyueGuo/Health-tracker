@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.database import Base
-from backend.models import Activity, Recovery, SleepSession
+from backend.models import Activity, Goal, RecommendationFeedback, Recovery, SleepSession
 from backend.services import insights
 
 
@@ -293,3 +293,86 @@ async def test_workout_insight_skips_pending_activity_by_id(db, monkeypatch):
     )
     assert result is None
     assert called["n"] == 0
+
+
+# ── Cache key exposure + invalidation on new inputs ──────────────────
+
+
+async def test_daily_recommendation_returns_cache_key_and_date(db, monkeypatch):
+    await _seed_basic(db)
+    stub = _StubProvider(VALID_REC)
+    _install_provider(monkeypatch, {"claude-haiku": stub})
+
+    result = await insights.get_daily_recommendation(db, model="claude-haiku")
+    assert result.cache_key.startswith("daily_rec:")
+    assert result.recommendation_date == date.today().isoformat()
+    # to_dict round-trips both fields so the frontend can pass them back.
+    payload = result.to_dict()
+    assert payload["cache_key"] == result.cache_key
+    assert payload["recommendation_date"] == result.recommendation_date
+
+
+async def test_daily_recommendation_cache_invalidates_on_new_goal(db, monkeypatch):
+    await _seed_basic(db)
+    stub = _StubProvider(VALID_REC)
+    _install_provider(monkeypatch, {"claude-haiku": stub})
+
+    first = await insights.get_daily_recommendation(db, model="claude-haiku")
+
+    # Add a primary goal — signal changes, so cache_key must change.
+    db.add(
+        Goal(
+            race_type="Marathon",
+            target_date=date.today() + timedelta(weeks=9),
+            is_primary=True,
+        )
+    )
+    await db.commit()
+
+    second = await insights.get_daily_recommendation(db, model="claude-haiku")
+    assert first.cache_key != second.cache_key
+    # Fresh cache key means the LLM is called again (not a cache hit).
+    assert second.cached is False
+    assert len(stub._calls) == 2
+
+
+async def test_daily_recommendation_cache_invalidates_on_new_rpe(db, monkeypatch):
+    await _seed_basic(db)
+    stub = _StubProvider(VALID_REC)
+    _install_provider(monkeypatch, {"claude-haiku": stub})
+
+    first = await insights.get_daily_recommendation(db, model="claude-haiku")
+
+    # Attach RPE to the seeded activity.
+    act = (await db.execute(
+        Activity.__table__.select().where(Activity.strava_id == 1)
+    )).first()
+    await db.execute(
+        Activity.__table__.update().where(Activity.id == act.id).values(rpe=8)
+    )
+    await db.commit()
+
+    second = await insights.get_daily_recommendation(db, model="claude-haiku")
+    assert first.cache_key != second.cache_key
+    assert second.cached is False
+
+
+async def test_daily_recommendation_cache_invalidates_on_new_feedback(db, monkeypatch):
+    await _seed_basic(db)
+    stub = _StubProvider(VALID_REC)
+    _install_provider(monkeypatch, {"claude-haiku": stub})
+
+    first = await insights.get_daily_recommendation(db, model="claude-haiku")
+
+    db.add(
+        RecommendationFeedback(
+            recommendation_date=date.today() - timedelta(days=1),
+            vote="down",
+            reason="too hard",
+        )
+    )
+    await db.commit()
+
+    second = await insights.get_daily_recommendation(db, model="claude-haiku")
+    assert first.cache_key != second.cache_key
+    assert second.cached is False

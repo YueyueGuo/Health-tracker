@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +13,18 @@ from backend.models import Activity, ActivityLap, ActivityStream, WeatherSnapsho
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+class ActivityFeedbackPatch(BaseModel):
+    """User-supplied RPE + notes for a completed activity.
+
+    Both fields are optional — the UI may submit just RPE, just notes, or
+    both. ``rpe`` is Borg CR-10 (1 very light → 10 max), validated here
+    rather than at the DB layer because SQLite lacks CHECK-constraint
+    portability for Alembic downgrades.
+    """
+    rpe: int | None = Field(default=None, ge=1, le=10)
+    user_notes: str | None = Field(default=None, max_length=2000)
 
 
 @router.get("")
@@ -101,6 +114,44 @@ async def get_activity(activity_id: int, db: AsyncSession = Depends(get_db)):
     detail["streams_cached"] = streams_count is not None
     detail["raw_data"] = activity.raw_data
     return detail
+
+
+@router.patch("/{activity_id}/feedback")
+async def patch_activity_feedback(
+    activity_id: int,
+    payload: ActivityFeedbackPatch,
+    db: AsyncSession = Depends(get_db),
+):
+    """Attach user-supplied RPE + notes to an activity.
+
+    Accepts partial payloads. Unset fields are left unchanged; explicit
+    ``null`` clears a previously-stored value. ``rated_at`` is stamped
+    whenever either field is updated.
+    """
+    activity = (await db.execute(
+        select(Activity).where(Activity.id == activity_id)
+    )).scalar_one_or_none()
+    if activity is None:
+        raise HTTPException(status_code=404, detail="Activity not found")
+
+    fields_set = payload.model_fields_set
+    if not fields_set:
+        raise HTTPException(status_code=400, detail="No fields provided")
+
+    if "rpe" in fields_set:
+        activity.rpe = payload.rpe
+    if "user_notes" in fields_set:
+        activity.user_notes = payload.user_notes
+    activity.rated_at = datetime.utcnow()
+
+    await db.commit()
+    await db.refresh(activity)
+    return {
+        "activity_id": activity.id,
+        "rpe": activity.rpe,
+        "user_notes": activity.user_notes,
+        "rated_at": activity.rated_at.isoformat() if activity.rated_at else None,
+    }
 
 
 @router.post("/{activity_id}/classify")
@@ -246,6 +297,9 @@ def _activity_summary(a: Activity) -> dict:
         "location_id": a.location_id,
         "start_lat": a.start_lat,
         "start_lng": a.start_lng,
+        "rpe": a.rpe,
+        "user_notes": a.user_notes,
+        "rated_at": a.rated_at.isoformat() if a.rated_at else None,
     }
 
 

@@ -80,8 +80,12 @@ class LLMSettings(BaseSettings):
     google_ai_api_key: str = ""
     default_llm_provider: str = "claude-sonnet"
     # Model used for the dashboard insights (daily recommendation +
-    # latest-workout takeaway).
-    dashboard_model: str = "claude-haiku"
+    # latest-workout takeaway). gpt-4o is the primary because the user's
+    # OpenAI key is set and Anthropic is empty; haiku/sonnet were falling
+    # through silently to OpenAI anyway. Paying for the better model on
+    # the primary call now that the prompt is richer (goals, RPE,
+    # feedback, baselines).
+    dashboard_model: str = "gpt-4o"
     # Ordered fallback chain if the primary model fails.
     dashboard_fallback_models: list[str] = ["claude-sonnet", "gpt-4o-mini"]
 
