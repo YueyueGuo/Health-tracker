@@ -5,20 +5,16 @@ Current as of the backend module-split refactor pass on April 23, 2026.
 ## Current Baseline
 
 - GitHub default branch is `main`.
-- Current branch checked during this audit: `codex/refactor-api-insight-snapshots`.
-- This branch started from `2e4d244 Refactor API clients and insight snapshots`, which was aligned with `main`, `origin/main`, and `origin/codex/refactor-api-insight-snapshots` before the uncommitted refactor edits.
+- Current branch checked during this audit: `main`.
+- PR #5 (`codex/split-insight-modules`) was merged into `main` as merge commit `7fbd082`.
 - Backend verification after the latest module-split refactor:
   - `.venv/bin/ruff check .` -> passed
   - `.venv/bin/python -m pytest` -> 291 passed, no `datetime.utcnow()` warnings
 - Frontend verification after the latest insight type-tightening/module-split pass:
   - `npm run typecheck` -> passed
   - `npm run build` -> passed, with Vite's existing large bundle warning
-- Current uncommitted edits from the latest refactor passes include:
-  - `frontend/src/api/insights.ts`
-  - `backend/services/training_metrics.py`
-  - `backend/services/insights.py`
-  - new focused backend snapshot/insight support modules under `backend/services/`
-  - `REFACTOR_FINDINGS.md`
+- Local `main` was fast-forwarded to `origin/main` after PR #5. Any
+  uncommitted changes after this point are documentation/memory-file updates.
 
 Preserved stashes from the consolidation pass, not inspected in this refactor pass:
 

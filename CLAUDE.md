@@ -462,10 +462,10 @@ safe to run while the backfill scheduler is writing.
   Strava gap is full HTTP-level coverage of `StravaClient` OAuth /
   refresh / pagination (header parsing is already tested).
 - **Refactor follow-up** — see `REFACTOR_FINDINGS.md` for the active queue:
-  backend snapshot Pydantic models / `training_metrics.py` split,
-  `datetime.utcnow()` cleanup with a small time helper, remaining frontend
-  insight type tightening, Settings/Goals decomposition, frontend tests, and
-  legacy chat-vs-insights consolidation.
+  snapshot frontend/backend type-sync checklist or generation,
+  route-level date-helper cleanup, Settings/Goals decomposition, frontend
+  tests, bundle splitting, stash/old-branch review, and legacy
+  chat-vs-insights consolidation.
 
 ## Ambient state you should know about
 - `scripts/backfill_strava.py` was kicked off as a background process and
@@ -494,30 +494,34 @@ Three endpoints, all under `/api/insights/*`:
   vs_history, flags). Cached per-activity_id (no TTL).
 
 Key files:
-- `backend/services/training_metrics.py` — deterministic snapshot
-  builders (no LLM). `_get_latest_completed_activity(activity_id=X)`
-  requires `enrichment_status == "complete"` even when an ID is passed
-  explicitly — never feed a pending row (no laps, no weighted power) to
-  the LLM.
-- `backend/services/insights.py` — Pydantic schemas
-  (`DailyRecommendation`, `WorkoutInsight`), cache helpers,
+- `backend/services/training_metrics.py` — compatibility facade plus
+  `get_full_snapshot()` composition. Keep this import path stable for
+  routers/tests.
+- `backend/services/{training_load_snapshot,sleep_recovery_snapshot,workout_snapshot,goals_feedback_snapshot}.py`
+  — deterministic snapshot builders (no LLM). In `workout_snapshot.py`,
+  `_get_latest_completed_activity(activity_id=X)` requires
+  `enrichment_status == "complete"` even when an ID is passed explicitly
+  — never feed a pending row (no laps, no weighted power) to the LLM.
+- `backend/services/insights.py` — public LLM orchestration:
   `_call_llm_structured()` with fallback chain + self-correcting retry,
-  `_maybe_unwrap()` to handle models that wrap responses in a single
-  top-level key.
+  `_maybe_unwrap()` for models that wrap responses, and the public
+  `get_daily_recommendation` / `get_latest_workout_insight` entry points.
+- `backend/services/insight_schemas.py` — Pydantic output schemas
+  (`DailyRecommendation`, `WorkoutInsight`) plus `_pydantic_schema()`,
+  which inlines `$defs`/`$ref` recursively and forces every `object`
+  subschema to set `additionalProperties: false` + list all properties in
+  `required`.
+- `backend/services/insight_prompts.py` — daily recommendation and workout
+  insight system prompts.
+- `backend/services/insight_cache.py` — analysis cache hashing/get/put
+  helpers.
 - `backend/services/llm_providers.py` — added `query_structured()` on
   each provider: Anthropic (tool-use), OpenAI (`json_schema` strict →
   `json_object` fallback, narrowed to `openai.BadRequestError`), Gemini
-  (inlined schema + `response_schema` hint). `_pydantic_schema()` in
-  `insights.py` inlines `$defs`/`$ref` recursively (providers especially
-  Gemini don't follow refs) AND forces every `object` subschema to set
-  `additionalProperties: false` + list all properties in `required`.
-  Without that, OpenAI strict `json_schema` mode rejects the payload on
-  fields like `concerns`/`notable_segments`/`flags` that Pydantic marks
-  optional via `default_factory`, silently wasting a round-trip before
-  the `json_object` fallback.
+  (inlined schema + `response_schema` hint).
 
 Config (`backend/config.py` → `LLMSettings`):
-- `dashboard_model` (default `claude-haiku`).
+- `dashboard_model` (default `gpt-4o`).
 - `dashboard_fallback_models` (default `["claude-sonnet", "gpt-4o-mini"]`).
   Accepts comma-separated env var.
 
@@ -536,15 +540,18 @@ instantiating them every 20 min triggered needless Eight Sleep token
 refreshes. Errors inside the drain are logged with `logger.exception`
 so stack traces land in the log.
 
-### Tests (33 total, all passing)
-- `tests/test_services/test_training_metrics.py` (17) — training-load
-  snapshot shape and math (ACWR, monotony, strain, days-since-hard,
-  latest-workout snapshot, sleep/recovery snapshot).
-- `tests/test_services/test_insights.py` (11) — LLM layer with all
+### Tests (47 total in this insights/scheduler slice, all passing)
+- `tests/test_services/test_training_metrics.py` (29) — training-load
+  snapshot shape and math (ACWR, monotony, strain, days-since-hard),
+  latest-workout snapshot, full snapshot composition, goals, baselines,
+  recent RPE, and feedback summary.
+- `tests/test_services/test_insights.py` (15) — LLM layer with all
   providers mocked: happy path, cache hit/miss, refresh, fallback chain,
   all-fail-raises, validation-error retry, schema tightening walk
   (every object has `additionalProperties: false` + all keys required),
-  pending-id gate (never runs LLM against a non-complete row).
+  pending-id gate (never runs LLM against a non-complete row), cache key
+  exposure, and cache invalidation on goals/RPE/feedback/environmental
+  input changes.
 - `tests/test_services/test_scheduler_jobs.py` (5) — drain guards:
   no-op when pending=0, skip when daily quota hit, phase-B runs when
   quota ok.
@@ -590,9 +597,10 @@ so stack traces land in the log.
   ignored, `_lap_from_raw` field mapping + malformed/missing
   start_date handling.
 
-**Latest repo test count: 286 passing** after the stabilization/frontend API
-refactor pass. Existing warnings are `datetime.utcnow()` deprecations; see
-`REFACTOR_FINDINGS.md` for the planned time-helper cleanup.
+**Latest repo test count: 291 passing** after the backend module-split
+refactor pass. Backend pytest runs without `datetime.utcnow()` deprecation
+warnings. Frontend `npm run typecheck` and `npm run build` pass; build still
+emits the existing Vite large-bundle warning.
 
 ## Quick commands cheatsheet
 
