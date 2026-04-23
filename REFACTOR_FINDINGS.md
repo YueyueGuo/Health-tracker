@@ -7,6 +7,8 @@ Current as of the frontend test-harness pass on April 23, 2026.
 - GitHub default branch is `main`.
 - Current branch checked during this audit: `main`.
 - PR #5 (`codex/split-insight-modules`) was merged into `main` as merge commit `7fbd082`.
+- PR #6 (`yy/chat-insights-consolidation`) was merged into `main` as commit `db12365`.
+- PR #7 (`codex/frontend-tests-and-coverage`) was merged into `main` as merge commit `63fdd6a`.
 - Backend verification after the latest module-split refactor:
   - `.venv/bin/ruff check .` -> passed
   - `.venv/bin/python -m pytest` -> 291 passed, no `datetime.utcnow()` warnings
@@ -14,7 +16,7 @@ Current as of the frontend test-harness pass on April 23, 2026.
   - `npm test` -> passed (Vitest, 21 tests)
   - `npm run typecheck` -> passed
   - `npm run build` -> passed, with Vite's existing large bundle warning
-- Local `main` was fast-forwarded to `origin/main` after PR #5. Any
+- Local `main` was fast-forwarded to `origin/main` after PR #7. Any
   uncommitted changes after this point are documentation/memory-file updates.
 
 Preserved stashes from the consolidation pass, not inspected in this refactor pass:
