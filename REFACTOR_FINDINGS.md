@@ -1,17 +1,24 @@
 # Refactor Findings And Next Steps
 
-Current as of the backend snapshot/time-utils refactor pass on April 23, 2026.
+Current as of the backend module-split refactor pass on April 23, 2026.
 
 ## Current Baseline
 
 - GitHub default branch is `main`.
-- Local verification after the latest refactor pass:
+- Current branch checked during this audit: `codex/refactor-api-insight-snapshots`.
+- This branch started from `2e4d244 Refactor API clients and insight snapshots`, which was aligned with `main`, `origin/main`, and `origin/codex/refactor-api-insight-snapshots` before the uncommitted refactor edits.
+- Backend verification after the latest module-split refactor:
   - `.venv/bin/ruff check .` -> passed
   - `.venv/bin/python -m pytest` -> 291 passed, no `datetime.utcnow()` warnings
+- Frontend verification after the latest insight type-tightening/module-split pass:
   - `npm run typecheck` -> passed
   - `npm run build` -> passed, with Vite's existing large bundle warning
-- Current worktree includes uncommitted refactor changes plus this handoff file.
-- `REFACTOR_FINDINGS.md` is a handoff/planning file and is currently untracked unless staged explicitly.
+- Current uncommitted edits from the latest refactor passes include:
+  - `frontend/src/api/insights.ts`
+  - `backend/services/training_metrics.py`
+  - `backend/services/insights.py`
+  - new focused backend snapshot/insight support modules under `backend/services/`
+  - `REFACTOR_FINDINGS.md`
 
 Preserved stashes from the consolidation pass, not inspected in this refactor pass:
 
@@ -85,7 +92,7 @@ Remaining remote branches intentionally left alone during consolidation:
 
 - Added `backend/services/snapshot_models.py` with Pydantic contracts for the dashboard insight input snapshots:
   - training load, sleep, recovery, latest workout, goals, baselines, recent RPE, feedback, environmental context, recent activities, full snapshot, and the daily recommendation cache signal.
-- `backend/services/training_metrics.py` still returns plain dicts for public API stability, but now validates assembled payloads against the snapshot models before returning.
+- Snapshot builders still return plain dicts for public API stability, but now validate assembled payloads against the snapshot models before returning.
 - Added `backend/services/time_utils.py` with explicit helpers:
   - `local_today()`
   - `utc_now()`
@@ -95,34 +102,48 @@ Remaining remote branches intentionally left alone during consolidation:
 - Made daily recommendation cache-signal construction explicit via `daily_recommendation_cache_signal()`.
 - Added regression tests for explicit `today` injection, snapshot contract validation, cache-signal shape, and time helper behavior.
 
-## Remaining Findings
+### Backend Snapshot And Insights Module Split
 
-### 1. Backend Snapshot And Insights Modules Are Still Too Large
-
-Files:
-
-- `backend/services/training_metrics.py`
-- `backend/services/insights.py`
-- `backend/services/snapshot_models.py`
-
-Current state:
-
-- `training_metrics.py` is still large and assembles training load, sleep, recovery, latest workout, goals, baselines, RPE, feedback, environmental context, and recent activity snapshots.
-- `insights.py` is still about 603 lines and contains Pydantic LLM response schemas, schema transformation, cache helpers, provider fallback orchestration, prompts, and public methods.
-- Snapshot payloads now validate against Pydantic models in `snapshot_models.py`, but public API boundaries intentionally still return plain dicts.
-- The frontend still mirrors nested insight snapshot shapes manually in `frontend/src/api/insights.ts`.
-
-Recommended next steps:
-
-- Split `training_metrics.py` into focused modules, for example:
+- `backend/services/training_metrics.py` is now a 112-line compatibility facade plus `get_full_snapshot()` composition layer.
+- Extracted focused snapshot builders:
   - `training_load_snapshot.py`
   - `sleep_recovery_snapshot.py`
   - `workout_snapshot.py`
   - `goals_feedback_snapshot.py`
-- Keep `get_full_snapshot()` as a thin composition layer.
-- Consider generating or documenting frontend insight types from `snapshot_models.py`.
+- `backend/services/insights.py` is now a 329-line orchestration module.
+- Extracted insight support modules:
+  - `insight_schemas.py`
+  - `insight_prompts.py`
+  - `insight_cache.py`
+- Preserved the existing `backend.services.training_metrics` and `backend.services.insights` public import surfaces used by routers/tests.
 
-Suggested PR size: Medium.
+### Frontend Insight Type Tightening
+
+- Replaced remaining API-level `any` placeholders in `frontend/src/api/insights.ts`.
+- Added typed frontend mirrors for latest-workout laps, weather, pre-workout sleep, historical comparison, recent activities, goals, baselines, recent RPE, feedback summary, and environmental context.
+- Updated `FullSnapshot` so it now includes the richer backend snapshot fields instead of only the original training/sleep/recovery/latest/recent-activity subset.
+
+## Remaining Findings
+
+### 1. Snapshot Contracts Are Still Manual Across Backend And Frontend
+
+Files:
+
+- `backend/services/snapshot_models.py`
+- `frontend/src/api/insights.ts`
+
+Current state:
+
+- Backend snapshot assembly is split into focused modules and validates against `snapshot_models.py`.
+- Public API boundaries intentionally still return plain dicts.
+- The frontend mirrors nested insight snapshot shapes manually in `frontend/src/api/insights.ts`; there is still no generated contract pipeline or documented type-sync checklist.
+
+Recommended next steps:
+
+- Add a lightweight type-sync checklist for `snapshot_models.py` -> `frontend/src/api/insights.ts`.
+- Consider generating JSON Schema/TypeScript types from the backend Pydantic models if this surface changes often.
+
+Suggested PR size: Small.
 
 ### 2. Date And Time Handling Still Needs A Shared Pattern
 
@@ -161,20 +182,15 @@ Current state:
 
 - `ActivityDetail.weather` and `raw_data` now use `Record<string, unknown>`.
 - Dashboard/recovery/sleep chart `any` usage was reduced.
-- `LatestWorkoutSnapshot.laps`, `weather`, `pre_workout_sleep`, and `recent_activities` still use `any`.
+- `frontend/src/api/insights.ts` no longer has API-level `any` placeholders for insight snapshots.
 - There are still no generated or backend-sourced frontend contracts.
 
 Recommended next steps:
 
-- Define typed interfaces for:
-  - `WorkoutLapSnapshot`
-  - `WorkoutWeatherSnapshot`
-  - `PreWorkoutSleepSnapshot`
-  - `RecentActivitySnapshot`
-- Replace remaining API-level `any` in `insights.ts`.
 - After backend Pydantic snapshot models exist, consider schema generation or at least a manual type-sync checklist.
+- Continue opportunistically replacing component-level `any` catch/style helper annotations outside the insight API layer.
 
-Suggested PR size: Medium. Best after backend snapshot models.
+Suggested PR size: Small to medium.
 
 ### 4. Settings And Location UI Are Partially Decomposed, But Not Done
 
@@ -309,18 +325,19 @@ Suggested PR size: No PR unless a stash contains desired code.
 
 Goal: reduce backend/frontend contract drift and eliminate datetime warnings.
 
-Status: mostly complete; module splitting remains.
+Status: complete enough for now; only optional generated-contract work remains.
 
 Completed:
 
 - Add snapshot Pydantic models.
 - Add `time_utils.py`.
 - Replace `datetime.utcnow()` usages and add deterministic date tests.
+- Split `training_metrics.py`.
+- Split `insights.py` into schemas/prompts/cache/orchestration.
 
 Remaining:
 
-- Split `training_metrics.py`.
-- Decide whether to expose snapshot schemas for frontend type-sync.
+- Decide whether to expose or generate snapshot schemas for frontend type-sync.
 
 Verification:
 
@@ -333,7 +350,7 @@ Goal: make frontend contracts safer after the API split.
 
 Scope:
 
-- Replace remaining `any` in `frontend/src/api/insights.ts`.
+- Add or document a frontend/backend snapshot type-sync checklist.
 - Add Vitest + React Testing Library.
 - Test `api/http.ts` and the location hooks/forms.
 
@@ -371,5 +388,5 @@ Scope:
 ## Suggested Prompt For Next Session
 
 ```text
-Please read REFACTOR_FINDINGS.md and implement the next refactor PR: backend snapshot models and time utilities. Keep public API responses stable, eliminate datetime.utcnow warnings, run Ruff and pytest, and update this handoff file with what changed.
+Please read REFACTOR_FINDINGS.md and implement the next refactor PR: add frontend tests with Vitest + React Testing Library, starting with api/http.ts and the shared location hooks/forms. Keep behavior stable, run typecheck/build/test, and update this handoff file with what changed.
 ```
