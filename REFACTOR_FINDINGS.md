@@ -135,7 +135,8 @@ Remaining remote branches intentionally left alone during consolidation:
   - `frontend/src/components/location/GpsLocationForm.tsx`
   - `frontend/src/components/LocationPicker.tsx`
   - `frontend/src/components/GoalsSection.tsx`
-- Current frontend test count from this slice: 21 passing.
+  - `frontend/src/pages/Settings.tsx`
+- Current frontend test count from this slice: 23 passing.
 
 ### Settings / Goals / Location Decomposition
 
@@ -157,7 +158,7 @@ Remaining remote branches intentionally left alone during consolidation:
   - `frontend/src/utils/errors.ts`
 - `frontend/src/components/LocationPicker.tsx` now reuses `useLocations()` and `SavedLocationPicker` while preserving the existing attach/create/detach behavior.
 - Verification after this pass:
-  - `npm test` -> 21 passed
+  - `npm test` -> 23 passed
   - `npm run typecheck` -> passed
   - `npm run build` -> passed, with Vite's existing large bundle warning
 
