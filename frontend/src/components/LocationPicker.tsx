@@ -13,7 +13,7 @@ import { getErrorMessage } from "../utils/errors";
 
 interface Props {
   activityId: number;
-  /** The currently-attached location id, if any. */
+  /** The currently-attached location id, when present. */
   currentLocationId: number | null;
   /** Called after a successful attach/detach so the parent can reload data. */
   onChange: () => void;

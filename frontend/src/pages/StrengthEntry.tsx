@@ -7,6 +7,7 @@ import {
   type StrengthSetInput,
 } from "../api/strength";
 import { fetchActivities, type ActivitySummary } from "../api/activities";
+import { getErrorMessage } from "../utils/errors";
 
 /**
  * Form for adding a strength session.
@@ -101,8 +102,8 @@ export default function StrengthEntry() {
       }));
       await createStrengthSession({ date, activity_id: activityId, sets: payload });
       navigate("/strength");
-    } catch (e: any) {
-      setError(e.message || "Failed to save session");
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, "Failed to save session"));
     } finally {
       setSaving(false);
     }

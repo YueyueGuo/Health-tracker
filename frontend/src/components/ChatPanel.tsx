@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { askQuestion, fetchAvailableModels } from "../api/chat";
 import { useApi } from "../hooks/useApi";
+import { getErrorMessage } from "../utils/errors";
 
 interface Message {
   role: "user" | "assistant";
@@ -35,10 +36,13 @@ export default function ChatPanel() {
         ...prev,
         { role: "assistant", content: result.answer, model: result.model },
       ]);
-    } catch (e: any) {
+    } catch (error: unknown) {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: `Error: ${e.message}` },
+        {
+          role: "assistant",
+          content: `Error: ${getErrorMessage(error, "Request failed")}`,
+        },
       ]);
     } finally {
       setLoading(false);

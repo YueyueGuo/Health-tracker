@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { useApi } from "../hooks/useApi";
 import { fetchWeeklySummaries, type WeeklySummary } from "../api/summary";
 import { formatDistanceShort, useUnits } from "../hooks/useUnits";
@@ -5,6 +6,10 @@ import { formatDistanceShort, useUnits } from "../hooks/useUnits";
 interface Props {
   weeks?: number;
 }
+
+type SportMixStyle = CSSProperties & {
+  "--flex": number;
+};
 
 /**
  * A horizontal strip of weekly training summary cards (newest first).
@@ -21,7 +26,15 @@ export default function WeeklySummaryCards({ weeks = 4 }: Props) {
 
   return (
     <div>
-      <h2 style={{ marginBottom: 12, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, fontSize: 13 }}>
+      <h2
+        style={{
+          marginBottom: 12,
+          color: "var(--text-muted)",
+          textTransform: "uppercase",
+          letterSpacing: 0.5,
+          fontSize: 13,
+        }}
+      >
         Recent Weeks
       </h2>
       <div className="week-grid">
@@ -103,7 +116,11 @@ function WeekCard({ week }: { week: WeeklySummary }) {
 function SportMixBar({ by_sport }: { by_sport: WeeklySummary["by_sport"] }) {
   const entries = Object.entries(by_sport);
   if (entries.length === 0) {
-    return <div className="sport-mix" style={{ opacity: 0.3 }}><span className="mix-other" /></div>;
+    return (
+      <div className="sport-mix" style={{ opacity: 0.3 }}>
+        <span className="mix-other" />
+      </div>
+    );
   }
   const totalSeconds = entries.reduce((s, [, v]) => s + (v.duration_s || 0), 0);
   if (totalSeconds === 0) {
@@ -115,7 +132,7 @@ function SportMixBar({ by_sport }: { by_sport: WeeklySummary["by_sport"] }) {
           <span
             key={sport}
             className={`mix-${sport.toLowerCase()} ${sportClassFallback(sport)}`}
-            style={{ ["--flex" as any]: v.count / totalCount }}
+            style={sportMixStyle(totalCount > 0 ? v.count / totalCount : 0)}
             title={`${sport}: ${v.count} session${v.count !== 1 ? "s" : ""}`}
           />
         ))}
@@ -128,12 +145,16 @@ function SportMixBar({ by_sport }: { by_sport: WeeklySummary["by_sport"] }) {
         <span
           key={sport}
           className={`mix-${sport.toLowerCase()} ${sportClassFallback(sport)}`}
-          style={{ ["--flex" as any]: v.duration_s / totalSeconds }}
+          style={sportMixStyle(totalSeconds > 0 ? v.duration_s / totalSeconds : 0)}
           title={`${sport}: ${formatDurationShort(v.duration_s)}`}
         />
       ))}
     </div>
   );
+}
+
+function sportMixStyle(flex: number): SportMixStyle {
+  return { "--flex": flex };
 }
 
 function sportClassFallback(sport: string): string {

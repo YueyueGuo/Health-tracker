@@ -375,6 +375,17 @@ function formatStageValue(minutes: number, total: number): string {
   return `${Math.round(minutes)}m${pctSuffix}`;
 }
 
+type StageTooltipEntry = {
+  dataKey?: string | number;
+  value?: number | string | null;
+  name?: string;
+  color?: string;
+};
+
+function numericTooltipValue(value: StageTooltipEntry["value"]): number {
+  return typeof value === "number" ? value : 0;
+}
+
 /**
  * Custom Recharts tooltip for the stacked stages chart.
  *
@@ -389,7 +400,7 @@ function StagesTooltip({
   label,
 }: {
   active?: boolean;
-  payload?: any[];
+  payload?: StageTooltipEntry[];
   label?: string;
 }) {
   if (!active || !payload || payload.length === 0) return null;
@@ -428,8 +439,8 @@ function StagesTooltip({
           <span>{p.name}</span>
           <span style={{ color: "var(--text)" }}>
             {p.dataKey === "awake"
-              ? formatDurationMinutes(p.value || 0)
-              : formatStageValue(p.value || 0, sleepTotal)}
+              ? formatDurationMinutes(numericTooltipValue(p.value))
+              : formatStageValue(numericTooltipValue(p.value), sleepTotal)}
           </span>
         </div>
       ))}

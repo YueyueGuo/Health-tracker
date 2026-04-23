@@ -1,4 +1,7 @@
-export function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return "Something went wrong";
+export function getErrorMessage(
+  error: unknown,
+  fallback = "Something went wrong"
+): string {
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
 }

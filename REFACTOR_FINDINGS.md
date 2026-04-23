@@ -1,6 +1,6 @@
 # Refactor Findings And Next Steps
 
-Current as of the snapshot type-sync + ActivityDetail coverage pass on April 23, 2026.
+Current as of the frontend type-cleanup follow-up pass on April 23, 2026.
 
 ## Current Baseline
 
@@ -180,6 +180,24 @@ Remaining remote branches intentionally left alone during consolidation:
   - `npm run typecheck` -> passed
   - `npm run build` -> passed, with Vite's existing large bundle warning
 
+### Frontend Catch / Tooltip Type Cleanup
+
+- Removed the remaining non-test frontend `any` escapes in current app code:
+  - `ChatPanel.tsx`
+  - `Strength.tsx`
+  - `StrengthEntry.tsx`
+  - `Sleep.tsx`
+  - `WeeklySummaryCards.tsx`
+- Extended `frontend/src/utils/errors.ts` so `getErrorMessage()` accepts an optional fallback while still keeping `unknown` at call sites.
+- Replaced the custom CSS variable `as any` style escapes in `WeeklySummaryCards.tsx` with a typed helper.
+- Replaced the loose `StagesTooltip` payload typing in `Sleep.tsx` with an explicit tooltip-entry type plus numeric coercion helper.
+- Added focused frontend tests for the touched error-handling flows:
+  - `frontend/src/components/ChatPanel.test.tsx`
+  - `frontend/src/pages/StrengthEntry.test.tsx`
+- Verification after this pass:
+  - `npm test -- --run src/components/ChatPanel.test.tsx src/pages/StrengthEntry.test.tsx src/components/ActivityDetail.test.tsx src/pages/Settings.test.tsx` -> 6 passed
+  - `npm run typecheck` -> passed
+
 ## Remaining Findings
 
 ### 1. Snapshot Contracts Are Still Manual Across Backend And Frontend
@@ -238,7 +256,7 @@ Files:
 Current state:
 
 - `ActivityDetail.weather` and `raw_data` now use `Record<string, unknown>`.
-- Dashboard/recovery/sleep chart `any` usage was reduced.
+- Current app code no longer has non-test frontend `any` escapes in the main remaining chat/strength/sleep/weekly-summary surfaces.
 - `frontend/src/api/insights.ts` no longer has API-level `any` placeholders for insight snapshots.
 - `ActivityDetail.tsx` no longer uses local `any` catches for lazy insight/stream error handling.
 - There are still no generated or backend-sourced frontend contracts.
@@ -246,7 +264,7 @@ Current state:
 Recommended next steps:
 
 - After backend Pydantic snapshot models exist, consider schema generation or at least a manual type-sync checklist.
-- Continue opportunistically replacing component-level `any` catch/style helper annotations outside the insight API layer.
+- Keep tightening nested payload typings opportunistically as new chart/card surfaces are touched.
 
 Suggested PR size: Small to medium.
 
@@ -316,11 +334,13 @@ Files/areas:
 - `frontend/src/components/LocationPicker.test.tsx`
 - `frontend/src/components/GoalsSection.test.tsx`
 - `frontend/src/components/ActivityDetail.test.tsx`
+- `frontend/src/components/ChatPanel.test.tsx`
 - `frontend/src/pages/Settings.test.tsx`
+- `frontend/src/pages/StrengthEntry.test.tsx`
 
 Risk:
 
-- Shared HTTP behavior, Settings CRUD, extracted location hooks/forms, and Activity Detail lazy API states now have regression coverage.
+- Shared HTTP behavior, Settings CRUD, extracted location hooks/forms, Activity Detail lazy API states, chat fallback errors, and strength-entry save errors now have regression coverage.
 - Dashboard cards and a few other nested-payload consumers can still regress without frontend tests.
 
 Recommended next steps:

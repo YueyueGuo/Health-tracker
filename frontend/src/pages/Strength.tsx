@@ -10,6 +10,7 @@ import {
   type StrengthSessionDetail,
 } from "../api/strength";
 import StrengthProgressionChart from "../components/StrengthProgressionChart";
+import { getErrorMessage } from "../utils/errors";
 
 /**
  * Strength dashboard.
@@ -38,7 +39,7 @@ export default function Strength() {
     }
   }, [sessions, selectedDate]);
 
-  // Default-select the first exercise once we have any.
+  // Default-select the first exercise once we have options.
   useEffect(() => {
     if (!selectedExercise && exercises && exercises.length > 0) {
       setSelectedExercise(exercises[0]);
@@ -66,8 +67,8 @@ export default function Strength() {
     try {
       await deleteStrengthSet(id);
       setRefreshKey((k) => k + 1);
-    } catch (e: any) {
-      alert(e.message || "Delete failed");
+    } catch (error: unknown) {
+      alert(getErrorMessage(error, "Delete failed"));
     }
   };
 
