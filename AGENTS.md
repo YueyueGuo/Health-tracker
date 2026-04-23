@@ -438,6 +438,32 @@ safe to run while the backfill scheduler is writing.
   **own branch**. We hit a merge conflict once because two agents pushed to
   the same branch.
 
+## Automatic PR workflow
+
+When an agent reaches a good stopping point for a coherent slice of work, it
+should not wait for the user to explicitly ask for PR mechanics.
+
+Expected flow:
+
+1. Run the narrowest meaningful verification for the slice.
+2. Perform a self-review in code-review mode, prioritizing regressions, bugs,
+   and missing tests.
+3. If there are no blocking findings, automatically:
+   - create a branch if needed
+   - stage only the relevant files
+   - commit with a focused message
+   - push the branch
+   - open or update a PR
+4. In the final response, include:
+   - whether review found anything
+   - what checks were run
+   - the PR link
+   - any residual risks or manual follow-up
+
+If the current branch already has an open PR and the new work is a separate
+logical slice, prefer a stacked branch/PR instead of silently broadening the
+existing PR.
+
 ## Open work / things to pick up
 
 - **Elevation — Phase 2 follow-up.** Backfill Phase 2 was skipped
