@@ -11,6 +11,7 @@ import { askQuestion, fetchAvailableModels } from "../api/chat";
 
 const mockedAskQuestion = vi.mocked(askQuestion);
 const mockedFetchAvailableModels = vi.mocked(fetchAvailableModels);
+const originalScrollIntoView = Element.prototype.scrollIntoView;
 
 describe("ChatPanel", () => {
   beforeEach(() => {
@@ -19,6 +20,7 @@ describe("ChatPanel", () => {
   });
 
   afterEach(() => {
+    Element.prototype.scrollIntoView = originalScrollIntoView;
     vi.clearAllMocks();
   });
 

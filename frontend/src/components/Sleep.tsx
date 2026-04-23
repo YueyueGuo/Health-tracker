@@ -383,7 +383,12 @@ type StageTooltipEntry = {
 };
 
 function numericTooltipValue(value: StageTooltipEntry["value"]): number {
-  return typeof value === "number" ? value : 0;
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
 }
 
 /**
