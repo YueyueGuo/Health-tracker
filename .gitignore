@@ -26,6 +26,7 @@ env/
 backfill.log
 
 # IDE
+.claude/
 .vscode/
 .idea/
 *.swp
