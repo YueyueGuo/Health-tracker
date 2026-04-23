@@ -17,6 +17,14 @@
   --orange: #f59e0b;
   --border: #2d3041;
   --radius: 12px;
+  /* HR zone palette — classic cool-to-warm ramp used by Strava/Garmin/Whoop. */
+  --zone-1: #9ca3af; /* gray   · recovery */
+  --zone-2: #3b82f6; /* blue   · endurance */
+  --zone-3: #22c55e; /* green  · tempo */
+  --zone-4: #eab308; /* yellow · threshold */
+  --zone-5: #f97316; /* orange · VO2max */
+  --zone-6: #ef4444; /* red    · anaerobic */
+  --zone-7: #b91c1c; /* dark red · neuromuscular */
 }
 
 body {
@@ -414,6 +422,67 @@ select {
 .lap-row-z6 { background: rgba(217, 70, 239, 0.14); }
 .lap-row-z1 td, .lap-row-z2 td, .lap-row-z3 td, .lap-row-z4 td, .lap-row-z5 td, .lap-row-z6 td {
   font-variant-numeric: tabular-nums;
+}
+
+/* ── Time-in-zone chart (labeled horizontal bars, Strava-style) ───── */
+.zone-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 24px;
+}
+
+.zone-chart__title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.zone-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 2fr auto;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.zone-row__label {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.zone-row__label .zone-name {
+  color: var(--text-muted);
+  margin-left: 6px;
+  font-size: 12px;
+}
+
+.zone-row__track {
+  background: var(--border);
+  border-radius: 4px;
+  height: 14px;
+  position: relative;
+  overflow: hidden;
+}
+
+.zone-row__fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 300ms ease;
+}
+
+.zone-row__value {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  min-width: 80px;
+  text-align: right;
 }
 
 /* ── Weekly summary cards ───────────────────────────────────────────── */

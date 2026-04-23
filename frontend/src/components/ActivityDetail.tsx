@@ -8,8 +8,6 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
-  BarChart,
-  Bar,
 } from "recharts";
 import { useApi } from "../hooks/useApi";
 import {
@@ -20,7 +18,7 @@ import {
   type ZoneDistribution,
 } from "../api/client";
 import { getActivityWeather } from "../api/weather";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ClassificationBadge from "./ClassificationBadge";
 import LocationPicker from "./LocationPicker";
 import WeatherCard from "./WeatherCard";
@@ -67,6 +65,11 @@ export default function ActivityDetail() {
   const [streamsLoading, setStreamsLoading] = useState(false);
   const [streamsError, setStreamsError] = useState<string | null>(null);
   const [reclassifying, setReclassifying] = useState(false);
+  // Tracks the most recently-requested activity id. Used both to dedupe
+  // under React StrictMode's double-mount (second mount sees the ref already
+  // set and short-circuits) AND to detect stale fetches when the user
+  // navigates between activities mid-request.
+  const latestStreamId = useRef<number | null>(null);
 
   const handleAnalyze = async () => {
     setAnalyzing(true);
@@ -80,18 +83,41 @@ export default function ActivityDetail() {
     }
   };
 
-  const handleLoadStreams = async () => {
-    setStreamsLoading(true);
+  // Auto-load stream data as soon as the activity detail page mounts. The
+  // backend caches the stream JSON in activity_streams on first hit, so
+  // subsequent views of the same activity are free; only the first view
+  // spends a Strava read.
+  //
+  // We use a ref (`latestStreamId`) rather than a cleanup-based cancelled
+  // flag because React StrictMode's synthetic cleanup-then-remount would
+  // otherwise race with our own fetch: the first mount's cleanup flips
+  // cancelled=true, the second mount's dedupe skips the fetch, and the
+  // first fetch's completion then silently drops its result because
+  // cancelled is true → state stays empty. Tracking "the id we most
+  // recently kicked off a fetch for" on the ref lets the fetch resolver
+  // check if it's still the active request (ref === myId) without depending
+  // on closure-scoped cleanup state.
+  useEffect(() => {
+    if (!Number.isFinite(activityId)) return;
+    if (latestStreamId.current === activityId) return;
+    const myId = activityId;
+    latestStreamId.current = myId;
+    setStreams(null);
     setStreamsError(null);
-    try {
-      const s = await fetchActivityStreams(activityId);
-      setStreams(s);
-    } catch (e: any) {
-      setStreamsError(e.message || "Failed to load streams");
-    } finally {
-      setStreamsLoading(false);
-    }
-  };
+    setStreamsLoading(true);
+    (async () => {
+      try {
+        const s = await fetchActivityStreams(myId);
+        if (latestStreamId.current !== myId) return; // user navigated away
+        setStreams(s);
+      } catch (e: any) {
+        if (latestStreamId.current !== myId) return;
+        setStreamsError(e?.message || "Failed to load streams");
+      } finally {
+        if (latestStreamId.current === myId) setStreamsLoading(false);
+      }
+    })();
+  }, [activityId]);
 
   const handleReclassify = async () => {
     setReclassifying(true);
@@ -293,25 +319,21 @@ export default function ActivityDetail() {
 
       <div className="card">
         <h2>Stream Data</h2>
-        {!streams && !streamsLoading && (
-          <div>
-            <p style={{ color: "var(--text-muted)", marginBottom: 12 }}>
-              Per-sample heart rate, pace, and elevation. Fetched on demand from Strava.
-              {activity.streams_cached && " (Previously cached.)"}
-            </p>
-            <button className="btn" onClick={handleLoadStreams}>
-              Load Streams
-            </button>
-          </div>
-        )}
         {streamsLoading && <div className="loading">Loading streams...</div>}
-        {streamsError && <div className="error">{streamsError}</div>}
+        {streamsError && !streams && (
+          <div className="error">{streamsError}</div>
+        )}
         {streams && (
           <StreamsChart
             streams={streams}
             units={units}
             sportType={activity.sport_type}
           />
+        )}
+        {!streams && !streamsLoading && !streamsError && (
+          <div style={{ color: "var(--text-muted)" }}>
+            No stream data available for this activity.
+          </div>
         )}
       </div>
 
@@ -332,29 +354,64 @@ export default function ActivityDetail() {
 
 // ── Sub-components ─────────────────────────────────────────────────────
 
+// Named HR zones — standard endurance coaching vocabulary (Recovery/Endurance/
+// Tempo/Threshold/VO2max/Anaerobic/Neuromuscular). Indexed by bucket position;
+// truncated to the actual bucket count (Strava returns 5 by default, 7 if the
+// user has split zones).
+const HR_ZONE_NAMES = [
+  "Recovery",
+  "Endurance",
+  "Tempo",
+  "Threshold",
+  "VO2max",
+  "Anaerobic",
+  "Neuromuscular",
+];
+
+function zoneTitle(type: string): string {
+  if (type === "heartrate") return "Heart Rate";
+  if (type === "power") return "Power";
+  if (type === "pace") return "Pace";
+  return type;
+}
+
 function ZoneChart({ zone }: { zone: ZoneDistribution }) {
-  const data = zone.distribution_buckets.map((b, i) => ({
-    name: zoneBucketLabel(zone.type, b, i),
-    minutes: Math.round((b.time || 0) / 60),
-    time: b.time,
-  }));
+  const buckets = zone.distribution_buckets;
+  const totalTime = buckets.reduce((acc, b) => acc + (b.time || 0), 0);
+  if (!buckets.length || totalTime <= 0) return null;
+
   return (
-    <div style={{ marginBottom: 24 }}>
-      <div style={{ color: "var(--text-muted)", fontSize: 12, marginBottom: 8, textTransform: "uppercase" }}>
-        {zone.type}
-      </div>
-      <ResponsiveContainer width="100%" height={180}>
-        <BarChart data={data} layout="vertical" margin={{ left: 40, right: 20 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-          <XAxis type="number" stroke="var(--text-muted)" />
-          <YAxis type="category" dataKey="name" stroke="var(--text-muted)" width={90} />
-          <Tooltip
-            contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
-            formatter={(value) => [`${value as number} min`, "Time"]}
-          />
-          <Bar dataKey="minutes" fill="#6366f1" />
-        </BarChart>
-      </ResponsiveContainer>
+    <div className="zone-chart">
+      <div className="zone-chart__title">{zoneTitle(zone.type)}</div>
+      {buckets.map((b, i) => {
+        const time = b.time || 0;
+        const pct = Math.round((100 * time) / totalTime);
+        const minutes = Math.round(time / 60);
+        const colorVar = `var(--zone-${Math.min(i + 1, 7)})`;
+        const name =
+          zone.type === "heartrate" && i < HR_ZONE_NAMES.length
+            ? HR_ZONE_NAMES[i]
+            : null;
+        const range = zoneBucketRange(zone.type, b);
+        return (
+          <div className="zone-row" key={i}>
+            <div className="zone-row__label">
+              <span>Z{i + 1}</span>
+              {name && <span className="zone-name">{name}</span>}
+              <span className="zone-name"> · {range}</span>
+            </div>
+            <div className="zone-row__track">
+              <div
+                className="zone-row__fill"
+                style={{ width: `${pct}%`, background: colorVar }}
+              />
+            </div>
+            <div className="zone-row__value">
+              {pct}% · {minutes} min
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -458,9 +515,13 @@ function formatDuration(seconds: number | null | undefined): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m ${s}s`;
 }
 
-function zoneBucketLabel(type: string, b: { min: number; max: number }, i: number): string {
+// Range-only label used by the labeled-bar ZoneChart — returns just the
+// numeric range + unit (e.g. "120–140 bpm", "≥180 bpm", "120–180 W") because
+// the `Z{i+1}` and zone name are rendered as separate spans with their own
+// styling.
+function zoneBucketRange(type: string, b: { min: number; max: number }): string {
   const suffix = b.max === -1 ? `\u2265${b.min}` : `${b.min}–${b.max}`;
-  if (type === "heartrate") return `Z${i + 1} (${suffix} bpm)`;
+  if (type === "heartrate") return `${suffix} bpm`;
   if (type === "power") return `${suffix} W`;
-  return `Z${i + 1}`;
+  return suffix;
 }

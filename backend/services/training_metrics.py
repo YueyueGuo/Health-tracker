@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models import (
     Activity,
     ActivityLap,
+    ActivityStream,
     Recovery,
     SleepSession,
     WeatherSnapshot,
@@ -245,6 +246,169 @@ async def get_recovery_snapshot(db: AsyncSession, days: int = 7) -> dict:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Heart rate helpers (zone distribution, per-lap zones, cardiac drift).
+# Used to enrich the LLM snapshot so the model can reason about HR
+# structure rather than just seeing scalar avg_hr.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _find_hr_buckets(zones_data: list | None) -> list[dict] | None:
+    """Return the distribution_buckets for the `heartrate` zone entry, or None."""
+    if not zones_data:
+        return None
+    for entry in zones_data:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("type") == "heartrate":
+            buckets = entry.get("distribution_buckets") or []
+            return buckets if buckets else None
+    return None
+
+
+def summarize_hr_zones(zones_data: list | None) -> dict | None:
+    """Summarize the HR zone distribution from Strava's ``zones_data`` JSON.
+
+    Returns a compact dict suitable for handing to an LLM, or ``None`` if the
+    activity has no HR zone data (e.g. the activity was recorded without a
+    chest strap, or the sport lacks zones).
+
+    Shape::
+
+        {
+          "z1_pct": 12, "z2_pct": 45, ...,
+          "dominant_zone": 2,
+          "total_minutes": 62,
+          "bucket_count": 5,
+          "ranges": [{"zone": 1, "min": 95, "max": 120}, ...],
+        }
+
+    Pure function — easy to unit-test.
+    """
+    buckets = _find_hr_buckets(zones_data)
+    if not buckets:
+        return None
+
+    total_seconds = 0
+    for b in buckets:
+        if not isinstance(b, dict):
+            continue
+        total_seconds += int(b.get("time") or 0)
+    if total_seconds <= 0:
+        return None
+
+    result: dict = {}
+    dominant_zone = 1
+    dominant_time = -1
+    for i, b in enumerate(buckets, start=1):
+        t = int(b.get("time") or 0) if isinstance(b, dict) else 0
+        pct = round(100 * t / total_seconds)
+        result[f"z{i}_pct"] = pct
+        if t > dominant_time:
+            dominant_time = t
+            dominant_zone = i
+
+    result["dominant_zone"] = dominant_zone
+    result["total_minutes"] = total_seconds // 60
+    result["bucket_count"] = len(buckets)
+    result["ranges"] = [
+        {
+            "zone": i,
+            "min": b.get("min") if isinstance(b, dict) else None,
+            "max": b.get("max") if isinstance(b, dict) else None,
+        }
+        for i, b in enumerate(buckets, start=1)
+    ]
+    return result
+
+
+def assign_lap_hr_zones(
+    lap_avg_hr: float | None, zones_data: list | None
+) -> int | None:
+    """Map a lap's average HR to a 1-indexed zone using the activity's HR buckets.
+
+    Returns ``None`` when HR or zone data is missing. Treats ``max == -1`` as
+    an open upper bound (Strava encodes the top zone this way).
+    """
+    if lap_avg_hr is None:
+        return None
+    buckets = _find_hr_buckets(zones_data)
+    if not buckets:
+        return None
+    for i, b in enumerate(buckets, start=1):
+        if not isinstance(b, dict):
+            continue
+        bmin = b.get("min")
+        bmax = b.get("max")
+        if bmin is None:
+            continue
+        if bmax is None or bmax == -1:
+            if lap_avg_hr >= bmin:
+                return i
+            continue
+        if bmin <= lap_avg_hr < bmax:
+            return i
+    # HR fell below the lowest zone's min — clamp to zone 1.
+    first = buckets[0] if buckets else None
+    if isinstance(first, dict) and first.get("min") is not None and lap_avg_hr < first["min"]:
+        return 1
+    return None
+
+
+async def compute_hr_drift(
+    db: AsyncSession, activity_id: int
+) -> float | None:
+    """Cardiac drift (aerobic decoupling proxy): 2nd-half avg HR vs 1st-half.
+
+    Positive = HR rose over the activity at the same perceived effort
+    (dehydration, fatigue, heat, overreaching). Returned as a ratio, e.g.
+    ``0.042`` means a 4.2% rise.
+
+    Reads ``activity_streams`` (the lazy-cached per-sample data). Never
+    triggers a stream fetch — if streams aren't cached, returns ``None``.
+    Also returns ``None`` for activities under 10 minutes (drift is noise).
+    """
+    rows = await db.execute(
+        select(ActivityStream).where(
+            ActivityStream.activity_id == activity_id,
+            ActivityStream.stream_type.in_(("time", "heartrate")),
+        )
+    )
+    streams = {s.stream_type: s.data for s in rows.scalars().all()}
+    time_stream = streams.get("time")
+    hr_stream = streams.get("heartrate")
+    if not time_stream or not hr_stream:
+        return None
+    if len(time_stream) != len(hr_stream):
+        return None
+    if not time_stream or time_stream[-1] is None or time_stream[-1] < 600:
+        return None
+
+    midpoint = time_stream[-1] / 2.0
+    first_sum = 0.0
+    first_count = 0
+    second_sum = 0.0
+    second_count = 0
+    for t, hr in zip(time_stream, hr_stream):
+        if hr is None or hr <= 0:
+            continue
+        if t is None:
+            continue
+        if t < midpoint:
+            first_sum += hr
+            first_count += 1
+        else:
+            second_sum += hr
+            second_count += 1
+    if first_count == 0 or second_count == 0:
+        return None
+    first_avg = first_sum / first_count
+    second_avg = second_sum / second_count
+    if first_avg <= 0:
+        return None
+    return round((second_avg - first_avg) / first_avg, 3)
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Latest workout summary (one activity, enriched with context)
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -305,6 +469,7 @@ async def get_latest_workout_snapshot(
                 "moving_time_s": lap.moving_time,
                 "pace": _pace_str(lap.average_speed),
                 "avg_hr": round(lap.average_heartrate, 0) if lap.average_heartrate else None,
+                "hr_zone": assign_lap_hr_zones(lap.average_heartrate, activity.zones_data),
                 "avg_watts": round(lap.average_watts, 0) if lap.average_watts else None,
                 "pace_zone": lap.pace_zone,
             }
@@ -394,6 +559,11 @@ async def get_latest_workout_snapshot(
                 "effort_percentile": effort_percentile,
             }
 
+    # HR zone distribution is a pure summary of zones_data — no API calls.
+    hr_zones = summarize_hr_zones(activity.zones_data)
+    # Cardiac drift reads cached streams; returns None if not cached.
+    hr_drift = await compute_hr_drift(db, activity.id)
+
     return {
         "id": activity.id,
         "strava_id": activity.strava_id,
@@ -411,6 +581,8 @@ async def get_latest_workout_snapshot(
         "total_elevation_m": activity.total_elevation,
         "avg_hr": activity.average_hr,
         "max_hr": activity.max_hr,
+        "hr_zones": hr_zones,
+        "hr_drift": hr_drift,
         "avg_speed_ms": activity.average_speed,
         "pace": _pace_str(activity.average_speed),
         "avg_power_w": activity.average_power,

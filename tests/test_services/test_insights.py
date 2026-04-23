@@ -238,6 +238,54 @@ async def test_workout_insight_caches_per_activity_id(db, monkeypatch):
     assert len(stub._calls) == 1
 
 
+async def test_workout_insight_user_message_includes_hr_signals(db, monkeypatch):
+    """The snapshot JSON sent to the LLM must include hr_zones and hr_drift
+    so the model can reason about zone distribution and cardiac drift."""
+    # Seed an activity with zones_data so summarize_hr_zones has something
+    # to work with.
+    now = datetime.utcnow()
+    act = Activity(
+        strava_id=42,
+        name="Tempo",
+        sport_type="Run",
+        start_date=now,
+        start_date_local=now,
+        moving_time=2400,
+        distance=8000,
+        average_hr=155,
+        average_speed=3.3,
+        suffer_score=75,
+        enrichment_status="complete",
+        classification_type="tempo",
+        zones_data=[
+            {
+                "type": "heartrate",
+                "distribution_buckets": [
+                    {"min": 0, "max": 120, "time": 60},
+                    {"min": 120, "max": 140, "time": 600},
+                    {"min": 140, "max": 160, "time": 1200},
+                    {"min": 160, "max": 180, "time": 500},
+                    {"min": 180, "max": -1, "time": 40},
+                ],
+            }
+        ],
+    )
+    db.add(act)
+    await db.commit()
+
+    stub = _StubProvider(VALID_WORKOUT_INSIGHT)
+    _install_provider(monkeypatch, {"claude-haiku": stub})
+
+    result = await insights.get_latest_workout_insight(db, model="claude-haiku")
+    assert result is not None
+    # The stub captured kwargs (system_prompt, user_message, ...).
+    assert len(stub._calls) == 1
+    user_msg = stub._calls[0]["user_message"]
+    assert '"hr_zones"' in user_msg
+    assert '"hr_drift"' in user_msg
+    assert '"dominant_zone": 3' in user_msg  # middle bucket is largest
+
+
 # ── Schema preparation ────────────────────────────────────────────────
 
 

@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.database import Base
-from backend.models import Activity, Recovery, SleepSession
+from backend.models import Activity, ActivityLap, ActivityStream, Recovery, SleepSession
 from backend.services import training_metrics
 
 
@@ -279,3 +279,199 @@ async def test_full_snapshot_assembles_all_sections(db):
     assert snap["recovery"]["today_score"] == 70
     assert snap["latest_workout"] is not None
     assert len(snap["recent_activities"]) == 1
+
+
+# ── HR zone helpers ────────────────────────────────────────────────────
+
+
+def _hr_zones(*buckets) -> list[dict]:
+    """Helper: wrap a list of (min, max, time) tuples into Strava's zones_data shape."""
+    return [
+        {
+            "type": "heartrate",
+            "distribution_buckets": [
+                {"min": mn, "max": mx, "time": t} for (mn, mx, t) in buckets
+            ],
+        }
+    ]
+
+
+def test_summarize_hr_zones_5_buckets():
+    # 5-bucket profile: 12/45/25/15/3 minutes
+    zones = _hr_zones(
+        (0, 120, 12 * 60),
+        (120, 140, 45 * 60),
+        (140, 160, 25 * 60),
+        (160, 180, 15 * 60),
+        (180, -1, 3 * 60),
+    )
+    out = training_metrics.summarize_hr_zones(zones)
+    assert out is not None
+    assert out["bucket_count"] == 5
+    assert out["dominant_zone"] == 2
+    assert out["total_minutes"] == 100
+    # Percentages should sum close to 100 (rounding).
+    pct_sum = sum(out[f"z{i}_pct"] for i in range(1, 6))
+    assert 99 <= pct_sum <= 101
+    assert out["z2_pct"] == 45
+    assert out["ranges"][0] == {"zone": 1, "min": 0, "max": 120}
+    assert out["ranges"][4] == {"zone": 5, "min": 180, "max": -1}
+
+
+def test_summarize_hr_zones_7_buckets():
+    # 7-bucket variant (some Strava profiles split zones further).
+    zones = _hr_zones(
+        (0, 100, 60),
+        (100, 115, 120),
+        (115, 135, 300),
+        (135, 155, 600),
+        (155, 170, 200),
+        (170, 185, 60),
+        (185, -1, 60),
+    )
+    out = training_metrics.summarize_hr_zones(zones)
+    assert out is not None
+    assert out["bucket_count"] == 7
+    assert "z7_pct" in out
+    assert out["dominant_zone"] == 4
+
+
+def test_summarize_hr_zones_none_when_no_hr_type():
+    # Only power zones present → no HR distribution.
+    power_only = [
+        {
+            "type": "power",
+            "distribution_buckets": [{"min": 0, "max": 200, "time": 600}],
+        }
+    ]
+    assert training_metrics.summarize_hr_zones(power_only) is None
+
+
+def test_summarize_hr_zones_empty():
+    assert training_metrics.summarize_hr_zones(None) is None
+    assert training_metrics.summarize_hr_zones([]) is None
+    # Entry present but empty buckets.
+    assert training_metrics.summarize_hr_zones(
+        [{"type": "heartrate", "distribution_buckets": []}]
+    ) is None
+
+
+def test_summarize_hr_zones_zero_total_time():
+    zones = _hr_zones((0, 120, 0), (120, 140, 0), (140, -1, 0))
+    assert training_metrics.summarize_hr_zones(zones) is None
+
+
+def test_assign_lap_hr_zones_within_range():
+    zones = _hr_zones(
+        (0, 120, 1),
+        (120, 140, 1),
+        (140, 160, 1),
+        (160, 180, 1),
+        (180, -1, 1),
+    )
+    assert training_metrics.assign_lap_hr_zones(135.0, zones) == 2
+    assert training_metrics.assign_lap_hr_zones(155.0, zones) == 3
+    assert training_metrics.assign_lap_hr_zones(120.0, zones) == 2  # lower bound inclusive
+
+
+def test_assign_lap_hr_zones_open_upper():
+    zones = _hr_zones((100, 140, 1), (140, 180, 1), (180, -1, 1))
+    # Anything at or above the open-upper min lands in that top bucket.
+    assert training_metrics.assign_lap_hr_zones(190.0, zones) == 3
+    assert training_metrics.assign_lap_hr_zones(180.0, zones) == 3
+
+
+def test_assign_lap_hr_zones_none_inputs():
+    zones = _hr_zones((100, 140, 1), (140, -1, 1))
+    assert training_metrics.assign_lap_hr_zones(None, zones) is None
+    assert training_metrics.assign_lap_hr_zones(120.0, None) is None
+    assert training_metrics.assign_lap_hr_zones(120.0, []) is None
+
+
+def _seed_stream(activity_id: int, stream_type: str, data: list) -> ActivityStream:
+    return ActivityStream(activity_id=activity_id, stream_type=stream_type, data=data)
+
+
+async def test_compute_hr_drift_happy(db):
+    # 30-min activity with HR rising from 140 → 160 (linear-ish).
+    act = _make_activity(strava_id=1, days_ago=0)
+    await _seed(db, [act])
+    time_series = list(range(0, 1800, 10))  # 180 samples, 0..1790
+    hr_series = [140 + (20 * t / 1790.0) for t in time_series]  # 140 → 160
+    await _seed(
+        db,
+        [
+            _seed_stream(act.id, "time", time_series),
+            _seed_stream(act.id, "heartrate", hr_series),
+        ],
+    )
+    drift = await training_metrics.compute_hr_drift(db, act.id)
+    assert drift is not None
+    assert drift > 0  # 2nd-half avg HR should be higher
+    # Rough: first half ≈ 145, second half ≈ 155 → drift ≈ 0.07
+    assert 0.03 < drift < 0.12
+
+
+async def test_compute_hr_drift_short_activity(db):
+    # 5-minute activity → too short, returns None.
+    act = _make_activity(strava_id=1, days_ago=0)
+    await _seed(db, [act])
+    await _seed(
+        db,
+        [
+            _seed_stream(act.id, "time", list(range(0, 300, 10))),
+            _seed_stream(act.id, "heartrate", [150] * 30),
+        ],
+    )
+    assert await training_metrics.compute_hr_drift(db, act.id) is None
+
+
+async def test_compute_hr_drift_no_streams_cached(db):
+    act = _make_activity(strava_id=1, days_ago=0)
+    await _seed(db, [act])
+    assert await training_metrics.compute_hr_drift(db, act.id) is None
+
+
+async def test_compute_hr_drift_missing_time_or_hr(db):
+    act = _make_activity(strava_id=1, days_ago=0)
+    await _seed(db, [act])
+    # Only heartrate cached, no time stream.
+    await _seed(db, [_seed_stream(act.id, "heartrate", [150] * 100)])
+    assert await training_metrics.compute_hr_drift(db, act.id) is None
+
+
+async def test_latest_workout_snapshot_includes_hr_zones_and_lap_zones(db):
+    """End-to-end: get_latest_workout_snapshot now carries HR zone fields."""
+    zones = _hr_zones(
+        (0, 120, 60),
+        (120, 140, 60 * 30),  # dominant
+        (140, 160, 60 * 10),
+        (160, 180, 60 * 5),
+        (180, -1, 30),
+    )
+    act = _make_activity(strava_id=1, days_ago=0, average_hr=135.0)
+    act.zones_data = zones
+    await _seed(db, [act])
+    # Lap with avg HR in zone 3 (140-160).
+    await _seed(
+        db,
+        [
+            ActivityLap(
+                activity_id=act.id,
+                lap_index=1,
+                distance=1000.0,
+                moving_time=300,
+                average_speed=3.3,
+                average_heartrate=145.0,
+            )
+        ],
+    )
+    snap = await training_metrics.get_latest_workout_snapshot(db)
+    assert snap is not None
+    assert snap["hr_zones"] is not None
+    assert snap["hr_zones"]["dominant_zone"] == 2
+    assert snap["hr_zones"]["bucket_count"] == 5
+    # hr_drift is None because no streams are cached.
+    assert snap["hr_drift"] is None
+    assert len(snap["laps"]) == 1
+    assert snap["laps"][0]["hr_zone"] == 3
