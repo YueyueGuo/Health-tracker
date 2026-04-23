@@ -448,16 +448,33 @@ Expected flow:
 1. Run the narrowest meaningful verification for the slice.
 2. Perform a self-review in code-review mode, prioritizing regressions, bugs,
    and missing tests.
-3. If there are no blocking findings, automatically:
+3. Kick off **two separate code-review rounds with two different agents**.
+   In this workspace, satisfy that by using two distinct review/sub-agents
+   when that capability is available. These must be independent review passes,
+   not the same agent re-checking its own notes.
+4. Treat review as passed only if **both review agents** come back with no
+   blocking findings. If either review finds a real issue, fix it, re-run the
+   narrowest meaningful verification, and repeat the review flow. If the
+   environment cannot provide two independent review agents, stop and report
+   that limitation before landing anything on `main`.
+5. If self-review plus both agent reviews pass, automatically:
    - create a branch if needed
    - stage only the relevant files
    - commit with a focused message
-   - push the branch
+   - push the feature branch
    - open or update a PR
-4. In the final response, include:
-   - whether review found anything
+6. Once the PR is ready and all review rounds have passed, treat it as
+   **queued for merge/landing on `main`**, but do **not** actually merge,
+   push `main`, or otherwise land anything on `main` without the user's
+   explicit confirmation on that final step.
+7. In the final response, include:
+   - whether self-review found anything
+   - whether review agent A found anything
+   - whether review agent B found anything
    - what checks were run
    - the PR link
+   - whether the branch/PR is ready and waiting on user confirmation for the
+     final push/merge to `main`
    - any residual risks or manual follow-up
 
 If the current branch already has an open PR and the new work is a separate
