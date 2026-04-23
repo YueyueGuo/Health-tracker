@@ -24,29 +24,6 @@ async def ask_question(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     return result.to_dict()
 
 
-@router.get("/daily-briefing")
-async def daily_briefing(
-    model: str | None = None,
-    db: AsyncSession = Depends(get_db),
-):
-    """Get today's training/recovery briefing."""
-    engine = AnalysisEngine(db)
-    result = await engine.daily_briefing(model=model)
-    return result.to_dict()
-
-
-@router.get("/workout/{activity_id}")
-async def workout_analysis(
-    activity_id: int,
-    model: str | None = None,
-    db: AsyncSession = Depends(get_db),
-):
-    """Get deep analysis of a specific workout."""
-    engine = AnalysisEngine(db)
-    result = await engine.workout_analysis(activity_id=activity_id, model=model)
-    return result.to_dict()
-
-
 @router.get("/models")
 async def available_models():
     """List available LLM models."""

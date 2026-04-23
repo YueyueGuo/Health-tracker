@@ -218,29 +218,38 @@ Recommended next steps:
 
 Suggested PR size: Medium.
 
-### 5. Legacy Chat Analysis Path May Be Redundant
+### 5. Legacy Chat Analysis Path Consolidation — DONE
 
-Files:
+Files touched:
 
-- `backend/services/analysis.py`
 - `backend/routers/chat.py`
+- `backend/services/analysis.py`
 - `frontend/src/api/chat.ts`
-- `frontend/src/components/ChatPanel.tsx`
+- `frontend/src/components/ActivityDetail.tsx`
+- `README.md`
+- `tests/test_routers/test_chat.py` (new, 5 tests)
 
-Current state:
+What changed:
 
-- `analysis.py` builds markdown context independently from the structured insights path.
-- `insights.py` + `training_metrics.py` now contain the richer, cached, structured LLM snapshot path.
-- Chat endpoints are still useful for free-form Q&A, but daily briefing/workout analysis may duplicate newer `/api/insights/*` behavior.
+- Removed `/api/chat/daily-briefing` (unused by the UI) and
+  `/api/chat/workout/{id}` (previously only used by ActivityDetail).
+- Rewired the ActivityDetail "Analyze This Workout" button to
+  `/api/insights/latest-workout?activity_id={id}`, which returns the
+  richer structured `WorkoutInsight` payload (headline, takeaway,
+  notable segments, vs-history, flags) and is cached per-activity.
+  Added a `WorkoutInsightView` subcomponent to render it.
+- Trimmed `AnalysisEngine` to just the free-form `query()` path plus
+  its context/formatting helpers. Unused `_build_workout_context` and
+  `_build_daily_context` paths (and the associated `ActivityStream` /
+  `WeatherSnapshot` imports) are gone.
+- Removed `fetchDailyBriefing` / `fetchWorkoutAnalysis` from
+  `frontend/src/api/chat.ts`; only `askQuestion` and
+  `fetchAvailableModels` remain.
+- Added 5 router tests covering `/chat/ask` happy path + model
+  override, `/chat/models`, and 404s for the removed endpoints.
 
-Recommended next steps:
-
-- Decide whether to:
-  - keep free-form `/api/chat/ask` but route daily briefing/workout analysis through the structured insight snapshots, or
-  - explicitly deprecate legacy `/api/chat/daily-briefing` and `/api/chat/workout/{id}` once UI no longer depends on them.
-- Add tests around whichever chat behavior remains.
-
-Suggested PR size: Small to medium, depending on deprecation strategy.
+Only `/api/chat/ask` (free-form Q&A, still used by `ChatPanel`) and
+`/api/chat/models` remain under `/api/chat`.
 
 ### 6. Frontend Test Coverage Is Still Missing
 
@@ -372,14 +381,18 @@ Verification:
 - `npm run build`
 - Manual smoke test of `/settings` and `/activities/:id`
 
-### PR 4: Legacy Chat/Insights Consolidation
+### PR 4: Legacy Chat/Insights Consolidation — DONE
 
 Goal: remove duplicate LLM context paths.
 
-Scope:
+Outcome:
 
-- Decide whether legacy chat briefing/workout endpoints should call structured insight snapshots or be deprecated.
-- Add tests for whichever behavior remains.
+- `/api/chat/daily-briefing` and `/api/chat/workout/{id}` removed;
+  ActivityDetail now uses `/api/insights/latest-workout`.
+- `AnalysisEngine` trimmed to free-form `query()` only.
+- Frontend `chat.ts` slimmed to `askQuestion` + `fetchAvailableModels`.
+- Added `tests/test_routers/test_chat.py` (5 tests).
+- See finding 5 above for file-level details.
 
 ## Suggested Prompt For Next Session
 

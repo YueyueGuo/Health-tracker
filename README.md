@@ -144,10 +144,11 @@ DEFAULT_LLM_PROVIDER=claude-sonnet
 | `/api/recovery` | GET | Recovery records |
 | `/api/recovery/trends` | GET | Recovery trend data |
 | `/api/dashboard/overview` | GET | Dashboard overview data |
-| `/api/chat/ask` | POST | Ask AI a question `{"question": "...", "model": "..."}` |
-| `/api/chat/daily-briefing` | GET | Today's training briefing |
-| `/api/chat/workout/{id}` | GET | AI analysis of a workout |
+| `/api/chat/ask` | POST | Ask AI a free-form question `{"question": "...", "model": "..."}` |
 | `/api/chat/models` | GET | List available AI models |
+| `/api/insights/training-metrics` | GET | Raw training-load / sleep / recovery snapshot |
+| `/api/insights/daily-recommendation` | GET | Structured daily training recommendation (cached) |
+| `/api/insights/latest-workout` | GET | Structured insight for a workout (cached per activity) |
 | `/api/sync/trigger` | POST | Trigger data sync `{"source": "all"}` |
 | `/api/sync/status` | GET | Sync status per source |
 | `/api/auth/strava` | GET | Start Strava OAuth |
