@@ -1,6 +1,6 @@
 // ── Types ──────────────────────────────────────────────────────────────
-// Keep these in sync with backend/services/insights.py (Pydantic models)
-// and backend/services/training_metrics.py (snapshot dicts).
+// Keep these in sync with backend/services/insight_schemas.py and
+// backend/services/snapshot_models.py.
 
 import { fetchJson } from "./http";
 
@@ -53,6 +53,41 @@ export interface RecoverySnapshot {
   trend: "improving" | "stable" | "declining" | null;
 }
 
+export interface WorkoutLapSnapshot {
+  index: number;
+  distance_m: number | null;
+  moving_time_s: number | null;
+  pace: string | null;
+  avg_hr: number | null;
+  avg_watts: number | null;
+  pace_zone: number | null;
+}
+
+export interface WorkoutWeatherSnapshot {
+  temp_c: number | null;
+  feels_like_c: number | null;
+  humidity: number | null;
+  wind_speed_ms: number | null;
+  conditions: string | null;
+}
+
+export interface PreWorkoutSleepSnapshot {
+  date: string;
+  score: number | null;
+  duration_min: number | null;
+  hrv: number | null;
+  deep_min: number | null;
+  rem_min: number | null;
+}
+
+export interface HistoricalComparisonSnapshot {
+  classification: string;
+  sample_size: number;
+  window_days: number;
+  pace_percentile: number | null;
+  effort_percentile: number | null;
+}
+
 export interface LatestWorkoutSnapshot {
   id: number;
   strava_id: number;
@@ -75,16 +110,80 @@ export interface LatestWorkoutSnapshot {
   kilojoules: number | null;
   suffer_score: number | null;
   calories: number | null;
-  laps: any[];
-  weather: any | null;
-  pre_workout_sleep: any | null;
-  historical_comparison: {
-    classification: string;
-    sample_size: number;
-    window_days: number;
-    pace_percentile: number | null;
-    effort_percentile: number | null;
-  } | null;
+  laps: WorkoutLapSnapshot[];
+  weather: WorkoutWeatherSnapshot | null;
+  pre_workout_sleep: PreWorkoutSleepSnapshot | null;
+  historical_comparison: HistoricalComparisonSnapshot | null;
+}
+
+export interface GoalSnapshot {
+  id: number;
+  race_type: string;
+  description: string | null;
+  target_date: string;
+  days_until: number;
+  weeks_until: number;
+  phase: string;
+  is_primary: boolean;
+  status: string;
+}
+
+export interface GoalsSnapshot {
+  primary: GoalSnapshot | null;
+  secondary: GoalSnapshot[];
+}
+
+export interface MeanSdSnapshot {
+  mean: number;
+  sd: number;
+}
+
+export interface SportBaselineSnapshot {
+  sample_size: number;
+  pace_s_per_km: MeanSdSnapshot | null;
+  avg_hr: MeanSdSnapshot | null;
+  avg_power_w: MeanSdSnapshot | null;
+}
+
+export type BaselinesSnapshot = Record<string, SportBaselineSnapshot | null>;
+
+export interface RecentRpeSnapshot {
+  activity_id: number;
+  date: string;
+  sport_type: string;
+  classification: string | null;
+  rpe: number;
+  notes: string | null;
+  avg_hr: number | null;
+  suffer_score: number | null;
+}
+
+export interface FeedbackDeclineSnapshot {
+  date: string;
+  reason: string | null;
+}
+
+export interface FeedbackSummarySnapshot {
+  accepted: number;
+  declined: number;
+  total: number;
+  recent_declines: FeedbackDeclineSnapshot[];
+}
+
+export interface EnvironmentalSnapshot {
+  last_night_bed_temp_c: number;
+  last_night_date: string | null;
+}
+
+export interface RecentActivitySnapshot {
+  date: string;
+  sport: string;
+  classification: string | null;
+  duration_min: number | null;
+  distance_km: number | null;
+  avg_hr: number | null;
+  suffer_score: number | null;
+  pace: string | null;
 }
 
 export interface FullSnapshot {
@@ -93,7 +192,12 @@ export interface FullSnapshot {
   sleep: SleepSnapshot;
   recovery: RecoverySnapshot;
   latest_workout: LatestWorkoutSnapshot | null;
-  recent_activities: any[];
+  recent_activities: RecentActivitySnapshot[];
+  goals: GoalsSnapshot;
+  baselines: BaselinesSnapshot;
+  recent_rpe: RecentRpeSnapshot[];
+  feedback_summary: FeedbackSummarySnapshot;
+  environmental: EnvironmentalSnapshot | null;
 }
 
 export interface DailyRecommendationResponse {

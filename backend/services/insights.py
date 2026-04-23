@@ -1,298 +1,41 @@
 """LLM-driven dashboard insights.
 
-Two structured outputs:
-  - `daily_recommendation`: what should I do today, given my training load,
-    recent sleep and recovery.
-  - `latest_workout_insight`: a short human-readable takeaway for the most
-    recent completed workout, plus comparison to historicals.
-
-Both use Anthropic / OpenAI / Google structured-output modes via the
-provider's `query_structured` method. Results are cached in the
-`analysis_cache` table so the dashboard is cheap to render.
-
-No rules in this module — the LLM decides. We only compute the inputs
-(see `training_metrics.py`).
+Public entry points live here; schemas, prompts, and cache helpers are split
+into focused modules so the orchestration stays readable.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError
-from sqlalchemy import select
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
-from backend.models import AnalysisCache
 from backend.services import training_metrics
+from backend.services.insight_cache import _cache_get, _cache_put, _hash_inputs
+from backend.services.insight_prompts import (
+    DAILY_REC_SYSTEM_PROMPT,
+    WORKOUT_INSIGHT_SYSTEM_PROMPT,
+)
+from backend.services.insight_schemas import (
+    DailyRecommendation,
+    NotableSegment,
+    WorkoutInsight,
+    _pydantic_schema,
+)
 from backend.services.llm_providers import LLMProvider, get_provider
 from backend.services.snapshot_models import daily_recommendation_cache_signal
-from backend.services.time_utils import utc_now, utc_now_naive
+from backend.services.time_utils import utc_now
 
 logger = logging.getLogger(__name__)
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Pydantic response schemas
-# ──────────────────────────────────────────────────────────────────────────
-
-
-class DailyRecommendation(BaseModel):
-    intensity: Literal["rest", "recovery", "easy", "moderate", "quality"] = Field(
-        ...,
-        description=(
-            "rest = full rest day; recovery = active recovery / walk / mobility; "
-            "easy = low aerobic; moderate = steady aerobic; quality = "
-            "intervals/tempo/threshold."
-        ),
-    )
-    suggestion: str = Field(
-        ..., description="One to two sentences: concrete workout suggestion."
-    )
-    rationale: list[str] = Field(
-        ...,
-        description=(
-            "Array of 2-4 short string bullets explaining WHY this is the right "
-            "session. Each bullet should reference a specific number or recent session. "
-            "Must be a JSON array of strings, not a single string."
-        ),
-    )
-    concerns: list[str] = Field(
-        default_factory=list,
-        description="Array of 0-3 concerns/watch-outs as strings; empty array if none.",
-    )
-    confidence: Literal["high", "medium", "low"] = Field(
-        ...,
-        description=(
-            "Categorical label — literally 'high', 'medium', or 'low' — based on data "
-            "availability and signal quality. NOT a numeric probability."
-        ),
-    )
-
-
-class NotableSegment(BaseModel):
-    label: str = Field(..., description="Short label, e.g. '800m rep #3' or 'Final mile'.")
-    detail: str = Field(..., description="One sentence with the number behind the observation.")
-
-
-class WorkoutInsight(BaseModel):
-    headline: str = Field(
-        ..., description="One punchy line summarizing this workout (< 80 chars)."
-    )
-    takeaway: str = Field(
-        ..., description="2–3 sentences: what happened and what it means."
-    )
-    notable_segments: list[NotableSegment] = Field(
-        default_factory=list, description="Up to 3 notable laps/sections."
-    )
-    vs_history: str | None = Field(
-        None,
-        description=(
-            "One sentence contextualizing this workout versus the user's "
-            "90-day history for the same classification, if comparable."
-        ),
-    )
-    flags: list[str] = Field(
-        default_factory=list,
-        description="Short labels, e.g. 'negative splits', 'elevated HR', 'pace progression'.",
-    )
-
-
-# Convert pydantic schemas to JSON Schema for the LLM providers.
-def _pydantic_schema(model: type[BaseModel]) -> dict:
-    """Produce a JSON Schema usable by all provider structured-output modes.
-
-    - Inlines ``$defs`` / ``$ref`` (Gemini doesn't follow refs).
-    - Recursively enforces ``additionalProperties: false`` on every
-      object-typed node AND populates ``required`` with every property
-      key. OpenAI's ``json_schema`` strict mode requires both at every
-      level; other providers are tolerant of these extra constraints.
-    """
-    schema = model.model_json_schema()
-    defs = schema.pop("$defs", None) or schema.pop("definitions", None) or {}
-
-    # Recursively inline $ref pointers so the schema is fully self-contained.
-    def _inline(node):
-        if isinstance(node, dict):
-            if "$ref" in node and isinstance(node["$ref"], str):
-                ref = node["$ref"]
-                # "#/$defs/Name" -> "Name"
-                name = ref.split("/")[-1]
-                target = defs.get(name)
-                if target is not None:
-                    merged = {k: v for k, v in node.items() if k != "$ref"}
-                    merged.update(_inline(target))
-                    return merged
-            return {k: _inline(v) for k, v in node.items()}
-        if isinstance(node, list):
-            return [_inline(x) for x in node]
-        return node
-
-    schema = _inline(schema)
-
-    # Walk every object-typed node and apply OpenAI-strict constraints.
-    def _tighten(node):
-        if not isinstance(node, dict):
-            return node
-        if node.get("type") == "object" and "properties" in node:
-            node["additionalProperties"] = False
-            # OpenAI strict mode requires every property to appear in
-            # `required`. Pydantic marks only truly-required fields here,
-            # but all our Optional fields already have explicit defaults,
-            # so listing everything is safe.
-            node["required"] = list(node["properties"].keys())
-            for prop in node["properties"].values():
-                _tighten(prop)
-        if node.get("type") == "array" and "items" in node:
-            _tighten(node["items"])
-        return node
-
-    _tighten(schema)
-    return schema
-
-
-# ──────────────────────────────────────────────────────────────────────────
-# System prompts
-# ──────────────────────────────────────────────────────────────────────────
-
-
-DAILY_REC_SYSTEM_PROMPT = """You are a personal endurance coach with expertise in \
-exercise physiology, periodization, and recovery science. You are advising a single \
-athlete who mixes running, cycling, and strength training.
-
-Your job: given this athlete's last 7–28 days of training load, their most recent \
-sleep, recovery, their latest workout, their active goals, and their recent \
-perceived-effort + feedback signals, recommend what they should do TODAY.
-
-USE THE GOAL when it's set. The snapshot includes ``goals.primary`` with \
-``race_type``, ``weeks_until``, and ``phase`` (base / build / peak / taper / post). \
-Open the suggestion by naming the goal and the phase — e.g. "Marathon is 9 weeks \
-out (build phase): …". When there's no primary goal, reason from general fitness.
-
-USE THE BASELINES when present. ``baselines[sport]`` has mean + sd for pace, HR, \
-and power. Compare today's suggested effort against those — e.g. "target 5:15/km, \
-which is your easy-pace mean + 10s" — so the athlete knows what the suggestion \
-concretely looks like.
-
-USE RECENT RPE to calibrate. ``recent_rpe`` is a list of recent workouts the \
-user rated 1–10. If the user rated a tempo 8/10 when HR suggested 6/10, they're \
-decoupling — scale today's intensity down. If ratings agree with HR, trust the \
-numbers.
-
-USE FEEDBACK to learn. ``feedback_summary.recent_declines`` is a list of \
-(date, reason) for past recommendations the user thumbed down. If they've \
-repeatedly declined intervals citing fatigue, don't re-prescribe intervals \
-today without acknowledging that signal.
-
-Principles you care about:
-- ACWR (acute:chronic workload ratio) sweet spot is 0.8–1.3. Spikes > 1.5 predict injury.
-- Hard days should follow easy days. If the last session was quality, today should not be.
-- Sleep debt and low HRV predict poor readiness — tune intensity down, not necessarily volume.
-- Monotony > 2.0 means too many similar-load days; suggest variety.
-- After a hard session the user needs ≥ 48h before the next quality effort.
-- Taper phase: cut volume ~40–60% while keeping intensity touchpoints.
-- Peak phase (≤2 weeks out): race-specific sessions only, no new stimuli.
-- Build phase (5–12 weeks out): progressive overload, 1–2 quality sessions/week.
-- Base phase (>12 weeks out): volume + aerobic durability, infrequent quality.
-- Running classifications: easy | tempo | intervals | race.
-- Rides: recovery | endurance | tempo | mixed | race.
-
-Be specific. Reference actual numbers from the snapshot (load, HRV, sleep \
-duration, RPE, baselines). Avoid generic advice like "listen to your body".
-
-Output a single JSON object matching the schema provided."""
-
-WORKOUT_INSIGHT_SYSTEM_PROMPT = """You are an exercise physiologist reviewing a single \
-workout for a personal athlete.
-
-You'll see: the workout itself (distance, time, pace, HR, laps, power if present), \
-weather, pre-workout sleep, the user's classification for this workout, and a \
-comparison against the last 90 days of similar workouts (percentile ranks).
-
-Your job: deliver a concise, data-driven takeaway. Be specific about lap numbers, \
-pace changes, and HR drift. Point out if pacing was disciplined or not.
-
-Output a single JSON object matching the schema provided. Keep the \
-headline under 80 characters. Do not invent numbers not in the data."""
-
-
-# ──────────────────────────────────────────────────────────────────────────
-# Cache helpers
-# ──────────────────────────────────────────────────────────────────────────
-
-
-def _hash_inputs(payload: dict | str) -> str:
-    if isinstance(payload, dict):
-        payload = json.dumps(payload, sort_keys=True, default=str)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-async def _cache_get(db: AsyncSession, key: str) -> dict | None:
-    row = await db.execute(
-        select(AnalysisCache).where(AnalysisCache.query_hash == key)
-    )
-    hit = row.scalar_one_or_none()
-    if not hit:
-        return None
-    if hit.expires_at and hit.expires_at < utc_now_naive():
-        return None
-    try:
-        return json.loads(hit.response_text)
-    except json.JSONDecodeError:
-        return None
-
-
-async def _cache_put(
-    db: AsyncSession,
-    key: str,
-    query_text: str,
-    payload: dict,
-    model: str,
-    ttl: timedelta | None = None,
-) -> None:
-    # Upsert: delete existing row with this hash, insert fresh.
-    existing = await db.execute(
-        select(AnalysisCache).where(AnalysisCache.query_hash == key)
-    )
-    e = existing.scalar_one_or_none()
-    now = utc_now_naive()
-    expires = (now + ttl) if ttl else None
-    if e:
-        e.response_text = json.dumps(payload)
-        e.model = model
-        e.query_text = query_text
-        e.expires_at = expires
-        e.created_at = now
-    else:
-        db.add(
-            AnalysisCache(
-                query_hash=key,
-                query_text=query_text,
-                response_text=json.dumps(payload),
-                model=model,
-                expires_at=expires,
-            )
-        )
-    await db.commit()
-
-
-# ──────────────────────────────────────────────────────────────────────────
-# LLM call with structured schema + fallback chain
-# ──────────────────────────────────────────────────────────────────────────
-
-
 def _maybe_unwrap(raw: dict, expected_keys: set[str]) -> dict:
-    """Some models wrap the response in a single top-level key (e.g.
-    ``{"recommendation": {...}}``). If the top-level dict is a single
-    non-expected key whose value is a dict, unwrap it. If multiple
-    top-level keys exist but most of them are expected and one is a
-    foreign wrapper-dict, we also collapse that wrapper into the root.
-    """
+    """Handle providers that wrap structured output in an extra object."""
     if not isinstance(raw, dict):
         return raw
 
@@ -303,16 +46,14 @@ def _maybe_unwrap(raw: dict, expected_keys: set[str]) -> dict:
     ):
         return next(iter(raw.values()))
 
-    # Mixed shape: {recommendation: {...inner fields...}, confidence: "high"}
-    # — merge inner wrapper into root without clobbering existing keys.
     wrappers = [
         k for k, v in raw.items()
         if k not in expected_keys and isinstance(v, dict)
     ]
     if wrappers and any(k in expected_keys for k in raw.keys()):
         merged = {k: v for k, v in raw.items() if k in expected_keys}
-        for w in wrappers:
-            for k, v in raw[w].items():
+        for wrapper in wrappers:
+            for k, v in raw[wrapper].items():
                 if k in expected_keys and k not in merged:
                     merged[k] = v
         if merged:
@@ -327,10 +68,7 @@ async def _call_llm_structured(
     model_chain: list[str],
     schema_name: str,
 ) -> tuple[BaseModel, str]:
-    """Try each model in `model_chain`, returning (parsed_model, model_used).
-
-    Raises the last exception if all fail.
-    """
+    """Try each model in `model_chain`, returning (parsed_model, model_used)."""
     schema = _pydantic_schema(response_model)
     expected_keys = set((schema.get("properties") or {}).keys())
     last_exc: Exception | None = None
@@ -357,7 +95,6 @@ async def _call_llm_structured(
                 parsed = response_model.model_validate(raw)
                 return parsed, model_key
             except ValidationError as ve:
-                # One self-correcting retry.
                 logger.info("Schema validation failed, retrying with correction: %s", ve)
                 correction = (
                     f"{user_message}\n\nYour previous response did not match the schema. "
@@ -395,11 +132,6 @@ def _build_model_chain(model: str | None) -> list[str]:
         if fb != primary:
             chain.append(fb)
     return chain
-
-
-# ──────────────────────────────────────────────────────────────────────────
-# Public API
-# ──────────────────────────────────────────────────────────────────────────
 
 
 @dataclass
@@ -450,13 +182,6 @@ async def get_daily_recommendation(
     refresh: bool = False,
 ) -> DailyRecommendationResult:
     snapshot = await training_metrics.get_full_snapshot(db)
-
-    # Cache key: YYYY-MM-DD + requested-model + hash of the inputs that matter.
-    # We deliberately exclude the minute-by-minute activity list so the cache
-    # remains valid across a day; but include the 7d load numbers so a new
-    # workout today invalidates cache. Goals, RPE, and feedback are also
-    # hashed, and the requested model is part of the key so explicit model
-    # overrides don't return output generated by a different model.
     signal = daily_recommendation_cache_signal(snapshot)
     inputs_hash = _hash_inputs(signal)
     requested_model = model or settings.llm.dashboard_model
@@ -570,7 +295,7 @@ async def get_latest_workout_insight(
         query_text=f"workout_insight for activity {snapshot['id']}",
         payload=payload,
         model=model_used,
-        ttl=None,  # activity-level, stable until refresh
+        ttl=None,
     )
 
     return WorkoutInsightResult(
@@ -581,3 +306,24 @@ async def get_latest_workout_insight(
         generated_at=generated_at,
         cached=False,
     )
+
+
+__all__ = [
+    "DAILY_REC_SYSTEM_PROMPT",
+    "WORKOUT_INSIGHT_SYSTEM_PROMPT",
+    "DailyRecommendation",
+    "DailyRecommendationResult",
+    "NotableSegment",
+    "WorkoutInsight",
+    "WorkoutInsightResult",
+    "_build_model_chain",
+    "_cache_get",
+    "_cache_put",
+    "_call_llm_structured",
+    "_hash_inputs",
+    "_maybe_unwrap",
+    "_pydantic_schema",
+    "get_daily_recommendation",
+    "get_latest_workout_insight",
+    "get_provider",
+]
