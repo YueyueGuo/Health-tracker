@@ -1,6 +1,6 @@
 # Refactor Findings And Next Steps
 
-Current as of the backend date/time follow-up pass on April 24, 2026.
+Current as of the dashboard frontend coverage pass on April 24, 2026.
 
 ## Current Baseline
 
@@ -220,6 +220,26 @@ Remaining remote branches intentionally left alone during consolidation:
   - `npm test -- --run src/components/ChatPanel.test.tsx src/pages/StrengthEntry.test.tsx src/components/ActivityDetail.test.tsx src/pages/Settings.test.tsx` -> 6 passed
   - `npm run typecheck` -> passed
 
+### Dashboard Frontend Coverage
+
+- Added focused Vitest coverage for dashboard payload consumers:
+  - `frontend/src/components/Dashboard.test.tsx`
+  - `frontend/src/components/TrainingLoad.test.tsx`
+- `Dashboard.test.tsx` verifies nested overview payload rendering for weekly
+  stats, latest sleep, latest recovery, imperial distance conversion, sport
+  breakdown pluralization, and the sync/reload path.
+- `TrainingLoad.tsx` now treats the backend's no-activity training-load payload
+  (zero-valued CTL/ATL/TSB series with no daily load) as a real no-data state
+  instead of rendering blank chart shells.
+- `TrainingLoad.test.tsx` verifies chart-ready CTL/ATL/TSB and daily-load
+  transformations plus weekly-volume table rendering and the backend-shaped
+  no-training-data state.
+- Verification after this pass:
+  - `npm test -- --run src/components/Dashboard.test.tsx src/components/TrainingLoad.test.tsx` -> 4 passed
+  - `npm test` -> 31 passed
+  - `npm run typecheck` -> passed
+  - `npm run build` -> passed, with Vite's existing large bundle warning
+
 ## Remaining Findings
 
 ### 1. Snapshot Contracts Are Still Manual Across Backend And Frontend
@@ -347,7 +367,7 @@ What changed:
 Only `/api/chat/ask` (free-form Q&A, still used by `ChatPanel`) and
 `/api/chat/models` remain under `/api/chat`.
 
-### 6. Frontend Test Coverage Exists, But Is Still Thin
+### 6. Frontend Test Coverage For Dashboard Cards — DONE
 
 Files/areas:
 
@@ -360,20 +380,17 @@ Files/areas:
 - `frontend/src/components/GoalsSection.test.tsx`
 - `frontend/src/components/ActivityDetail.test.tsx`
 - `frontend/src/components/ChatPanel.test.tsx`
+- `frontend/src/components/Dashboard.test.tsx`
+- `frontend/src/components/TrainingLoad.test.tsx`
 - `frontend/src/pages/Settings.test.tsx`
 - `frontend/src/pages/StrengthEntry.test.tsx`
 
-Risk:
+What changed:
 
 - Shared HTTP behavior, Settings CRUD, extracted location hooks/forms, Activity Detail lazy API states, chat fallback errors, and strength-entry save errors now have regression coverage.
-- Dashboard cards and a few other nested-payload consumers can still regress without frontend tests.
-
-Recommended next steps:
-
-- Expand the new Vitest setup to cover:
-  - one or two dashboard cards that consume nested API payloads
-
-Suggested PR size: Small.
+- Dashboard and TrainingLoad now cover the highest-risk nested dashboard payload
+  consumers, including metric cards, chart-facing training-load data, weekly
+  volume rows, and dashboard sync reload behavior.
 
 ### 7. Bundle Size Warning Still Exists
 
@@ -464,11 +481,11 @@ Completed:
 
 - Documented a frontend/backend snapshot type-sync checklist.
 - Expanded Vitest coverage into high-signal `Settings` and `ActivityDetail` flows.
+- Added dashboard payload-consumer coverage for `Dashboard` and `TrainingLoad`.
 
 Remaining:
 
 - Consider generated schema/type export if snapshot churn increases.
-- Add one or two dashboard-card tests if UI regressions start slipping through.
 
 Verification:
 

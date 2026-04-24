@@ -13,13 +13,16 @@ import {
 } from "recharts";
 import { useApi } from "../hooks/useApi";
 import { fetchDashboardOverview } from "../api/dashboard";
+import type { TrainingLoad as TrainingLoadPayload } from "../api/dashboard";
 
 export default function TrainingLoad() {
   const { data, loading, error } = useApi(fetchDashboardOverview);
 
   if (loading) return <div className="loading">Loading training data...</div>;
   if (error) return <div className="error">{error}</div>;
-  if (!data?.training_load) return <div className="card">No training data available.</div>;
+  if (!data?.training_load || !hasTrainingLoadData(data.training_load)) {
+    return <div className="card">No training data available.</div>;
+  }
 
   const { ctl, atl, tsb, daily_load } = data.training_load;
 
@@ -105,4 +108,15 @@ export default function TrainingLoad() {
       )}
     </div>
   );
+}
+
+function hasTrainingLoadData(trainingLoad: TrainingLoadPayload) {
+  const hasRecordedLoad = trainingLoad.daily_load.length > 0;
+  const hasNonZeroTrend = [
+    ...trainingLoad.ctl,
+    ...trainingLoad.atl,
+    ...trainingLoad.tsb,
+  ].some((point) => point.value !== 0);
+
+  return hasRecordedLoad || hasNonZeroTrend;
 }
