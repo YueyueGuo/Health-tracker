@@ -409,6 +409,30 @@ async def test_sync_eight_sleep_writes_synclog(db: AsyncSession, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_sync_eight_sleep_incremental_window_uses_local_today(
+    db: AsyncSession, monkeypatch
+):
+    monkeypatch.setattr(
+        eight_sleep_sync, "_eight_sleep_configured", lambda: True
+    )
+    monkeypatch.setattr(
+        eight_sleep_sync, "local_today", lambda: date(2026, 4, 24)
+    )
+    client = AsyncMock()
+    client.get_trends.return_value = []
+    client.get_intervals.return_value = []
+
+    count = await sync_eight_sleep(db, client, days=7)
+    assert count == 0
+    client.get_trends.assert_awaited_once_with(
+        date(2026, 4, 17), date(2026, 4, 24)
+    )
+    client.get_intervals.assert_awaited_once_with(
+        date(2026, 4, 17), date(2026, 4, 24)
+    )
+
+
+@pytest.mark.asyncio
 async def test_sync_eight_sleep_short_circuits_when_unconfigured(db, monkeypatch):
     monkeypatch.setattr(
         eight_sleep_sync, "_eight_sleep_configured", lambda: False

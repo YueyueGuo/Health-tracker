@@ -1,6 +1,6 @@
 # Refactor Findings And Next Steps
 
-Current as of the dashboard frontend coverage pass on April 24, 2026.
+Current as of the parallel maintenance follow-up pass on April 24, 2026.
 
 ## Current Baseline
 
@@ -240,6 +240,60 @@ Remaining remote branches intentionally left alone during consolidation:
   - `npm run typecheck` -> passed
   - `npm run build` -> passed, with Vite's existing large bundle warning
 
+### Route-Level Bundle Splitting
+
+- `frontend/src/App.tsx` now lazy-loads route components with `React.lazy()`
+  and wraps each route element in `Suspense` using the existing `.loading`
+  style.
+- Verification after this pass:
+  - `npm run typecheck` -> passed
+  - `npm run build` -> passed, and the previous large chunk warning is gone
+    after Vite emits route chunks plus a shared chart chunk below the warning
+    threshold.
+
+### Backend Sync/Client Time Helper Cleanup
+
+- Replaced clear sync/client/classifier wall-clock calls with shared helpers:
+  - `backend/services/sync.py` uses `utc_now()` for sync logs/enrichment
+    timestamps and `utc_now_naive()` once per Strava Phase A list pass for
+    mutable-lookback comparisons.
+  - `backend/services/eight_sleep_sync.py` and
+    `backend/clients/eight_sleep.py` use `local_today()` for Eight Sleep
+    local-date windows and `utc_now()` for sync-log timestamps.
+  - `backend/services/whoop_sync.py` uses `utc_now()` for default Whoop UTC
+    sync windows.
+  - `backend/services/classifier.py` uses `utc_now()` for persisted
+    classification timestamps.
+- Added focused helper-injection coverage for:
+  - Strava Phase A mutable lookback behavior.
+  - Classifier persisted timestamp shape.
+  - Eight Sleep incremental sync windows and recent-sleep client windows.
+  - Whoop default sync windows.
+- Verification after this pass:
+  - `.venv/bin/python -m pytest tests/test_sync/test_strava_sync.py tests/test_sync/test_classifier.py tests/test_sync/test_eight_sleep_sync.py tests/test_sync/test_whoop_sync.py tests/test_clients/test_eight_sleep.py` -> 113 passed
+  - `.venv/bin/ruff check` on touched backend/test files -> passed
+  - `git diff --check` -> passed
+- Intentionally left Eight Sleep token-expiry `time.time()` calls alone because
+  those are auth-lifecycle checks rather than date-window behavior.
+
+### Stash And Old Branch Audit
+
+- Audited preserved stashes and old remote branches read-only.
+- Recommendations:
+  - `stash@{0}` / `cleanup-save-strava-quota-edit`: drop. It removes the
+    Strava Phase B quota guard, which current docs/code intentionally keep.
+  - `stash@{1}` / `strength-entry-redesign WIP`: keep for now as reference.
+    Mine ideas into a fresh strength-entry redesign PR rather than applying it
+    directly.
+  - `origin/claude/finish-pr-review-Kbf99`: delete. It appears merged by patch
+    equivalence.
+  - `origin/oz/elevation-enrichment`: delete. It appears already merged.
+  - `origin/claude/interesting-archimedes-16548a`: keep as reference. It has
+    valuable but stale HR-zone/cardiac-drift and strength live/retro ideas that
+    should be extracted into fresh PRs, not merged wholesale.
+- Audit was based on the existing local remote-tracking refs; fetch before
+  deleting remote branches if time has passed.
+
 ## Remaining Findings
 
 ### 1. Snapshot Contracts Are Still Manual Across Backend And Frontend
@@ -280,13 +334,15 @@ Current state:
 - Core analytics date-window functions now accept optional `today` parameters for deterministic tests.
 - Sleep, recovery, feedback stats, weekly summary defaults, and free-form
   analysis context now use shared helpers for user-visible date windows.
-- Some sync/client modules still call `date.today()` / `datetime.now(timezone.utc)`
-  directly where external API semantics need a separate, careful pass.
+- Sync/client/classifier call sites with clear semantics now use
+  `local_today()`, `utc_now()`, and `utc_now_naive()`.
+- Remaining direct wall-clock calls are mostly in tests or deliberately
+  non-date-window code such as token-expiry checks.
 
 Recommended next steps:
 
-- Continue replacing direct wall-clock calls opportunistically where it improves determinism.
-- Add local/UTC midnight-boundary tests if route-level date behavior becomes user-visible.
+- Continue replacing direct wall-clock calls opportunistically if new
+  user-visible date windows appear.
 
 Suggested PR size: Small to medium.
 
@@ -392,25 +448,14 @@ What changed:
   consumers, including metric cards, chart-facing training-load data, weekly
   volume rows, and dashboard sync reload behavior.
 
-### 7. Bundle Size Warning Still Exists
+### 7. Bundle Size Warning — DONE
 
 Current state:
 
-- `npm run build` passes but Vite warns the main chunk is larger than 500 kB.
+- Route-level lazy loading is in place in `frontend/src/App.tsx`.
+- `npm run build` passes without the previous large chunk warning.
 
-Recommended next steps:
-
-- Add route-level lazy loading for heavier pages:
-  - `/activities/:id`
-  - `/sleep`
-  - `/training`
-  - `/strength`
-  - `/strength/new`
-- Consider chart/vendor chunk splitting for Recharts.
-
-Suggested PR size: Small to medium.
-
-### 8. Stashes And Old Remote Branches Still Need A Human Decision
+### 8. Stashes And Old Remote Branches — AUDITED
 
 Current preserved stashes:
 
@@ -425,13 +470,13 @@ Remaining remote branches:
 
 Recommended next steps:
 
-- Inspect each stash before deleting:
-  - `git stash show -p stash@{0}`
-  - `git stash show -p stash@{1}`
-- Decide whether to keep, apply, or drop each stash.
-- Compare remote branches to `main` before deleting:
-  - `git log --oneline main..origin/<branch>`
-  - `git diff --stat main..origin/<branch>`
+- Drop `stash@{0}`.
+- Keep `stash@{1}` as reference until a fresh strength-entry redesign slice
+  captures the useful ideas.
+- Delete `origin/claude/finish-pr-review-Kbf99` and
+  `origin/oz/elevation-enrichment` after a fresh fetch confirms nothing new.
+- Keep `origin/claude/interesting-archimedes-16548a` as reference for future
+  HR-zone/cardiac-drift and strength live/retro slices.
 
 Suggested PR size: No PR unless a stash contains desired code.
 
@@ -461,6 +506,8 @@ Completed:
 - Replace route-level direct wall-clock calls for sleep/recovery/feedback stats,
   weekly summary defaults, and free-form analysis context.
 - Add midnight-boundary tests for the touched user-visible windows.
+- Replace sync/client/classifier wall-clock calls with shared helpers where
+  semantics are clear.
 
 Remaining:
 
@@ -528,5 +575,5 @@ Outcome:
 ## Suggested Prompt For Next Session
 
 ```text
-Please read REFACTOR_FINDINGS.md and implement the next remaining refactor slice: continue the backend date/time follow-up by replacing a small batch of direct wall-clock calls with shared helpers where it improves determinism, add focused midnight-boundary tests where behavior is user-visible, run targeted pytest, and update the handoff file with what changed.
+Please read REFACTOR_FINDINGS.md and implement the next remaining refactor slice: evaluate whether generating frontend snapshot types from backend Pydantic models is worth it, keep the first pass small, and either land a lightweight schema export/type-generation proof or document why the manual checklist is enough for now.
 ```
