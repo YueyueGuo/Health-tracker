@@ -1,6 +1,7 @@
 # Refactor Findings And Next Steps
 
-Current as of the snapshot-contract drift-test spike on April 24, 2026.
+Current as of the strength-entry-redesign / HR-attachment / snapshot-drift /
+manual-cleanup pass on April 24, 2026.
 
 ## Current Baseline
 
@@ -190,50 +191,54 @@ Landed a lightweight drift detector instead:
   forgot the other") without a codegen toolchain. Types and nullability
   are still covered by the manual checklists in both files.
 
-### Stash And Old Branch Audit
+### Stash And Old Branch Audit And Cleanup
 
-Audit was read-only. No stashes were dropped and no remote branches were
-deleted.
+- Dropped `stash@{0}` / `cleanup-save-strava-quota-edit` — it removed the
+  Strava Phase B pre-loop quota guard, which we want to keep. The 429 catch
+  on the actual call is belt-and-suspenders, not a replacement.
+- Deleted `origin/claude/finish-pr-review-Kbf99` and
+  `origin/oz/elevation-enrichment` after `git cherry` confirmed every commit
+  had an equivalent already on `main`.
+- Kept as reference:
+  - `stash@{0}` (was `stash@{1}`) / `strength-entry-redesign WIP` — original
+    source of the live-mode ideas; the useful parts landed in PRs #16 / #19
+    / #20, but the stash still has raw notes worth skimming before the next
+    strength iteration.
+  - `origin/claude/interesting-archimedes-16548a` — HR-zone / lap-zone /
+    cardiac-drift ideas. Strength live/retro slice was extracted; the
+    HR-zones slice is still open (see "Still Remaining" below).
 
-- `stash@{0}` / `cleanup-save-strava-quota-edit`
-  - Contains a risky change removing the Strava Phase B quota guard.
-  - Recommendation: drop.
-- `stash@{1}` / `strength-entry-redesign WIP`
-  - Contains potentially useful strength-entry UX ideas.
-  - Recommendation: keep as reference and mine ideas into a fresh PR rather
-    than applying directly.
-- `origin/claude/finish-pr-review-Kbf99`
-  - Appears merged by patch equivalence.
-  - Recommendation: delete after a fresh fetch confirms nothing new.
-- `origin/oz/elevation-enrichment`
-  - Appears already merged.
-  - Recommendation: delete after a fresh fetch confirms nothing new.
-- `origin/claude/interesting-archimedes-16548a`
-  - Contains valuable but stale HR-zone/cardiac-drift and strength live/retro
-    ideas.
-  - Recommendation: keep as reference and extract into fresh, narrow PRs.
-
-## Still Remaining
-
-### 1. Strength Entry Redesign Follow-Up
+### Strength Entry Redesign Extraction
 
 Source material:
 
-- `stash@{1}` / `strength-entry-redesign WIP`
+- `stash@{0}` (was `stash@{1}`) / `strength-entry-redesign WIP`
 - `origin/claude/interesting-archimedes-16548a`
 
-Current state:
+Landed as a three-PR stack against `main` on 2026-04-24:
 
-- Both contain potentially useful strength-entry/live-mode ideas, but both are
-  stale relative to current API modules, error helpers, tests, and frontend
-  structure.
+- PR #16 / ``yy/strength-performed-at-live-mode`` — adds a nullable
+  ``performed_at`` naive-local column to ``strength_sets``, a Live/Retro mode
+  toggle on ``StrengthEntry``, a rest timer, and a "Log set" action that
+  stamps ``performed_at`` in live mode.
+- PR #19 (re-created from closed PR #17) / ``yy/strength-hr-attachment`` —
+  new ``backend/services/strength_hr.py`` with 45s lookback + decimation to
+  ~300 points. ``session_summary`` conditionally merges per-set ``avg_hr`` /
+  ``max_hr`` and a top-level ``hr_curve`` / ``activity_start_iso`` when the
+  linked Strava activity's ``time`` + ``heartrate`` streams are already
+  cached. Invariant: read-only against ``activity_streams``, never triggers
+  a Strava fetch.
+- PR #20 (re-created from closed PR #18) / ``yy/strength-hr-ui`` — new
+  ``StrengthHrChart`` Recharts line chart with a ``ReferenceDot`` at each
+  logged set's offset, plus per-set ``.hr-pill`` HR column in the session
+  detail tables.
 
-Recommended next step:
+Tests: 18 new ``test_strength_hr`` tests + 3 new ``test_strength`` tests
+covering the merge path and round-trip of ``performed_at``.
 
-- Extract ideas into a fresh design/implementation slice instead of applying
-  either source directly.
+## Still Remaining
 
-### 2. HR Zones / Cardiac Drift Follow-Up
+### 1. HR Zones / Cardiac Drift Follow-Up
 
 Source material:
 
@@ -246,27 +251,16 @@ Current state:
 - It is too stale to merge wholesale.
 - Be careful with any Activity Detail auto-stream-loading behavior because the
   current architecture intentionally keeps Strava streams lazy.
+- The strength slice of this branch has already been extracted (see the
+  Resolved section above); this item is the remaining non-strength ideas.
 
 Recommended next step:
 
 - Plan a backend-first HR-zone/cardiac-drift slice, then wire frontend display
   separately if the backend shape proves useful.
 
-### 3. Manual Cleanup Decisions
-
-Current state:
-
-- `stash@{0}` can likely be dropped.
-- `origin/claude/finish-pr-review-Kbf99` and `origin/oz/elevation-enrichment`
-  can likely be deleted.
-
-Recommended next step:
-
-- Fetch first, then drop/delete only after confirming there are no new remote
-  changes.
-
 ## Suggested Prompt For Next Session
 
 ```text
-Please read REFACTOR_FINDINGS.md and pick the next remaining refactor slice: extract the strength-entry-redesign ideas from stash@{1} and origin/claude/interesting-archimedes-16548a into a fresh, narrow design/implementation pass instead of applying either source directly. Start with a short design doc listing which ideas survive the current strength live/retro + HR-per-set implementation, then land a focused first PR.
+Please read REFACTOR_FINDINGS.md and pick up the only remaining item: plan a backend-first HR-zone / cardiac-drift slice by mining ideas from origin/claude/interesting-archimedes-16548a. Start with a short design doc listing which ideas survive against the current lazy-stream architecture, then land a focused first PR (backend shape + tests) before touching the frontend.
 ```
