@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_db
 from backend.models import Recovery
 from backend.services.metrics import get_recovery_trends
+from backend.services.time_utils import local_today
 
 router = APIRouter()
 
@@ -17,9 +18,9 @@ async def list_recovery(
     db: AsyncSession = Depends(get_db),
 ):
     """List recovery records."""
-    from datetime import date, timedelta
+    from datetime import timedelta
 
-    cutoff = date.today() - timedelta(days=days)
+    cutoff = local_today() - timedelta(days=days)
     result = await db.execute(
         select(Recovery)
         .where(Recovery.date >= cutoff)
@@ -41,10 +42,8 @@ async def recovery_trends(
 @router.get("/today")
 async def today_recovery(db: AsyncSession = Depends(get_db)):
     """Get today's recovery data."""
-    from datetime import date
-
     result = await db.execute(
-        select(Recovery).where(Recovery.date == date.today())
+        select(Recovery).where(Recovery.date == local_today())
     )
     record = result.scalar_one_or_none()
     if not record:

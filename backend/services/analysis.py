@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import Activity, Recovery, SleepSession
 from backend.services.llm_providers import get_provider
+from backend.services.time_utils import local_today, utc_now
 
 SYSTEM_PROMPT = """You are a personal health and fitness analyst with deep expertise in \
 exercise physiology, sleep science, and recovery optimization.
@@ -84,7 +85,7 @@ class AnalysisEngine:
         return "\n\n".join(sections) if sections else "No data available yet."
 
     async def _get_recent_activities(self, days: int = 14) -> list[Activity]:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff = utc_now() - timedelta(days=days)
         result = await self.db.execute(
             select(Activity)
             .where(Activity.start_date >= cutoff)
@@ -93,7 +94,7 @@ class AnalysisEngine:
         return list(result.scalars().all())
 
     async def _get_recent_sleep(self, days: int = 7) -> list[SleepSession]:
-        cutoff = date.today() - timedelta(days=days)
+        cutoff = local_today() - timedelta(days=days)
         result = await self.db.execute(
             select(SleepSession)
             .where(SleepSession.date >= cutoff)
@@ -102,7 +103,7 @@ class AnalysisEngine:
         return list(result.scalars().all())
 
     async def _get_recent_recovery(self, days: int = 7) -> list[Recovery]:
-        cutoff = date.today() - timedelta(days=days)
+        cutoff = local_today() - timedelta(days=days)
         result = await self.db.execute(
             select(Recovery)
             .where(Recovery.date >= cutoff)

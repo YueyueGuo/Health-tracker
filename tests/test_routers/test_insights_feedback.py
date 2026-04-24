@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from backend.models import RecommendationFeedback
+import backend.routers.insights as insights_router_module
 from backend.routers.insights import router as insights_router
 
 from .conftest import make_client
@@ -94,6 +95,32 @@ async def test_feedback_stats_counts_and_window(client, db):
     assert body["down"] == 1
     assert body["window_days"] == 30
     assert len(body["recent"]) == 2
+
+
+async def test_feedback_stats_uses_local_today_at_midnight_boundary(
+    client, db, monkeypatch
+):
+    monkeypatch.setattr(
+        insights_router_module, "local_today", lambda: date(2026, 1, 2)
+    )
+    db.add_all(
+        [
+            RecommendationFeedback(recommendation_date=date(2026, 1, 2), vote="up"),
+            RecommendationFeedback(recommendation_date=date(2026, 1, 1), vote="down"),
+            RecommendationFeedback(recommendation_date=date(2025, 12, 31), vote="up"),
+        ]
+    )
+    await db.commit()
+
+    resp = await client.get("/api/insights/feedback/stats?days=1")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 2
+    assert [row["recommendation_date"] for row in body["recent"]] == [
+        "2026-01-02",
+        "2026-01-01",
+    ]
 
 
 async def test_feedback_stats_empty(client):

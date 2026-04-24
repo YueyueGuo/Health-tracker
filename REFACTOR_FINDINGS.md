@@ -1,6 +1,6 @@
 # Refactor Findings And Next Steps
 
-Current as of the frontend type-cleanup follow-up pass on April 23, 2026.
+Current as of the backend date/time follow-up pass on April 24, 2026.
 
 ## Current Baseline
 
@@ -156,6 +156,28 @@ Remaining remote branches intentionally left alone during consolidation:
   - `npm run build` -> passed, with Vite's existing large bundle warning
   - `.venv/bin/python -m pytest tests/test_services/test_insights.py tests/test_services/test_training_metrics.py` -> 44 passed
 
+### Backend Route Date/Time Follow-Up
+
+- Replaced a small user-visible batch of direct wall-clock calls with
+  `backend/services/time_utils.py` helpers:
+  - `backend/routers/sleep.py` now anchors the list cutoff to `local_today()`.
+  - `backend/routers/recovery.py` now anchors list and `/today` lookups to
+    `local_today()`.
+  - `backend/routers/insights.py` now anchors feedback stats to `local_today()`.
+  - `backend/services/weekly_summary.py` now defaults `weekly_summaries()` to
+    `local_today()` instead of UTC date.
+  - `backend/services/analysis.py` now uses `utc_now()` for recent activity
+    context and `local_today()` for sleep/recovery context.
+- Added focused midnight-boundary tests for route/service behavior where a UTC
+  date rollover could otherwise shift the visible local window:
+  - `tests/test_routers/test_sleep.py`
+  - `tests/test_routers/test_recovery.py`
+  - `tests/test_routers/test_insights_feedback.py`
+  - `tests/test_services/test_weekly_summary.py`
+- Verification after this pass:
+  - `.venv/bin/python -m pytest tests/test_routers/test_sleep.py tests/test_routers/test_recovery.py tests/test_routers/test_insights_feedback.py tests/test_services/test_weekly_summary.py` -> 31 passed
+  - `.venv/bin/ruff check backend/routers/sleep.py backend/routers/recovery.py backend/routers/insights.py backend/services/weekly_summary.py backend/services/analysis.py tests/test_routers/test_sleep.py tests/test_routers/test_recovery.py tests/test_routers/test_insights_feedback.py tests/test_services/test_weekly_summary.py` -> passed
+
 ### Settings / Goals / Location Decomposition
 
 - `frontend/src/pages/Settings.tsx` is now a composition-only page that renders `GoalsSection` plus a new `LocationSettingsSection`.
@@ -236,7 +258,10 @@ Current state:
 - `backend/services/time_utils.py` now centralizes `local_today()`, `utc_now()`, and `utc_now_naive()`.
 - `datetime.utcnow()` has been eliminated from backend/tests; pytest now runs without those deprecation warnings.
 - Core analytics date-window functions now accept optional `today` parameters for deterministic tests.
-- Some routers and sync modules still call `date.today()` / `datetime.now(timezone.utc)` directly where they are not currently warning or where external API semantics need a smaller follow-up pass.
+- Sleep, recovery, feedback stats, weekly summary defaults, and free-form
+  analysis context now use shared helpers for user-visible date windows.
+- Some sync/client modules still call `date.today()` / `datetime.now(timezone.utc)`
+  directly where external API semantics need a separate, careful pass.
 
 Recommended next steps:
 
@@ -416,6 +441,9 @@ Completed:
 - Replace `datetime.utcnow()` usages and add deterministic date tests.
 - Split `training_metrics.py`.
 - Split `insights.py` into schemas/prompts/cache/orchestration.
+- Replace route-level direct wall-clock calls for sleep/recovery/feedback stats,
+  weekly summary defaults, and free-form analysis context.
+- Add midnight-boundary tests for the touched user-visible windows.
 
 Remaining:
 
