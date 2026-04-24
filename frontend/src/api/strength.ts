@@ -15,6 +15,11 @@ export interface StrengthSet {
   /** Naive-local ISO datetime string stamped in Live entry mode.
    *  Null on Retro entries. */
   performed_at?: string | null;
+  /** Working-HR window ending at ``performed_at`` (45s lookback).
+   *  Populated on the session_summary response when the linked Strava
+   *  activity's streams are cached. Undefined otherwise. */
+  avg_hr?: number;
+  max_hr?: number;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -40,6 +45,14 @@ export interface StrengthSessionDetail {
   activity_id: number | null;
   sets: StrengthSet[];
   exercises: ExerciseBreakdown[];
+  /** Decimated [offset_sec, bpm] pairs spanning the linked Strava
+   *  activity. Present only when the activity's time + heartrate streams
+   *  are cached. */
+  hr_curve?: Array<[number, number]>;
+  /** ISO string of the linked activity's start_date_local (or UTC
+   *  start_date fallback). Lets the frontend convert set performed_at
+   *  timestamps to x-axis offsets for the hr_curve chart. */
+  activity_start_iso?: string;
 }
 
 export interface ProgressionPoint {
