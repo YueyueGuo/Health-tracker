@@ -415,9 +415,51 @@ Two phases, resumable via `elevation_enriched`:
 - Location search/GPS flows are shared between Settings and Activity Detail
   via `frontend/src/components/location/{LocationSearchForm,GpsLocationForm}.tsx`
   plus `frontend/src/hooks/{useDebouncedLocationSearch,useCurrentPosition}.ts`.
+- `StrengthEntry.tsx` (route `/strength/new`) has a Live/Retro mode toggle.
+  Live mode shows a rest timer and a "Log" action per set that stamps
+  `performed_at` (naive-local, no tz) and auto-appends a fresh row. Retro
+  mode is the original bulk-entry form. Payload: `performed_at: null` on
+  retro; `YYYY-MM-DDTHH:mm:ss` on live.
+- `Strength.tsx` session detail renders `StrengthHrChart` (Recharts, red
+  line with a `ReferenceDot` per logged set) and a `.hr-pill` HR column
+  per exercise when the linked Strava activity's `time` + `heartrate`
+  streams are already cached. Additive — retro / no-stream / no-
+  performed_at sessions render unchanged.
+
+## Strength HR attachment (`backend/services/strength_hr.py`)
+
+Maps manually-logged sets to the HR stream of the linked Strava
+WeightTraining activity. Uses each set's `performed_at` (naive-local) to
+compute `(performed_at - activity.start_date_local)` → offset seconds,
+then slices `[offset - 45, offset]` out of the cached `heartrate` stream
+to get working-HR for that set. Window is inclusive on both ends.
+
+- `_slice_hr_for_set(performed_at, activity_start, time_stream, hr_stream, window_sec=45)`
+  returns `(avg_hr, max_hr)` or `(None, None)`. Skips zero/None dropouts,
+  handles Strava's occasional mismatched-length streams (falls back to
+  `min`), and early-breaks once `t > window_end` since streams are
+  monotonic.
+- `_decimate(time_stream, hr_stream, target_points=300)` returns
+  `[[offset_sec, bpm], ...]` for the session-wide curve. Step is
+  `max(1, n // target_points)` so a 1Hz 60-min workout (~3600 points)
+  becomes ~300.
+- `attach_hr_to_sets(db, activity_id, sets, window_sec=45)` is the public
+  entry point. Returns `{}` on: no `performed_at` on any set, missing
+  activity, missing `time` or `heartrate` stream, stale FK.
+
+**Invariant: this module is read-only against `activity_streams`.** It
+never triggers a Strava fetch. Streams stay lazy. If the user hasn't
+loaded the linked activity's streams yet (via Activity Detail or the
+strength session itself), the session summary payload just won't carry
+HR — frontend renders unchanged via optional chaining.
+
+Called from `session_summary` in `backend/services/strength.py`:
+conditionally merges per-set `avg_hr` / `max_hr` into `sets` and
+`exercises[].sets`, plus top-level `hr_curve` and `activity_start_iso`
+for chart anchoring.
 
 ## Alembic
-Linear chain: `initial → laps_zones_enrichment (a1c4f9d2e8b0) → eight_sleep_extra_fields (c3e7b18f92a4) → classification (b2d5e0f3c1a7) → sleep_wake_events (d89f2a41e6c3) → strength_sets (e4a9b1c3d5f7) → whoop_workouts (f5a1c7b2d4e9) → elevation_and_user_locations (a7e2c5f8b1d3)`.
+Linear chain: `initial → laps_zones_enrichment (a1c4f9d2e8b0) → eight_sleep_extra_fields (c3e7b18f92a4) → classification (b2d5e0f3c1a7) → sleep_wake_events (d89f2a41e6c3) → strength_sets (e4a9b1c3d5f7) → whoop_workouts (f5a1c7b2d4e9) → elevation_and_user_locations (a7e2c5f8b1d3) → strength_set_performed_at (b3c6d9e8a1f4)`.
 
 New migrations that add nullable columns should use plain `op.add_column`
 (not `batch_alter_table`) — SQLite does ADD COLUMN as metadata-only, which is
@@ -461,11 +503,13 @@ safe to run while the backfill scheduler is writing.
   phase A/B are now covered (48 + 21 + 26 new tests). The remaining
   Strava gap is full HTTP-level coverage of `StravaClient` OAuth /
   refresh / pagination (header parsing is already tested).
-- **Refactor follow-up** — see `REFACTOR_FINDINGS.md` for the active queue:
-  snapshot frontend/backend type-sync checklist or generation,
-  route-level date-helper cleanup, Settings/Goals decomposition, frontend
-  tests, bundle splitting, stash/old-branch review, and legacy
-  chat-vs-insights consolidation.
+- **Refactor follow-up** — see `REFACTOR_FINDINGS.md`. Most of the
+  refactor queue has landed (frontend API split, shared HTTP helper,
+  location/settings decomposition, snapshot Pydantic contracts + drift
+  detector, date-helper cleanup, bundle splitting, chat/insights
+  consolidation, strength-entry-redesign extraction, stash + stale-branch
+  cleanup). Only open item: **HR zones / cardiac drift** — backend-first
+  slice mined from `origin/claude/interesting-archimedes-16548a`.
 
 ## Ambient state you should know about
 - `scripts/backfill_strava.py` was kicked off as a background process and
@@ -597,10 +641,26 @@ so stack traces land in the log.
   ignored, `_lap_from_raw` field mapping + malformed/missing
   start_date handling.
 
-**Latest repo test count: 291 passing** after the backend module-split
-refactor pass. Backend pytest runs without `datetime.utcnow()` deprecation
-warnings. Frontend `npm run typecheck` and `npm run build` pass; build still
-emits the existing Vite large-bundle warning.
+**Latest repo test count: 325 passing** after the strength-entry-redesign
+extraction (performed_at + Live/Retro + Strava HR attachment) and the
+snapshot-contract drift detector landed in April 2026. Backend pytest
+runs without `datetime.utcnow()` deprecation warnings. Frontend
+`npm run typecheck` and `npm run build` pass; build emits route chunks
+(no longer triggers the previous >500 kB Vite warning).
+
+New test modules in this batch:
+- `tests/test_services/test_strength_hr.py` (18) — pure slice/decimate
+  helpers plus DB-backed `attach_hr_to_sets` (window math, dropouts,
+  mismatched-length streams, missing-stream / missing-activity guards,
+  stale FK).
+- Additional `test_strength.py` coverage (3) — `performed_at` round-trip
+  through `session_summary`, HR merge when streams cached, no-HR when
+  streams missing.
+- `tests/test_services/test_snapshot_contract_drift.py` (2) — parses
+  `frontend/src/api/insights.ts` and asserts each backend `SnapshotModel`
+  (plus the three `insight_schemas` response models) has a same-named TS
+  interface with matching field names. `INLINED_OR_INTERNAL` whitelists
+  the two models without a 1:1 TS mirror.
 
 ## Quick commands cheatsheet
 
