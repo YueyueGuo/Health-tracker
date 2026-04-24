@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_db
 from backend.models import RecommendationFeedback
 from backend.services import insights, training_metrics
+from backend.services.time_utils import local_today
 
 router = APIRouter()
 
@@ -102,7 +103,7 @@ async def feedback_stats(
     days: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
 ):
-    cutoff = date.today() - timedelta(days=days)
+    cutoff = local_today() - timedelta(days=days)
     rows = (await db.execute(
         select(RecommendationFeedback)
         .where(RecommendationFeedback.recommendation_date >= cutoff)

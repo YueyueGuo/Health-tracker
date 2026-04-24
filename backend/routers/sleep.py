@@ -13,6 +13,7 @@ from backend.services.sleep_analytics import (
     get_rolling_averages,
     get_sleep_debt,
 )
+from backend.services.time_utils import local_today
 
 router = APIRouter()
 
@@ -24,11 +25,11 @@ async def list_sleep_sessions(
     db: AsyncSession = Depends(get_db),
 ):
     """List sleep sessions."""
-    from datetime import date, timedelta
+    from datetime import timedelta
 
     query = select(SleepSession).order_by(SleepSession.date.desc())
 
-    cutoff = date.today() - timedelta(days=days)
+    cutoff = local_today() - timedelta(days=days)
     query = query.where(SleepSession.date >= cutoff)
 
     if source:

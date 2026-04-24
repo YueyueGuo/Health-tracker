@@ -14,12 +14,13 @@ Public API:
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import Activity
+from backend.services.time_utils import local_today
 
 
 def iso_week_start(d: date) -> date:
@@ -139,7 +140,7 @@ async def weekly_summaries(
 
     Ordered newest-first. `end_date` defaults to today.
     """
-    today = end_date or datetime.now(timezone.utc).date()
+    today = end_date or local_today()
     anchor = iso_week_start(today)
     results = []
     for offset in range(weeks):

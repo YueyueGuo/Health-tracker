@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from backend.database import Base
 from backend.models import Activity
+import backend.services.weekly_summary as weekly_summary_module
 from backend.services.weekly_summary import (
     iso_week_start,
     week_summary,
@@ -532,3 +533,18 @@ async def test_weekly_summaries_defaults_to_today(db):
     # Ordered newest-first: each successive week_start is strictly earlier.
     starts = [s["week_start"] for s in result]
     assert starts == sorted(starts, reverse=True)
+
+
+async def test_weekly_summaries_default_uses_local_today_at_midnight_boundary(
+    db, monkeypatch
+):
+    monkeypatch.setattr(
+        weekly_summary_module, "local_today", lambda: date(2026, 4, 19)
+    )
+
+    result = await weekly_summaries(db, weeks=2)
+
+    assert [s["week_start"] for s in result] == [
+        "2026-04-13",
+        "2026-04-06",
+    ]
