@@ -12,6 +12,10 @@
 //    assembled manually before Pydantic validation.
 // 4. Re-run ``npm test``, ``npm run typecheck``, and ``npm run build`` after
 //    changing either side of the contract.
+// 5. ``tests/test_services/test_snapshot_contract_drift.py`` asserts field-name
+//    parity between this file and ``snapshot_models.py``. It catches the common
+//    "added on one side, forgot the other" drift, but it does NOT check types
+//    or nullability — those are still manual.
 
 import { fetchJson } from "./http";
 
