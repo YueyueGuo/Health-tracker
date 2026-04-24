@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.database import Base
-from backend.models import StrengthSet
+from backend.models import Activity, ActivityStream, StrengthSet
 from backend.services.strength import (
     estimate_1rm,
     list_sessions,
@@ -182,6 +182,99 @@ async def test_session_summary_round_trips_performed_at(db: AsyncSession):
     assert summary is not None
     stamps = [s["performed_at"] for s in summary["sets"]]
     assert stamps == [stamped.isoformat(), None]
+
+
+async def test_session_summary_merges_hr_when_streams_cached(db: AsyncSession):
+    """When a linked activity has cached time + heartrate streams, each
+    set with ``performed_at`` gets ``avg_hr``/``max_hr`` merged in and the
+    top-level payload carries ``hr_curve`` + ``activity_start_iso``."""
+    today = date.today()
+    start = datetime(today.year, today.month, today.day, 9, 0, 0)
+    activity = Activity(
+        strava_id=999_001,
+        name="Lift",
+        sport_type="WeightTraining",
+        start_date=start,
+        start_date_local=start,
+    )
+    db.add(activity)
+    await db.flush()
+    time_stream = list(range(0, 600))
+    hr_stream = [140 + (t // 120) * 5 for t in time_stream]
+    db.add(ActivityStream(activity_id=activity.id, stream_type="time", data=time_stream))
+    db.add(
+        ActivityStream(activity_id=activity.id, stream_type="heartrate", data=hr_stream)
+    )
+    await _seed(
+        db,
+        [
+            StrengthSet(
+                date=today,
+                exercise_name="Squat",
+                set_number=1,
+                reps=5,
+                weight_kg=100,
+                performed_at=datetime(today.year, today.month, today.day, 9, 2, 0),
+                activity_id=activity.id,
+            ),
+            StrengthSet(
+                date=today,
+                exercise_name="Squat",
+                set_number=2,
+                reps=5,
+                weight_kg=100,
+                performed_at=None,
+                activity_id=activity.id,
+            ),
+        ],
+    )
+
+    summary = await session_summary(db, today)
+    assert summary is not None
+    assert summary["activity_start_iso"] == start.isoformat()
+    assert isinstance(summary["hr_curve"], list) and summary["hr_curve"]
+    logged = next(s for s in summary["sets"] if s["performed_at"] is not None)
+    unlogged = next(s for s in summary["sets"] if s["performed_at"] is None)
+    assert "avg_hr" in logged and "max_hr" in logged
+    assert logged["avg_hr"] <= logged["max_hr"]
+    assert "avg_hr" not in unlogged
+    # And also merged into the per-exercise breakdown.
+    ex_sets = summary["exercises"][0]["sets"]
+    assert any("avg_hr" in s for s in ex_sets)
+
+
+async def test_session_summary_no_hr_when_streams_missing(db: AsyncSession):
+    """No cached streams → payload has no ``hr_curve`` / ``activity_start_iso``."""
+    today = date.today()
+    start = datetime(today.year, today.month, today.day, 9, 0, 0)
+    activity = Activity(
+        strava_id=999_002,
+        name="Lift",
+        sport_type="WeightTraining",
+        start_date=start,
+        start_date_local=start,
+    )
+    db.add(activity)
+    await db.flush()
+    await _seed(
+        db,
+        [
+            StrengthSet(
+                date=today,
+                exercise_name="Squat",
+                set_number=1,
+                reps=5,
+                weight_kg=100,
+                performed_at=datetime(today.year, today.month, today.day, 9, 2, 0),
+                activity_id=activity.id,
+            ),
+        ],
+    )
+    summary = await session_summary(db, today)
+    assert summary is not None
+    assert "hr_curve" not in summary
+    assert "activity_start_iso" not in summary
+    assert "avg_hr" not in summary["sets"][0]
 
 
 async def test_search_exercises_prefix_match(db: AsyncSession):

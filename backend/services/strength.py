@@ -13,6 +13,7 @@ from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import StrengthSet
+from backend.services.strength_hr import attach_hr_to_sets
 
 
 # ── 1RM estimation ──────────────────────────────────────────────────
@@ -82,7 +83,14 @@ async def session_summary(
     """Full detail for one session (a single `date`).
 
     Returns ``None`` if no sets logged on that date. Otherwise:
-    ``{date, activity_id, sets: [...], exercises: [{name, sets, max_weight, total_volume, est_1rm}, ...]}``
+    ``{date, activity_id, sets: [...], exercises: [...],
+       hr_curve?: [[offset_sec, bpm], ...], activity_start_iso?: str}``.
+
+    When a Strava activity is linked (``activity_id``) and its ``time`` +
+    ``heartrate`` streams are already cached (we never trigger a Strava
+    fetch), per-set ``avg_hr``/``max_hr`` are merged into each set dict
+    and the decimated session-wide curve is returned alongside
+    ``activity_start_iso`` for chart anchoring.
     """
     stmt = (
         select(StrengthSet)
@@ -128,12 +136,32 @@ async def session_summary(
             }
         )
 
-    return {
+    payload: dict[str, Any] = {
         "date": target.isoformat(),
         "activity_id": activity_id,
         "sets": sets_payload,
         "exercises": exercises,
     }
+
+    if activity_id is not None:
+        hr = await attach_hr_to_sets(db, activity_id, list(rows))
+        if hr:
+            by_id = hr.get("hr_by_set_id") or {}
+            for s in sets_payload:
+                stats = by_id.get(s["id"])
+                if stats:
+                    s["avg_hr"] = stats["avg_hr"]
+                    s["max_hr"] = stats["max_hr"]
+            for ex in exercises:
+                for s in ex["sets"]:
+                    stats = by_id.get(s["id"])
+                    if stats:
+                        s["avg_hr"] = stats["avg_hr"]
+                        s["max_hr"] = stats["max_hr"]
+            payload["hr_curve"] = hr.get("hr_curve")
+            payload["activity_start_iso"] = hr.get("activity_start_iso")
+
+    return payload
 
 
 async def progression(
