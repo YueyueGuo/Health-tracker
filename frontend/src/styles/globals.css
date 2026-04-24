@@ -517,6 +517,106 @@ select {
   border-top: none;
 }
 
+/* ── Strength entry cards ───────────────────────────────────────── */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.field-label {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.exercise-card {
+  margin-top: 16px;
+}
+
+.exercise-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.exercise-name-input {
+  flex: 1;
+  font-size: 16px;
+  font-weight: 600;
+  padding: 10px 12px;
+}
+
+.prior-perf {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.set-table {
+  margin-top: 12px;
+}
+
+.set-table .set-number {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stepper-btn {
+  background: var(--bg-hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.stepper-btn:hover {
+  background: var(--bg-card);
+  border-color: var(--accent);
+}
+
+.stepper-input {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  /* Hide the browser's default spinner — the stepper owns increments. */
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.stepper-input::-webkit-outer-spin-button,
+.stepper-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .set-table th,
+  .set-table td {
+    padding: 6px 6px;
+  }
+  .exercise-name-input {
+    font-size: 15px;
+  }
+}
+
 .input {
   background: var(--bg);
   border: 1px solid var(--border);
