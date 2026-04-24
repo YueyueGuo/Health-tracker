@@ -9,6 +9,12 @@ Type-sync checklist for changes in this file:
 2. Check nullability and optional-vs-required semantics explicitly.
 3. Run backend snapshot tests plus ``npm test``, ``npm run typecheck``, and
    ``npm run build`` from ``frontend/``.
+
+``tests/test_services/test_snapshot_contract_drift.py`` auto-detects
+field-name drift between these Pydantic models and the TS interfaces. It
+does not check types or nullability, which is why the manual checklist
+above still matters — but it catches the "forgot to update the other side"
+failure mode without requiring a codegen toolchain.
 """
 
 from __future__ import annotations

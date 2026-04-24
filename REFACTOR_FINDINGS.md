@@ -1,6 +1,6 @@
 # Refactor Findings And Next Steps
 
-Current as of the post-PR #13 handoff cleanup on April 24, 2026.
+Current as of the snapshot-contract drift-test spike on April 24, 2026.
 
 ## Current Baseline
 
@@ -168,6 +168,28 @@ Short version of the queue this refactor sprint worked through:
 - `npm run build` now emits route chunks and no longer reports the previous
   >500 kB chunk warning.
 
+### Snapshot Contract Drift Test
+
+Evaluated a full Pydantic → TypeScript codegen pipeline (OpenAPI export,
+`json-schema-to-typescript`, `datamodel-code-generator`). Rejected for this
+repo: the snapshot surface is ~21 small interfaces, the API returns plain
+dicts (not Pydantic responses) so OpenAPI export would not cover it
+cleanly, and generated types would still need a hand-written wrapper layer
+for the fetcher helpers.
+
+Landed a lightweight drift detector instead:
+
+- `tests/test_services/test_snapshot_contract_drift.py` parses
+  `frontend/src/api/insights.ts` and asserts each `SnapshotModel` subclass
+  (plus `DailyRecommendation`, `NotableSegment`, `WorkoutInsight`) has a
+  same-named TS interface with identical field names.
+- Backend models intentionally inlined or internal-only
+  (`DailyLoadPoint`, `DailyRecommendationCacheSignal`) are listed in
+  `INLINED_OR_INTERNAL` with a reason.
+- The test catches the most common drift ("added a field on one side,
+  forgot the other") without a codegen toolchain. Types and nullability
+  are still covered by the manual checklists in both files.
+
 ### Stash And Old Branch Audit
 
 Audit was read-only. No stashes were dropped and no remote branches were
@@ -193,26 +215,7 @@ deleted.
 
 ## Still Remaining
 
-### 1. Snapshot Contract Generation Decision
-
-Files:
-
-- `backend/services/snapshot_models.py`
-- `frontend/src/api/insights.ts`
-
-Current state:
-
-- Backend snapshots are validated with Pydantic models.
-- Frontend mirrors those nested snapshot payloads manually.
-- A checklist exists, but there is no generated schema/type pipeline.
-
-Recommended next step:
-
-- Do a small spike: either generate/export TypeScript types from the backend
-  Pydantic models, or document why the manual checklist is sufficient for this
-  single-user app.
-
-### 2. Strength Entry Redesign Follow-Up
+### 1. Strength Entry Redesign Follow-Up
 
 Source material:
 
@@ -230,7 +233,7 @@ Recommended next step:
 - Extract ideas into a fresh design/implementation slice instead of applying
   either source directly.
 
-### 3. HR Zones / Cardiac Drift Follow-Up
+### 2. HR Zones / Cardiac Drift Follow-Up
 
 Source material:
 
@@ -249,7 +252,7 @@ Recommended next step:
 - Plan a backend-first HR-zone/cardiac-drift slice, then wire frontend display
   separately if the backend shape proves useful.
 
-### 4. Manual Cleanup Decisions
+### 3. Manual Cleanup Decisions
 
 Current state:
 
@@ -265,5 +268,5 @@ Recommended next step:
 ## Suggested Prompt For Next Session
 
 ```text
-Please read REFACTOR_FINDINGS.md and implement the next remaining refactor slice: evaluate whether generating frontend snapshot types from backend Pydantic models is worth it, keep the first pass small, and either land a lightweight schema export/type-generation proof or document why the manual checklist is enough for now.
+Please read REFACTOR_FINDINGS.md and pick the next remaining refactor slice: extract the strength-entry-redesign ideas from stash@{1} and origin/claude/interesting-archimedes-16548a into a fresh, narrow design/implementation pass instead of applying either source directly. Start with a short design doc listing which ideas survive the current strength live/retro + HR-per-set implementation, then land a focused first PR.
 ```
