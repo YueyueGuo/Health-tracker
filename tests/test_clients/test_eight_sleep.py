@@ -233,6 +233,36 @@ async def test_get_intervals_uses_utc_iso_bounds(configured, tmp_env):
 
 
 @pytest.mark.asyncio
+async def test_get_recent_sleep_uses_local_today_window(
+    configured, tmp_env, monkeypatch
+):
+    monkeypatch.setattr(es_mod, "local_today", lambda: date(2026, 4, 24))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == AUTH_URL:
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "a",
+                    "refresh_token": "r",
+                    "expires_in": 3600,
+                    "userId": "u-10",
+                },
+            )
+        assert request.url.path == "/v1/users/u-10/trends"
+        assert request.url.params["from"] == "2026-04-17"
+        assert request.url.params["to"] == "2026-04-24"
+        return httpx.Response(200, json={"days": []})
+
+    client = _build_client(handler, tmp_env)
+    try:
+        rows = await client.get_recent_sleep(days=7)
+        assert rows == []
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_401_triggers_reauth_once(configured, tmp_env):
     call_count = {"auth": 0, "trends": 0}
 

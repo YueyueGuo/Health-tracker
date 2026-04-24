@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,8 @@ from backend.models import (
     WeatherSnapshot,
 )
 from backend.services.classifier import classify_and_persist
+from backend.services.time_utils import utc_now, utc_now_naive
+
 logger = logging.getLogger(__name__)
 
 # When running Phase A incrementally, re-scan this many days back from the
@@ -103,14 +105,14 @@ class SyncEngine:
             log.status = "success"
             log.records_synced = new_count
             log.error_message = f"enriched={enriched_count}"
-            log.completed_at = datetime.now(timezone.utc)
+            log.completed_at = utc_now()
             await self.db.commit()
             return new_count
 
         except Exception as e:
             log.status = "error"
             log.error_message = str(e)
-            log.completed_at = datetime.now(timezone.utc)
+            log.completed_at = utc_now()
             await self.db.commit()
             raise
 
@@ -132,6 +134,7 @@ class SyncEngine:
 
         activities = await self.strava.get_all_activities(after=after)
         new_count = 0
+        now_naive = utc_now_naive()
 
         for raw in activities:
             strava_id = raw["id"]
@@ -143,8 +146,7 @@ class SyncEngine:
                 # Refresh only mutable metadata on activities within the
                 # lookback window (avoids rewriting ancient rows every pass).
                 if (
-                    datetime.now(timezone.utc).replace(tzinfo=None)
-                    - existing.start_date.replace(tzinfo=None)
+                    now_naive - existing.start_date.replace(tzinfo=None)
                     < timedelta(days=_LIST_LOOKBACK_DAYS)
                 ):
                     for field in _MUTABLE_SUMMARY_FIELDS:
@@ -249,7 +251,7 @@ class SyncEngine:
 
             activity.enrichment_status = "complete"
             activity.enrichment_error = None
-            activity.enriched_at = datetime.now(timezone.utc)
+            activity.enriched_at = utc_now()
 
             # Classify. Failures here shouldn't abort enrichment — the raw
             # data is more important than the derived label.
@@ -358,13 +360,13 @@ class SyncEngine:
             )
             log.status = "success"
             log.records_synced = total_new
-            log.completed_at = datetime.now(timezone.utc)
+            log.completed_at = utc_now()
             await self.db.commit()
             return stats
         except Exception as e:
             log.status = "error"
             log.error_message = str(e)
-            log.completed_at = datetime.now(timezone.utc)
+            log.completed_at = utc_now()
             await self.db.commit()
             raise
 

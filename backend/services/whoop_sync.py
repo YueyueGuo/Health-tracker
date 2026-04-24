@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.clients.whoop import WhoopAuthError, WhoopClient, WhoopRateLimitError
 from backend.models import Recovery, SleepSession, WhoopWorkout
+from backend.services.time_utils import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ async def sync_whoop(
             "failed": 0,
         }
 
-    end = end or datetime.now(timezone.utc)
+    end = end or utc_now()
     start = start or (end - timedelta(days=days))
 
     stats = {

@@ -7,11 +7,12 @@ Altitude tier coverage lives in ``test_classifier_altitude.py``.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
 from backend.models import Activity, ActivityLap
+from backend.services import classifier as classifier_mod
 from backend.services.classifier import (
     Classification,
     _detect_auto_splits,
@@ -544,9 +545,12 @@ def test_describe_and_dump_round_trip():
     assert d["confidence"] == 0.85
 
 
-def test_classification_to_persist_shape():
+def test_classification_to_persist_shape(monkeypatch):
+    classified_at = datetime(2026, 4, 24, 13, 14, 15, tzinfo=timezone.utc)
+    monkeypatch.setattr(classifier_mod, "utc_now", lambda: classified_at)
+
     c = Classification(type="easy", flags=["is_long"], confidence=0.8)
     payload = c.to_persist()
     assert payload["classification_type"] == "easy"
     assert payload["classification_flags"] == ["is_long"]
-    assert "classified_at" in payload
+    assert payload["classified_at"] == classified_at

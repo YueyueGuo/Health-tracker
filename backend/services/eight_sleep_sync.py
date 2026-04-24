@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.clients.eight_sleep import EightSleepClient
 from backend.config import settings
 from backend.models import SleepSession, SyncLog
+from backend.services.time_utils import local_today, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -68,20 +69,20 @@ async def sync_eight_sleep(
         if full_history:
             count = await _sync_full_history(db, client)
         else:
-            end = date.today()
+            end = local_today()
             start = end - timedelta(days=days)
             count = await _sync_window(db, client, start, end)
 
         log.status = "success"
         log.records_synced = count
-        log.completed_at = datetime.now(timezone.utc)
+        log.completed_at = utc_now()
         await db.commit()
         return count
 
     except Exception as e:
         log.status = "error"
         log.error_message = str(e)[:1000]
-        log.completed_at = datetime.now(timezone.utc)
+        log.completed_at = utc_now()
         await db.commit()
         raise
 
@@ -154,7 +155,7 @@ async def _sync_full_history(
 ) -> int:
     """Walk backwards 90 days at a time until the API returns no data."""
     chunk = timedelta(days=90)
-    end = date.today()
+    end = local_today()
     start = end - chunk
     total = 0
     empty_chunks = 0

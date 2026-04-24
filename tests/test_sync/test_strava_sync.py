@@ -303,7 +303,8 @@ async def test_phase_a_refreshes_mutable_fields_inside_lookback(db, monkeypatch)
     """Existing activity, started within the lookback window → mutable
     fields (e.g. `name`) are refreshed; non-mutable fields are NOT
     overwritten."""
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime(2026, 4, 20, 12, 0, 0)
+    monkeypatch.setattr(sync_mod, "utc_now_naive", lambda: now)
     recent = now - timedelta(days=2)
     db.add(
         Activity(
@@ -333,10 +334,12 @@ async def test_phase_a_refreshes_mutable_fields_inside_lookback(db, monkeypatch)
     assert act.distance == 999.0  # untouched
 
 
-async def test_phase_a_skips_mutable_refresh_outside_lookback(db):
+async def test_phase_a_skips_mutable_refresh_outside_lookback(db, monkeypatch):
     """Activity older than the lookback window keeps its original
     name even if the list response says otherwise."""
-    old = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=60)
+    now = datetime(2026, 4, 20, 12, 0, 0)
+    monkeypatch.setattr(sync_mod, "utc_now_naive", lambda: now)
+    old = now - timedelta(days=60)
     db.add(
         Activity(
             strava_id=8,

@@ -32,6 +32,7 @@ from pathlib import Path
 import httpx
 
 from backend.config import settings
+from backend.services.time_utils import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -284,7 +285,7 @@ class EightSleepClient:
 
     async def get_recent_sleep(self, days: int = 30) -> list[dict]:
         """Convenience wrapper returning trend rows for the last N days."""
-        end = date.today()
+        end = local_today()
         start = end - timedelta(days=days)
         return await self.get_trends(start, end)
 

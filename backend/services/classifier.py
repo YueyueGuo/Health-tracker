@@ -22,9 +22,9 @@ from __future__ import annotations
 import logging
 import statistics
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 
 from backend.models import Activity, ActivityLap
+from backend.services.time_utils import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,7 @@ class Classification:
         return {
             "classification_type": self.type,
             "classification_flags": self.flags,
-            "classified_at": datetime.now(timezone.utc),
+            "classified_at": utc_now(),
         }
 
 
