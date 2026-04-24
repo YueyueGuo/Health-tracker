@@ -10,6 +10,7 @@ import {
   type StrengthSessionDetail,
 } from "../api/strength";
 import StrengthProgressionChart from "../components/StrengthProgressionChart";
+import StrengthHrChart from "../components/StrengthHrChart";
 import { getErrorMessage } from "../utils/errors";
 
 /**
@@ -199,9 +200,24 @@ function SessionDetail({
   session: StrengthSessionDetail;
   onDelete: (id: number) => void | Promise<void>;
 }) {
+  const hasHr = Array.isArray(session.hr_curve) && session.hr_curve.length > 0;
   return (
     <div className="card">
       <h2>{formatLongDate(session.date)}</h2>
+      {hasHr && (
+        <div style={{ marginBottom: 16 }}>
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--text-muted)",
+              marginBottom: 6,
+            }}
+          >
+            Heart rate · dots mark logged sets
+          </div>
+          <StrengthHrChart session={session} />
+        </div>
+      )}
       {session.exercises.map((ex) => (
         <div key={ex.name} className="exercise-block">
           <div
@@ -219,50 +235,73 @@ function SessionDetail({
               {ex.est_1rm != null ? ` · Est. 1RM: ${ex.est_1rm.toFixed(1)} kg` : ""}
             </span>
           </div>
-          <table className="data-table data-table-compact">
-            <thead>
-              <tr>
-                <th>Set</th>
-                <th>Reps</th>
-                <th>Weight</th>
-                <th>RPE</th>
-                <th>Notes</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {ex.sets.map((s) => (
-                <tr key={s.id} style={{ cursor: "default" }}>
-                  <td>{s.set_number}</td>
-                  <td>{s.reps}</td>
-                  <td>{s.weight_kg != null ? `${s.weight_kg} kg` : "—"}</td>
-                  <td>{s.rpe ?? "—"}</td>
-                  <td
-                    style={{
-                      color: "var(--text-muted)",
-                      fontSize: 12,
-                      maxWidth: 240,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {s.notes ?? ""}
-                  </td>
-                  <td style={{ textAlign: "right" }}>
-                    <button
-                      type="button"
-                      className="link-btn"
-                      onClick={() => onDelete(s.id)}
-                      aria-label="Delete set"
-                    >
-                      ×
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {(() => {
+            const exHasHr = ex.sets.some((s) => typeof s.avg_hr === "number");
+            return (
+              <table className="data-table data-table-compact">
+                <thead>
+                  <tr>
+                    <th>Set</th>
+                    <th>Reps</th>
+                    <th>Weight</th>
+                    <th>RPE</th>
+                    {exHasHr && <th>HR</th>}
+                    <th>Notes</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ex.sets.map((s) => (
+                    <tr key={s.id} style={{ cursor: "default" }}>
+                      <td>{s.set_number}</td>
+                      <td>{s.reps}</td>
+                      <td>{s.weight_kg != null ? `${s.weight_kg} kg` : "—"}</td>
+                      <td>{s.rpe ?? "—"}</td>
+                      {exHasHr && (
+                        <td>
+                          {typeof s.avg_hr === "number" ? (
+                            <span className="hr-pill">
+                              {Math.round(s.avg_hr)}
+                              {typeof s.max_hr === "number" ? (
+                                <span className="hr-pill-max">
+                                  {" "}
+                                  · {Math.round(s.max_hr)}
+                                </span>
+                              ) : null}
+                            </span>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                      )}
+                      <td
+                        style={{
+                          color: "var(--text-muted)",
+                          fontSize: 12,
+                          maxWidth: 240,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {s.notes ?? ""}
+                      </td>
+                      <td style={{ textAlign: "right" }}>
+                        <button
+                          type="button"
+                          className="link-btn"
+                          onClick={() => onDelete(s.id)}
+                          aria-label="Delete set"
+                        >
+                          ×
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            );
+          })()}
         </div>
       ))}
     </div>
