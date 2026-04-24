@@ -218,6 +218,7 @@ def _set_dict(s: StrengthSet) -> dict[str, Any]:
         "weight_kg": s.weight_kg,
         "rpe": s.rpe,
         "notes": s.notes,
+        "performed_at": s.performed_at.isoformat() if s.performed_at else None,
         "created_at": s.created_at.isoformat() if s.created_at else None,
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
     }
