@@ -617,6 +617,69 @@ select {
   }
 }
 
+/* ── Entry mode toggle ──────────────────────────────────────────── */
+.mode-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.mode-toggle-btn {
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.mode-toggle-btn:hover {
+  color: var(--text);
+}
+
+.mode-toggle-btn.is-active {
+  background: var(--accent);
+  color: white;
+}
+
+/* ── Rest timer + live-mode log affordances ─────────────────────── */
+.rest-timer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  margin-left: auto;
+  align-items: flex-end;
+}
+
+.rest-timer-value {
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-light);
+  line-height: 1;
+}
+
+.log-btn {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.log-stamp {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--green);
+  white-space: nowrap;
+}
+
+.set-logged td {
+  background: rgba(34, 197, 94, 0.05);
+}
+
 .input {
   background: var(--bg);
   border: 1px solid var(--border);

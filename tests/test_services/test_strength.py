@@ -5,7 +5,7 @@ helpers against an in-memory SQLite DB.
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -152,6 +152,36 @@ async def test_progression_per_date_aggregates(db: AsyncSession):
     assert out[0]["total_volume_kg"] == pytest.approx(2 * 5 * 100)
     assert out[1]["max_weight_kg"] == 110
     assert out[1]["est_1rm_kg"] == pytest.approx(121.0, abs=0.01)
+
+
+async def test_session_summary_round_trips_performed_at(db: AsyncSession):
+    today = date.today()
+    stamped = datetime(today.year, today.month, today.day, 10, 30, 0)
+    await _seed(
+        db,
+        [
+            StrengthSet(
+                date=today,
+                exercise_name="Squat",
+                set_number=1,
+                reps=5,
+                weight_kg=100,
+                performed_at=stamped,
+            ),
+            StrengthSet(
+                date=today,
+                exercise_name="Squat",
+                set_number=2,
+                reps=5,
+                weight_kg=100,
+                performed_at=None,
+            ),
+        ],
+    )
+    summary = await session_summary(db, today)
+    assert summary is not None
+    stamps = [s["performed_at"] for s in summary["sets"]]
+    assert stamps == [stamped.isoformat(), None]
 
 
 async def test_search_exercises_prefix_match(db: AsyncSession):

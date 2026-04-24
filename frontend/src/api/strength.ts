@@ -12,6 +12,9 @@ export interface StrengthSet {
   weight_kg: number | null;
   rpe: number | null;
   notes: string | null;
+  /** Naive-local ISO datetime string stamped in Live entry mode.
+   *  Null on Retro entries. */
+  performed_at?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -54,6 +57,8 @@ export interface StrengthSetInput {
   weight_kg: number | null;
   rpe: number | null;
   notes: string | null;
+  /** Naive-local ISO string (no tz) stamped by Live-mode "Log set" taps. */
+  performed_at?: string | null;
 }
 
 export interface StrengthSessionCreate {
@@ -69,6 +74,7 @@ export interface StrengthSetPatch {
   weight_kg?: number | null;
   rpe?: number | null;
   notes?: string | null;
+  performed_at?: string | null;
   activity_id?: number | null;
 }
 

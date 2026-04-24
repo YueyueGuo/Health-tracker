@@ -6,7 +6,7 @@ implicit grouping by `date` (see `backend/services/strength.py`).
 from __future__ import annotations
 
 import logging
-from datetime import date as date_type
+from datetime import date as date_type, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
@@ -30,7 +30,11 @@ router = APIRouter()
 
 
 class StrengthSetInput(BaseModel):
-    """One set in a bulk-insert payload."""
+    """One set in a bulk-insert payload.
+
+    ``performed_at`` is an optional naive-local wall-clock timestamp
+    stamped in Live entry mode. Retro entries leave it as ``None``.
+    """
 
     exercise_name: str = Field(..., min_length=1, max_length=100)
     set_number: int = Field(..., ge=1)
@@ -38,6 +42,7 @@ class StrengthSetInput(BaseModel):
     weight_kg: float | None = Field(None, ge=0)
     rpe: float | None = Field(None, ge=0, le=10)
     notes: str | None = None
+    performed_at: datetime | None = None
 
 
 class StrengthSessionCreate(BaseModel):
@@ -57,6 +62,7 @@ class StrengthSetPatch(BaseModel):
     weight_kg: float | None = Field(None, ge=0)
     rpe: float | None = Field(None, ge=0, le=10)
     notes: str | None = None
+    performed_at: datetime | None = None
     activity_id: int | None = None
 
 
@@ -107,6 +113,7 @@ async def create_sets(
             weight_kg=s.weight_kg,
             rpe=s.rpe,
             notes=s.notes,
+            performed_at=s.performed_at,
         )
         db.add(row)
         created.append(row)
@@ -151,6 +158,7 @@ async def update_set(
         "weight_kg": row.weight_kg,
         "rpe": row.rpe,
         "notes": row.notes,
+        "performed_at": row.performed_at.isoformat() if row.performed_at else None,
     }
 
 

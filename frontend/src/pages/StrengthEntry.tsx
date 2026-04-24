@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useApi } from "../hooks/useApi";
 import {
@@ -12,10 +12,20 @@ import { fetchActivities, type ActivitySummary } from "../api/activities";
 import { getErrorMessage } from "../utils/errors";
 
 /**
- * Log a strength session as a list of exercise cards. Each card holds
- * one exercise's sets; set numbers are generated from card order on save,
- * so the backend contract (`set_number` required) is unchanged.
+ * Log a strength session as a list of exercise cards. Two entry modes:
+ *
+ *   * **Live** (default) — tap "Log" between reps. Each tap stamps
+ *     `performed_at` on that set and auto-adds a fresh set to the same
+ *     card. A rest-timer chip shows seconds since the most recent log.
+ *     Only stamped sets are saved.
+ *   * **Retro** — classic form. No timestamps; every set with reps ≥ 1
+ *     saves. `performed_at` is stripped to null.
+ *
+ * Set numbers are generated from card order on save, so the existing
+ * backend contract (`set_number` required) is unchanged.
  */
+
+type EntryMode = "live" | "retro";
 
 type SetDraft = {
   key: number;
@@ -23,6 +33,8 @@ type SetDraft = {
   weight_kg: number | "";
   rpe: number | "";
   notes: string;
+  /** Naive-local ISO string stamped by Live-mode "Log" tap. Null until logged. */
+  performed_at: string | null;
 };
 
 type ExerciseCard = {
@@ -40,6 +52,7 @@ const emptySet = (): SetDraft => ({
   weight_kg: "",
   rpe: "",
   notes: "",
+  performed_at: null,
 });
 
 const emptyCard = (name = ""): ExerciseCard => ({
@@ -48,21 +61,82 @@ const emptyCard = (name = ""): ExerciseCard => ({
   sets: [emptySet()],
 });
 
+/** `new Date()` → "YYYY-MM-DDTHH:mm:ss" (naive local wall clock, no tz).
+ *  Matches the Eight Sleep convention used for sleep + activity
+ *  timestamps throughout the codebase. */
+function toNaiveLocalIso(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  );
+}
+
+function formatClockTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatRestTimer(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
 export default function StrengthEntry() {
   const navigate = useNavigate();
   const today = new Date().toISOString().slice(0, 10);
 
+  const [mode, setMode] = useState<EntryMode>("live");
   const [date, setDate] = useState(today);
   const [activityId, setActivityId] = useState<number | null>(null);
   const [cards, setCards] = useState<ExerciseCard[]>(() => [emptyCard()]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   const { data: exercises } = useApi(() => fetchStrengthExercises(), []);
   const { data: activities } = useApi(
     () => fetchActivities({ sport_type: "WeightTraining", days: 30, limit: 20 }),
     []
   );
+
+  // Rest timer: 1 Hz tick while in live mode. Cheap; ticks pause in retro.
+  useEffect(() => {
+    if (mode !== "live") return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [mode]);
+
+  const lastLoggedAt = useMemo(() => {
+    let max: number | null = null;
+    for (const c of cards) {
+      for (const s of c.sets) {
+        if (!s.performed_at) continue;
+        const t = new Date(s.performed_at).getTime();
+        if (max == null || t > max) max = t;
+      }
+    }
+    return max;
+  }, [cards]);
+  const restSeconds =
+    lastLoggedAt != null ? Math.max(0, Math.floor((now - lastLoggedAt) / 1000)) : null;
+
+  // After a Log tap that appends a fresh set, focus the new set's reps
+  // input so the user can start typing immediately.
+  const repsRefs = useRef<Map<number, HTMLInputElement | null>>(new Map());
+  const pendingFocusKey = useRef<number | null>(null);
+  useEffect(() => {
+    const key = pendingFocusKey.current;
+    if (key == null) return;
+    const el = repsRefs.current.get(key);
+    if (el) {
+      el.focus();
+      pendingFocusKey.current = null;
+    }
+  }, [cards]);
 
   const updateCard = (key: number, patch: Partial<ExerciseCard>) =>
     setCards((cs) => cs.map((c) => (c.key === key ? { ...c, ...patch } : c)));
@@ -76,10 +150,17 @@ export default function StrengthEntry() {
       )
     );
 
-  const addSet = (cardKey: number) =>
+  const addSet = (cardKey: number) => {
+    const freshKey = newKey();
     setCards((cs) =>
-      cs.map((c) => (c.key === cardKey ? { ...c, sets: [...c.sets, emptySet()] } : c))
+      cs.map((c) =>
+        c.key === cardKey
+          ? { ...c, sets: [...c.sets, { ...emptySet(), key: freshKey }] }
+          : c
+      )
     );
+    return freshKey;
+  };
 
   const removeSet = (cardKey: number, setKey: number) =>
     setCards((cs) =>
@@ -95,31 +176,59 @@ export default function StrengthEntry() {
   const removeCard = (key: number) =>
     setCards((cs) => (cs.length > 1 ? cs.filter((c) => c.key !== key) : cs));
 
-  const canSave = useMemo(
-    () =>
-      cards.every(
-        (c) =>
-          c.name.trim().length > 0 &&
-          c.sets.length > 0 &&
-          c.sets.every((s) => s.reps !== "" && Number(s.reps) >= 1)
-      ),
-    [cards]
-  );
+  const logSet = (cardKey: number, setKey: number) => {
+    const card = cards.find((c) => c.key === cardKey);
+    const set = card?.sets.find((s) => s.key === setKey);
+    if (!card || !set) return;
+    if (!card.name.trim()) {
+      setError("Name the exercise before logging a set.");
+      return;
+    }
+    if (set.reps === "" || Number(set.reps) < 1) {
+      setError("Fill in reps before logging this set.");
+      return;
+    }
+    setError(null);
+    updateSet(cardKey, setKey, { performed_at: toNaiveLocalIso(new Date()) });
+    // Auto-append and focus only if this was the last set in its card.
+    const isLast = card.sets[card.sets.length - 1].key === setKey;
+    if (isLast) {
+      pendingFocusKey.current = addSet(cardKey);
+    }
+  };
+
+  const canSave = useMemo(() => {
+    if (cards.every((c) => !c.name.trim())) return false;
+    if (mode === "live") {
+      return cards.some((c) => c.sets.some((s) => s.performed_at != null));
+    }
+    return cards.every(
+      (c) =>
+        c.name.trim().length > 0 &&
+        c.sets.length > 0 &&
+        c.sets.every((s) => s.reps !== "" && Number(s.reps) >= 1)
+    );
+  }, [cards, mode]);
 
   const handleSave = async () => {
     setError(null);
     setSaving(true);
     try {
-      const payload: StrengthSetInput[] = cards.flatMap((card) =>
-        card.sets.map((s, idx) => ({
-          exercise_name: card.name.trim(),
+      const payload: StrengthSetInput[] = cards.flatMap((card) => {
+        const name = card.name.trim();
+        if (!name) return [];
+        const sourceSets =
+          mode === "live" ? card.sets.filter((s) => s.performed_at != null) : card.sets;
+        return sourceSets.map((s, idx) => ({
+          exercise_name: name,
           set_number: idx + 1,
           reps: Number(s.reps),
           weight_kg: s.weight_kg === "" ? null : Number(s.weight_kg),
           rpe: s.rpe === "" ? null : Number(s.rpe),
           notes: s.notes.trim() === "" ? null : s.notes.trim(),
-        }))
-      );
+          performed_at: mode === "live" ? s.performed_at : null,
+        }));
+      });
       await createStrengthSession({ date, activity_id: activityId, sets: payload });
       navigate("/strength");
     } catch (e: unknown) {
@@ -134,7 +243,9 @@ export default function StrengthEntry() {
       <div className="page-header">
         <h1>Log Strength Session</h1>
         <p>
-          One card per exercise; sets stack inside it.{" "}
+          {mode === "live"
+            ? "Tap “Log” between sets to stamp timing and keep the rest timer honest."
+            : "Enter completed sets after the fact — no timestamps saved."}{" "}
           <Link to="/strength">← Back to sessions</Link>
         </p>
       </div>
@@ -142,7 +253,11 @@ export default function StrengthEntry() {
       {error && <div className="error">{error}</div>}
 
       <div className="card">
-        <div className="filter-bar" style={{ flexWrap: "wrap" }}>
+        <div className="filter-bar" style={{ flexWrap: "wrap", alignItems: "flex-end" }}>
+          <label className="field">
+            <span className="field-label">Mode</span>
+            <ModeToggle mode={mode} onChange={setMode} />
+          </label>
           <label className="field">
             <span className="field-label">Date</span>
             <input
@@ -168,6 +283,14 @@ export default function StrengthEntry() {
               ))}
             </select>
           </label>
+          {mode === "live" && (
+            <div className="rest-timer" aria-live="polite">
+              <span className="field-label">Rest</span>
+              <span className="rest-timer-value">
+                {restSeconds != null ? formatRestTimer(restSeconds) : "—"}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -181,12 +304,18 @@ export default function StrengthEntry() {
         <ExerciseCardView
           key={card.key}
           card={card}
+          mode={mode}
           canRemoveCard={cards.length > 1}
           onNameChange={(name) => updateCard(card.key, { name })}
           onRemoveCard={() => removeCard(card.key)}
           onAddSet={() => addSet(card.key)}
           onRemoveSet={(setKey) => removeSet(card.key, setKey)}
           onUpdateSet={(setKey, patch) => updateSet(card.key, setKey, patch)}
+          onLogSet={(setKey) => logSet(card.key, setKey)}
+          registerRepsInput={(setKey, el) => {
+            if (el) repsRefs.current.set(setKey, el);
+            else repsRefs.current.delete(setKey);
+          }}
           index={idx}
         />
       ))}
@@ -215,23 +344,60 @@ export default function StrengthEntry() {
   );
 }
 
+function ModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: EntryMode;
+  onChange: (m: EntryMode) => void;
+}) {
+  return (
+    <div className="mode-toggle" role="radiogroup" aria-label="Entry mode">
+      <button
+        type="button"
+        role="radio"
+        aria-checked={mode === "live"}
+        className={`mode-toggle-btn${mode === "live" ? " is-active" : ""}`}
+        onClick={() => onChange("live")}
+      >
+        Live
+      </button>
+      <button
+        type="button"
+        role="radio"
+        aria-checked={mode === "retro"}
+        className={`mode-toggle-btn${mode === "retro" ? " is-active" : ""}`}
+        onClick={() => onChange("retro")}
+      >
+        Retro
+      </button>
+    </div>
+  );
+}
+
 function ExerciseCardView({
   card,
+  mode,
   canRemoveCard,
   onNameChange,
   onRemoveCard,
   onAddSet,
   onRemoveSet,
   onUpdateSet,
+  onLogSet,
+  registerRepsInput,
   index,
 }: {
   card: ExerciseCard;
+  mode: EntryMode;
   canRemoveCard: boolean;
   onNameChange: (name: string) => void;
   onRemoveCard: () => void;
   onAddSet: () => void;
   onRemoveSet: (setKey: number) => void;
   onUpdateSet: (setKey: number, patch: Partial<SetDraft>) => void;
+  onLogSet: (setKey: number) => void;
+  registerRepsInput: (setKey: number, el: HTMLInputElement | null) => void;
   index: number;
 }) {
   const priorLabel = usePriorPerformance(card.name);
@@ -267,12 +433,17 @@ function ExerciseCardView({
             <th style={{ width: 180 }}>Weight (kg)</th>
             <th style={{ width: 70 }}>RPE</th>
             <th>Notes</th>
+            {mode === "live" && <th style={{ width: 96 }}>Log</th>}
             <th style={{ width: 40 }}></th>
           </tr>
         </thead>
         <tbody>
           {card.sets.map((set, setIdx) => (
-            <tr key={set.key} style={{ cursor: "default" }}>
+            <tr
+              key={set.key}
+              className={set.performed_at ? "set-logged" : undefined}
+              style={{ cursor: "default" }}
+            >
               <td className="set-number">{setIdx + 1}</td>
               <td>
                 <Stepper
@@ -280,6 +451,7 @@ function ExerciseCardView({
                   step={1}
                   min={1}
                   ariaLabel="Reps"
+                  inputRef={(el) => registerRepsInput(set.key, el)}
                   onChange={(v) => onUpdateSet(set.key, { reps: v })}
                 />
               </td>
@@ -315,6 +487,23 @@ function ExerciseCardView({
                   onChange={(e) => onUpdateSet(set.key, { notes: e.target.value })}
                 />
               </td>
+              {mode === "live" && (
+                <td>
+                  {set.performed_at ? (
+                    <span className="log-stamp" aria-label={`Logged at ${formatClockTime(set.performed_at)}`}>
+                      ✓ {formatClockTime(set.performed_at)}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-secondary log-btn"
+                      onClick={() => onLogSet(set.key)}
+                    >
+                      Log
+                    </button>
+                  )}
+                </td>
+              )}
               <td style={{ textAlign: "right" }}>
                 <button
                   type="button"
@@ -348,12 +537,14 @@ function Stepper({
   step,
   min,
   ariaLabel,
+  inputRef,
   onChange,
 }: {
   value: number | "";
   step: number;
   min: number;
   ariaLabel: string;
+  inputRef?: (el: HTMLInputElement | null) => void;
   onChange: (v: number | "") => void;
 }) {
   const current = value === "" ? null : Number(value);
@@ -378,6 +569,7 @@ function Stepper({
         −
       </button>
       <input
+        ref={inputRef}
         className="input stepper-input"
         type="number"
         step={step}
