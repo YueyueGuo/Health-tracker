@@ -141,6 +141,7 @@ class ActivityLap(Base):
     average_watts: Mapped[float | None] = mapped_column(Float)
     total_elevation_gain: Mapped[float | None] = mapped_column(Float)
     pace_zone: Mapped[int | None] = mapped_column(Integer)
+    hr_zone: Mapped[int | None] = mapped_column(Integer)
     split: Mapped[int | None] = mapped_column(Integer)
     start_index: Mapped[int | None] = mapped_column(Integer)
     end_index: Mapped[int | None] = mapped_column(Integer)

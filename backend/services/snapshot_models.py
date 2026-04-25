@@ -79,6 +79,34 @@ class WorkoutLapSnapshot(SnapshotModel):
     avg_hr: float | None
     avg_watts: float | None
     pace_zone: int | None
+    hr_zone: int | None
+
+
+class HrZoneRangeSnapshot(SnapshotModel):
+    zone: int
+    min: int
+    max: int
+
+
+class HrZonesSnapshot(SnapshotModel):
+    """Compact time-in-HR-zone summary for LLM context.
+
+    Shape varies with the user's zone count (Strava default is 5; custom
+    profiles can be 5 or 7). Only the percentages for present zones are
+    populated — missing keys mean that zone bucket doesn't exist in the
+    profile, which is distinct from "0% time in zone".
+    """
+    z1_pct: int | None = None
+    z2_pct: int | None = None
+    z3_pct: int | None = None
+    z4_pct: int | None = None
+    z5_pct: int | None = None
+    z6_pct: int | None = None
+    z7_pct: int | None = None
+    dominant_zone: int
+    total_minutes: int
+    bucket_count: int
+    ranges: list[HrZoneRangeSnapshot]
 
 
 class WorkoutWeatherSnapshot(SnapshotModel):
@@ -129,6 +157,10 @@ class LatestWorkoutSnapshot(SnapshotModel):
     suffer_score: int | None
     calories: float | None
     laps: list[WorkoutLapSnapshot]
+    hr_zones: HrZonesSnapshot | None
+    hr_drift: float | None
+    pace_hr_decoupling: float | None
+    power_hr_decoupling: float | None
     weather: WorkoutWeatherSnapshot | None
     pre_workout_sleep: PreWorkoutSleepSnapshot | None
     historical_comparison: HistoricalComparisonSnapshot | None

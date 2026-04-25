@@ -8,8 +8,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import Activity, ActivityLap, SleepSession, WeatherSnapshot
+from backend.services.hr_zones import (
+    compute_hr_drift,
+    compute_pace_hr_decoupling,
+    compute_power_hr_decoupling,
+    summarize_hr_zones,
+)
 from backend.services.snapshot_models import LatestWorkoutSnapshot, validate_snapshot
 from backend.services.time_utils import utc_now_naive
+
+_RUN_SPORTS = {"Run", "TrailRun", "VirtualRun"}
+_RIDE_SPORTS = {"Ride", "VirtualRide", "GravelRide", "MountainBikeRide", "EBikeRide"}
 
 
 async def _get_latest_completed_activity(
@@ -70,6 +79,7 @@ async def get_latest_workout_snapshot(
                 else None,
                 "avg_watts": round(lap.average_watts, 0) if lap.average_watts else None,
                 "pace_zone": lap.pace_zone,
+                "hr_zone": lap.hr_zone,
             }
         )
 
@@ -152,6 +162,18 @@ async def get_latest_workout_snapshot(
                 "effort_percentile": effort_percentile,
             }
 
+    hr_drift = await compute_hr_drift(db, activity.id)
+    pace_decoupling = (
+        await compute_pace_hr_decoupling(db, activity.id)
+        if activity.sport_type in _RUN_SPORTS
+        else None
+    )
+    power_decoupling = (
+        await compute_power_hr_decoupling(db, activity.id)
+        if activity.sport_type in _RIDE_SPORTS
+        else None
+    )
+
     payload = {
         "id": activity.id,
         "strava_id": activity.strava_id,
@@ -177,6 +199,10 @@ async def get_latest_workout_snapshot(
         "suffer_score": activity.suffer_score,
         "calories": activity.calories,
         "laps": lap_summaries,
+        "hr_zones": summarize_hr_zones(activity.zones_data),
+        "hr_drift": hr_drift,
+        "pace_hr_decoupling": pace_decoupling,
+        "power_hr_decoupling": power_decoupling,
         "weather": weather,
         "pre_workout_sleep": pre_sleep,
         "historical_comparison": historical,

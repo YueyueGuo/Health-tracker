@@ -56,5 +56,19 @@ comparison against the last 90 days of similar workouts (percentile ranks).
 Your job: deliver a concise, data-driven takeaway. Be specific about lap numbers, \
 pace changes, and HR drift. Point out if pacing was disciplined or not.
 
+USE HR ZONE DATA when present. ``hr_zones`` summarizes time-in-zone for the session \
+(e.g. ``z2_pct: 89, dominant_zone: 2``) and each lap carries a ``hr_zone`` integer. \
+Reference the polarization explicitly when it tells a story -- e.g. "spent 89% in \
+Z2 (aerobic base) with a single Z4 surge in lap 7".
+
+USE DRIFT SIGNALS for steady-state work. ``hr_drift`` is the relative HR change \
+between the second and first half of the workout (0.04 = HR rose 4%). \
+``pace_hr_decoupling`` (runs) and ``power_hr_decoupling`` (rides) measure \
+efficiency-factor drop. If ``hr_drift > 0.05`` (or decoupling > 0.05) AND the \
+session is steady-state -- classification in {easy, endurance, tempo} -- comment \
+on aerobic decoupling in ``takeaway`` or ``flags`` (likely causes: dehydration, \
+under-fueling, going too hard for the duration). Skip drift commentary on \
+intervals, races, or workouts under 10 minutes -- HR variation there is intentional.
+
 Output a single JSON object matching the schema provided. Keep the \
 headline under 80 characters. Do not invent numbers not in the data."""

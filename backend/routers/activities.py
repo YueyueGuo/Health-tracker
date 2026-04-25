@@ -9,7 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.models import Activity, ActivityLap, ActivityStream, WeatherSnapshot
+from backend.services.hr_zones import (
+    compute_hr_drift,
+    compute_pace_hr_decoupling,
+    compute_power_hr_decoupling,
+)
 from backend.services.time_utils import utc_now_naive
+
+_RUN_SPORTS = {"Run", "TrailRun", "VirtualRun"}
+_RIDE_SPORTS = {"Ride", "VirtualRide", "GravelRide", "MountainBikeRide", "EBikeRide"}
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -107,11 +115,28 @@ async def get_activity(activity_id: int, db: AsyncSession = Depends(get_db)):
         select(ActivityStream).where(ActivityStream.activity_id == activity_id)
     )).scalars().first()
 
+    # Drift / decoupling metrics — read-only against cached streams.
+    # Returns None when streams aren't cached, never triggers a Strava fetch.
+    hr_drift = await compute_hr_drift(db, activity_id)
+    pace_decoupling = (
+        await compute_pace_hr_decoupling(db, activity_id)
+        if activity.sport_type in _RUN_SPORTS
+        else None
+    )
+    power_decoupling = (
+        await compute_power_hr_decoupling(db, activity_id)
+        if activity.sport_type in _RIDE_SPORTS
+        else None
+    )
+
     detail = _activity_summary(activity)
     detail["laps"] = laps
     detail["zones"] = activity.zones_data
     detail["weather"] = _weather_dict(weather) if weather else None
     detail["streams_cached"] = streams_count is not None
+    detail["hr_drift"] = hr_drift
+    detail["pace_hr_decoupling"] = pace_decoupling
+    detail["power_hr_decoupling"] = power_decoupling
     detail["raw_data"] = activity.raw_data
     return detail
 
@@ -319,6 +344,7 @@ def _lap_dict(lap: ActivityLap) -> dict:
         "average_watts": lap.average_watts,
         "total_elevation_gain": lap.total_elevation_gain,
         "pace_zone": lap.pace_zone,
+        "hr_zone": lap.hr_zone,
         "split": lap.split,
         "start_index": lap.start_index,
         "end_index": lap.end_index,
