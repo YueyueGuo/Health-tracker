@@ -76,6 +76,27 @@ export interface WorkoutLapSnapshot {
   avg_hr: number | null;
   avg_watts: number | null;
   pace_zone: number | null;
+  hr_zone: number | null;
+}
+
+export interface HrZoneRangeSnapshot {
+  zone: number;
+  min: number;
+  max: number;
+}
+
+export interface HrZonesSnapshot {
+  z1_pct?: number | null;
+  z2_pct?: number | null;
+  z3_pct?: number | null;
+  z4_pct?: number | null;
+  z5_pct?: number | null;
+  z6_pct?: number | null;
+  z7_pct?: number | null;
+  dominant_zone: number;
+  total_minutes: number;
+  bucket_count: number;
+  ranges: HrZoneRangeSnapshot[];
 }
 
 export interface WorkoutWeatherSnapshot {
@@ -126,6 +147,10 @@ export interface LatestWorkoutSnapshot {
   suffer_score: number | null;
   calories: number | null;
   laps: WorkoutLapSnapshot[];
+  hr_zones: HrZonesSnapshot | null;
+  hr_drift: number | null;
+  pace_hr_decoupling: number | null;
+  power_hr_decoupling: number | null;
   weather: WorkoutWeatherSnapshot | null;
   pre_workout_sleep: PreWorkoutSleepSnapshot | null;
   historical_comparison: HistoricalComparisonSnapshot | null;

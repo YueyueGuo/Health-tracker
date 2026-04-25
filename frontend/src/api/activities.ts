@@ -68,6 +68,7 @@ export interface ActivityLap {
   average_watts: number | null;
   total_elevation_gain: number | null;
   pace_zone: number | null;
+  hr_zone: number | null;
   split: number | null;
   start_index: number | null;
   end_index: number | null;
@@ -91,6 +92,9 @@ export interface ActivityDetail extends ActivitySummary {
   zones: ZoneDistribution[] | null;
   weather: Record<string, unknown> | null;
   streams_cached: boolean;
+  hr_drift: number | null;
+  pace_hr_decoupling: number | null;
+  power_hr_decoupling: number | null;
   raw_data: Record<string, unknown> | null;
 }
 

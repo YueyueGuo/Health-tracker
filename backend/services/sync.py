@@ -17,6 +17,7 @@ from backend.models import (
     WeatherSnapshot,
 )
 from backend.services.classifier import classify_and_persist
+from backend.services.hr_zones import assign_lap_hr_zone
 from backend.services.time_utils import utc_now, utc_now_naive
 
 logger = logging.getLogger(__name__)
@@ -247,7 +248,9 @@ class SyncEngine:
                 delete(ActivityLap).where(ActivityLap.activity_id == activity.id)
             )
             for lap_raw in detail.get("laps") or []:
-                self.db.add(_lap_from_raw(activity_id=activity.id, raw=lap_raw))
+                lap = _lap_from_raw(activity_id=activity.id, raw=lap_raw)
+                lap.hr_zone = assign_lap_hr_zone(lap.average_heartrate, activity.zones_data)
+                self.db.add(lap)
 
             activity.enrichment_status = "complete"
             activity.enrichment_error = None

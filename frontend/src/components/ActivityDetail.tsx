@@ -44,6 +44,23 @@ const ALT_LOW_M = 610;
 const ALT_MODERATE_M = 1500;
 const ALT_HIGH_M = 2500;
 
+// Drift commentary applies only to steady-state classifications. Mirrors
+// the gating in the WorkoutInsight system prompt.
+const STEADY_STATE_CLASSIFICATIONS = new Set(["easy", "endurance", "tempo"]);
+
+// Drift thresholds (relative HR change between halves). See plan doc.
+function driftTier(value: number): { label: string; tone: "good" | "warn" | "bad" } {
+  const v = Math.abs(value);
+  if (v < 0.05) return { label: "well-paired", tone: "good" };
+  if (v < 0.10) return { label: "moderate", tone: "warn" };
+  return { label: "significant", tone: "bad" };
+}
+
+function formatDriftPct(value: number | null): string {
+  if (value == null) return "—";
+  return `${(value * 100).toFixed(1)}%`;
+}
+
 function altitudeTierLabel(elevation_m: number): string | null {
   if (elevation_m >= ALT_HIGH_M) return "high altitude";
   if (elevation_m >= ALT_MODERATE_M) return "moderate altitude";
@@ -182,6 +199,43 @@ export default function ActivityDetail() {
             {activity.max_hr && <div className="subtext">Max: {Math.round(activity.max_hr)} bpm</div>}
           </div>
         )}
+        {activity.hr_drift != null &&
+          activity.classification_type &&
+          STEADY_STATE_CLASSIFICATIONS.has(activity.classification_type) &&
+          (() => {
+            const tier = driftTier(activity.hr_drift);
+            const decoupling =
+              activity.pace_hr_decoupling ?? activity.power_hr_decoupling;
+            const decouplingLabel =
+              activity.pace_hr_decoupling != null
+                ? "Pace–HR"
+                : activity.power_hr_decoupling != null
+                  ? "Power–HR"
+                  : null;
+            const toneColor =
+              tier.tone === "good"
+                ? "var(--success, #10b981)"
+                : tier.tone === "warn"
+                  ? "var(--warning, #f59e0b)"
+                  : "var(--danger, #ef4444)";
+            return (
+              <div className="metric-card">
+                <div className="label">Cardiac Drift</div>
+                <div className="value" style={{ color: toneColor }}>
+                  {formatDriftPct(activity.hr_drift)}
+                </div>
+                <div className="subtext">
+                  {tier.label}
+                  {decoupling != null && decouplingLabel && (
+                    <>
+                      {" • "}
+                      {decouplingLabel}: {formatDriftPct(decoupling)}
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         {activity.average_speed && activity.distance && (
           <div className="metric-card">
             <div className="label">
@@ -275,7 +329,8 @@ export default function ActivityDetail() {
                 <th>Pace</th>
                 <th>Avg HR</th>
                 <th>Avg Power</th>
-                <th>Zone</th>
+                <th>Pace Zone</th>
+                <th>HR Zone</th>
               </tr>
             </thead>
             <tbody>
@@ -292,6 +347,7 @@ export default function ActivityDetail() {
                   <td>{lap.average_heartrate ? Math.round(lap.average_heartrate) : "—"}</td>
                   <td>{lap.average_watts ? `${Math.round(lap.average_watts)} W` : "—"}</td>
                   <td>{lap.pace_zone ?? "—"}</td>
+                  <td>{lap.hr_zone ?? "—"}</td>
                 </tr>
               ))}
             </tbody>

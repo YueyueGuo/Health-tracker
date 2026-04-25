@@ -124,6 +124,9 @@ const activity: ActivityDetailResponse = {
   zones: null,
   weather: null,
   streams_cached: false,
+  hr_drift: null,
+  pace_hr_decoupling: null,
+  power_hr_decoupling: null,
   raw_data: null,
 };
 
@@ -163,6 +166,10 @@ describe("ActivityDetail", () => {
         suffer_score: 50,
         calories: 400,
         laps: [],
+        hr_zones: null,
+        hr_drift: null,
+        pace_hr_decoupling: null,
+        power_hr_decoupling: null,
         weather: null,
         pre_workout_sleep: null,
         historical_comparison: null,
