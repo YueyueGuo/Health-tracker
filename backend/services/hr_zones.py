@@ -114,7 +114,6 @@ def assign_lap_hr_zone(
 
     hr = float(lap_avg_hr)
     for i, b in enumerate(buckets):
-        bmin = float(b.get("min", 0))
         bmax_raw = b.get("max", 0)
         bmax = float(bmax_raw)
         if bmax == -1:

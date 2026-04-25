@@ -48,17 +48,20 @@ async def _run(batch: int, dry_run: bool) -> None:
     skipped_no_zones = 0
     processed = 0
     last_progress = 0
+    last_seen_lap_id = 0
 
     while True:
         async with async_session() as db:
             laps = (await db.execute(
                 select(ActivityLap).where(
+                    ActivityLap.id > last_seen_lap_id,
                     ActivityLap.hr_zone.is_(None),
                     ActivityLap.average_heartrate.is_not(None),
-                ).limit(batch)
+                ).order_by(ActivityLap.id).limit(batch)
             )).scalars().all()
             if not laps:
                 break
+            last_seen_lap_id = laps[-1].id
 
             activity_ids = {lap.activity_id for lap in laps}
             activities = (await db.execute(
