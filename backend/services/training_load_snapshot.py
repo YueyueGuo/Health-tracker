@@ -13,6 +13,23 @@ from backend.services.snapshot_models import TrainingLoadSnapshot, validate_snap
 from backend.services.time_utils import local_today
 
 HARD_CLASSIFICATIONS = {"intervals", "tempo", "race", "mixed"}
+ACWR_TOOLTIP = (
+    "Acute:Chronic Workload Ratio -- last 7 days of training load divided by "
+    "last 28 days. >1.5 elevated injury risk; 0.8-1.3 optimal; <0.8 detraining."
+)
+
+
+def acwr_band(acwr: float | None) -> str | None:
+    """Classify Acute:Chronic Workload Ratio into dashboard display bands."""
+    if acwr is None:
+        return None
+    if acwr < 0.8:
+        return "detraining"
+    if acwr <= 1.3:
+        return "optimal"
+    if acwr <= 1.5:
+        return "caution"
+    return "elevated"
 
 
 def _stress_score(a: Activity) -> float:
@@ -58,19 +75,25 @@ async def get_training_load_snapshot(
     class_7d: dict[str, int] = {}
     class_28d: dict[str, int] = {}
     last_hard_date: date | None = None
+    activity_count_7d = 0
 
     for a in activities:
         day = (a.start_date_local or a.start_date).date()
+        day_delta = (today - day).days
+        if day < window_start or day > today:
+            continue
         daily[day] = daily.get(day, 0.0) + _stress_score(a)
 
         if a.classification_type:
-            if (today - day).days < 28:
+            if day_delta < 28:
                 class_28d[a.classification_type] = class_28d.get(a.classification_type, 0) + 1
-            if (today - day).days < 7:
+            if day_delta < 7:
                 class_7d[a.classification_type] = class_7d.get(a.classification_type, 0) + 1
             if a.classification_type in HARD_CLASSIFICATIONS:
                 if last_hard_date is None or day > last_hard_date:
                     last_hard_date = day
+        if day_delta < 7:
+            activity_count_7d += 1
 
     def _sum_window(days_back: int) -> float:
         total = 0.0
@@ -117,10 +140,6 @@ async def get_training_load_snapshot(
         "classification_counts_7d": class_7d,
         "classification_counts_28d": class_28d,
         "daily_loads": daily_series,
-        "activity_count_7d": sum(
-            1
-            for a in activities
-            if (today - (a.start_date_local or a.start_date).date()).days < 7
-        ),
+        "activity_count_7d": activity_count_7d,
     }
     return validate_snapshot(payload, TrainingLoadSnapshot)

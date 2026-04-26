@@ -28,6 +28,7 @@ async def get_sleep_snapshot(
     rows = await db.execute(
         select(SleepSession)
         .where(SleepSession.date >= cutoff)
+        .where(SleepSession.date <= today)
         .order_by(SleepSession.date.desc())
     )
     sessions = list(rows.scalars().all())
@@ -77,24 +78,77 @@ async def get_recovery_snapshot(
     db: AsyncSession, days: int = 7, today: date | None = None
 ) -> dict:
     today = today or local_today()
-    cutoff = today - timedelta(days=days)
+    cutoff = today - timedelta(days=max(days, 1) - 1)
     rows = await db.execute(
         select(Recovery)
         .where(Recovery.date >= cutoff)
+        .where(Recovery.date <= today)
         .order_by(Recovery.date.desc())
     )
     records = list(rows.scalars().all())
 
+    sleep_rows = await db.execute(
+        select(SleepSession)
+        .where(SleepSession.date >= cutoff)
+        .where(SleepSession.date <= today)
+        .order_by(SleepSession.date.desc())
+    )
+    sleep_sessions = list(sleep_rows.scalars().all())
+
+    eight_sleep_sessions = [
+        s for s in sleep_sessions if s.source == "eight_sleep"
+    ]
+    today_r = records[0] if records else None
+    current_recovery = next((r for r in records if r.date == today), None)
+    primary_sleep = next(
+        (s for s in eight_sleep_sessions if s.date == today),
+        None,
+    )
+
+    def _avg_values(values: list[float | None]) -> float | None:
+        present = [v for v in values if v is not None]
+        return round(sum(present) / len(present), 1) if present else None
+
+    eight_hrvs = [s.hrv for s in eight_sleep_sessions[:7]]
+    whoop_hrvs = [r.hrv for r in records[:7]]
+
+    hrv_source = None
+    if primary_sleep and primary_sleep.hrv is not None:
+        hrv_source = "eight_sleep"
+        today_hrv = primary_sleep.hrv
+        hrv_baseline = _avg_values(eight_hrvs)
+    else:
+        today_hrv = current_recovery.hrv if current_recovery else None
+        hrv_source = "whoop" if today_hrv is not None else None
+        hrv_baseline = _avg_values(whoop_hrvs)
+
+    hrv_trend = None
+    if today_hrv is not None and hrv_baseline is not None:
+        diff = today_hrv - hrv_baseline
+        if diff >= 3:
+            hrv_trend = "up"
+        elif diff <= -3:
+            hrv_trend = "down"
+        else:
+            hrv_trend = "flat"
+
+    today_resting_hr = (
+        primary_sleep.avg_hr
+        if primary_sleep and primary_sleep.avg_hr is not None
+        else (current_recovery.resting_hr if current_recovery else None)
+    )
+
     if not records:
         payload = {
+            "today_date": primary_sleep.date.isoformat() if primary_sleep else None,
             "today_score": None,
-            "today_hrv": None,
-            "today_resting_hr": None,
+            "today_hrv": today_hrv,
+            "today_resting_hr": today_resting_hr,
             "avg_score_7d": None,
             "trend": None,
-            "hrv_baseline_7d": None,
-            "hrv_trend": None,
-            "hrv_source": None,
+            "hrv_baseline_7d": hrv_baseline,
+            "hrv_trend": hrv_trend,
+            "hrv_source": hrv_source,
         }
         return validate_snapshot(payload, RecoverySnapshot)
 
@@ -102,7 +156,6 @@ async def get_recovery_snapshot(
         values = [getattr(r, attr) for r in records if getattr(r, attr) is not None]
         return round(sum(values) / len(values), 1) if values else None
 
-    today_r = records[0]
     avg_7 = _avg("recovery_score")
     trend = None
     if today_r.recovery_score is not None and avg_7 is not None:
@@ -117,13 +170,13 @@ async def get_recovery_snapshot(
     payload = {
         "today_date": today_r.date.isoformat(),
         "today_score": today_r.recovery_score,
-        "today_hrv": today_r.hrv,
-        "today_resting_hr": today_r.resting_hr,
+        "today_hrv": today_hrv,
+        "today_resting_hr": today_resting_hr,
         "avg_score_7d": avg_7,
         "trend": trend,
-        "hrv_baseline_7d": None,
-        "hrv_trend": None,
-        "hrv_source": None,
+        "hrv_baseline_7d": hrv_baseline,
+        "hrv_trend": hrv_trend,
+        "hrv_source": hrv_source,
     }
     return validate_snapshot(payload, RecoverySnapshot)
 
