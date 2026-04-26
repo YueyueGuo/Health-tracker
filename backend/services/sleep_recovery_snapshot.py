@@ -92,6 +92,9 @@ async def get_recovery_snapshot(
             "today_resting_hr": None,
             "avg_score_7d": None,
             "trend": None,
+            "hrv_baseline_7d": None,
+            "hrv_trend": None,
+            "hrv_source": None,
         }
         return validate_snapshot(payload, RecoverySnapshot)
 
@@ -118,6 +121,9 @@ async def get_recovery_snapshot(
         "today_resting_hr": today_r.resting_hr,
         "avg_score_7d": avg_7,
         "trend": trend,
+        "hrv_baseline_7d": None,
+        "hrv_trend": None,
+        "hrv_source": None,
     }
     return validate_snapshot(payload, RecoverySnapshot)
 
