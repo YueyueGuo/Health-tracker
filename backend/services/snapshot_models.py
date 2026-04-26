@@ -69,6 +69,9 @@ class RecoverySnapshot(SnapshotModel):
     today_resting_hr: float | None = None
     avg_score_7d: float | None = None
     trend: str | None = None
+    hrv_baseline_7d: float | None = None
+    hrv_trend: str | None = None
+    hrv_source: str | None = None
 
 
 class WorkoutLapSnapshot(SnapshotModel):
@@ -224,6 +227,34 @@ class FeedbackSummarySnapshot(SnapshotModel):
 class EnvironmentalSnapshot(SnapshotModel):
     last_night_bed_temp_c: float
     last_night_date: str | None
+
+
+class EnvironmentForecastSnapshot(SnapshotModel):
+    temp_c: float | None = None
+    high_c: float | None = None
+    low_c: float | None = None
+    conditions: str | None = None
+    wind_ms: float | None = None
+
+
+class EnvironmentPollenSnapshot(SnapshotModel):
+    alder: float | None = None
+    birch: float | None = None
+    grass: float | None = None
+    mugwort: float | None = None
+    olive: float | None = None
+    ragweed: float | None = None
+
+
+class EnvironmentAirQualitySnapshot(SnapshotModel):
+    us_aqi: int | None = None
+    european_aqi: int | None = None
+    pollen: EnvironmentPollenSnapshot | None = None
+
+
+class EnvironmentTodaySnapshot(SnapshotModel):
+    forecast: EnvironmentForecastSnapshot | None = None
+    air_quality: EnvironmentAirQualitySnapshot | None = None
 
 
 class RecentActivitySnapshot(SnapshotModel):

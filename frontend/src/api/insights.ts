@@ -66,6 +66,9 @@ export interface RecoverySnapshot {
   today_resting_hr: number | null;
   avg_score_7d: number | null;
   trend: "improving" | "stable" | "declining" | null;
+  hrv_baseline_7d: number | null;
+  hrv_trend: "up" | "down" | "flat" | null;
+  hrv_source: "eight_sleep" | "whoop" | null;
 }
 
 export interface WorkoutLapSnapshot {
@@ -213,6 +216,34 @@ export interface FeedbackSummarySnapshot {
 export interface EnvironmentalSnapshot {
   last_night_bed_temp_c: number;
   last_night_date: string | null;
+}
+
+export interface EnvironmentForecastSnapshot {
+  temp_c: number | null;
+  high_c: number | null;
+  low_c: number | null;
+  conditions: string | null;
+  wind_ms: number | null;
+}
+
+export interface EnvironmentPollenSnapshot {
+  alder: number | null;
+  birch: number | null;
+  grass: number | null;
+  mugwort: number | null;
+  olive: number | null;
+  ragweed: number | null;
+}
+
+export interface EnvironmentAirQualitySnapshot {
+  us_aqi: number | null;
+  european_aqi: number | null;
+  pollen: EnvironmentPollenSnapshot | null;
+}
+
+export interface EnvironmentTodaySnapshot {
+  forecast: EnvironmentForecastSnapshot | null;
+  air_quality: EnvironmentAirQualitySnapshot | null;
 }
 
 export interface RecentActivitySnapshot {
