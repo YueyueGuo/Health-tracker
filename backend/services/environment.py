@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.clients.openmeteo import OpenMeteoClient
+from backend.clients.weather import WeatherRateLimitError
 from backend.models.user_location import UserLocation
 from backend.services.snapshot_models import EnvironmentTodaySnapshot
 
@@ -62,10 +63,16 @@ async def _safe_call(coro):
     """Run ``coro`` and return ``(ok, value_or_none)``.
 
     Per-endpoint failures should produce a partial payload, not poison
-    the whole snapshot.
+    the whole snapshot. Rate-limit errors are *intentionally* swallowed:
+    the env tile is a soft requirement, the 1h cache prevents pathological
+    re-hammering, and surfacing 429s to the dashboard router would just
+    blank the whole dashboard rather than degrade gracefully.
     """
     try:
         return True, await coro
+    except WeatherRateLimitError as exc:
+        logger.warning("Open-Meteo rate-limited environment fetch: %s", exc)
+        return False, None
     except Exception as exc:  # pragma: no cover - logged below
         logger.warning("environment sub-call failed: %s", exc)
         return False, None
@@ -107,6 +114,12 @@ async def fetch_environment_today(db: AsyncSession) -> dict | None:
     if not forecast_ok and not aq_ok:
         # Both legs blew up — nothing to show. Don't cache failure;
         # next request will retry.
+        return None
+
+    if forecast is None and air_quality is None:
+        # Both legs succeeded but had no data (e.g. coverage gap) —
+        # render-empty would be misleading; treat as unavailable. Skip
+        # cache so a transient upstream null doesn't stick for an hour.
         return None
 
     payload = {

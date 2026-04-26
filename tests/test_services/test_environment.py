@@ -238,3 +238,23 @@ async def test_total_failure_returns_none(db_session, monkeypatch):
     assert await fetch_environment_today(db_session) is None
     # Cache must stay empty so the next request re-attempts.
     assert env_mod._cache == {}
+
+
+async def test_both_legs_return_none_collapses_to_none(db_session, monkeypatch):
+    """Both legs succeed but return None (coverage gap) → return None,
+    don't cache an empty payload that would render a blank tile for an hour."""
+    await _add_default_location(db_session)
+
+    async def _none_forecast(self, lat, lng):
+        return None
+
+    async def _none_aq(self, lat, lng):
+        return None
+
+    monkeypatch.setattr(OpenMeteoClient, "get_forecast_today", _none_forecast)
+    monkeypatch.setattr(
+        OpenMeteoClient, "get_air_quality_and_pollen", _none_aq
+    )
+
+    assert await fetch_environment_today(db_session) is None
+    assert env_mod._cache == {}
