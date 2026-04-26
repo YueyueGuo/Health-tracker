@@ -55,3 +55,71 @@ export interface DashboardOverview {
 export function fetchDashboardOverview() {
   return fetchJson<DashboardOverview>("/dashboard/overview");
 }
+
+export interface SleepTodayPayload {
+  last_night_score: number | null;
+  last_night_duration_min: number | null;
+  last_night_deep_min: number | null;
+  last_night_rem_min: number | null;
+  last_night_date: string | null;
+}
+
+export interface RecoveryTodayPayload {
+  today_hrv: number | null;
+  today_resting_hr: number | null;
+  hrv_baseline_7d: number | null;
+  hrv_trend: "up" | "down" | "flat" | null;
+  hrv_source: "eight_sleep" | "whoop" | null;
+}
+
+export interface TrainingTodayPayload {
+  yesterday_stress: number;
+  week_to_date_load: number;
+  acwr: number | null;
+  acwr_band: "detraining" | "optimal" | "caution" | "elevated" | null;
+  days_since_hard: number | null;
+}
+
+export interface EnvironmentForecastPayload {
+  temp_c: number | null;
+  high_c: number | null;
+  low_c: number | null;
+  conditions: string | null;
+  wind_ms: number | null;
+}
+
+export interface EnvironmentPollenPayload {
+  alder: number | null;
+  birch: number | null;
+  grass: number | null;
+  mugwort: number | null;
+  olive: number | null;
+  ragweed: number | null;
+}
+
+export interface EnvironmentAirQualityPayload {
+  us_aqi: number | null;
+  european_aqi: number | null;
+  pollen: EnvironmentPollenPayload | null;
+}
+
+export interface EnvironmentTodayPayload {
+  forecast: EnvironmentForecastPayload | null;
+  air_quality: EnvironmentAirQualityPayload | null;
+}
+
+export interface DashboardToday {
+  as_of: string;
+  sleep: SleepTodayPayload;
+  recovery: RecoveryTodayPayload;
+  training: TrainingTodayPayload;
+  environment: EnvironmentTodayPayload | null;
+}
+
+export const ACWR_TOOLTIP =
+  "Acute:Chronic Workload Ratio -- last 7 days of training load divided by " +
+  "last 28 days. >1.5 elevated injury risk; 0.8-1.3 optimal; <0.8 detraining.";
+
+export function fetchDashboardToday() {
+  return fetchJson<DashboardToday>("/dashboard/today");
+}
