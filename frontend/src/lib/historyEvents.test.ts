@@ -114,7 +114,7 @@ describe("buildHistoryEvents", () => {
     );
     expect(events.map((e) => e.id)).toEqual([
       "activity-2",
-      "sleep-2026-04-24",
+      "sleep-1",
       "activity-1",
       "strength-2026-04-22",
     ]);
@@ -174,6 +174,32 @@ describe("buildHistoryEvents", () => {
       [makeStrength({ activity_id: 42 })]
     );
     expect(events[0].navigateTo).toBe("/activities/42");
+  });
+
+  it("dedupes sleep rows by date, preferring eight_sleep over whoop", () => {
+    const events = buildHistoryEvents(
+      [],
+      [
+        makeSleep({ id: 100, source: "whoop", date: "2026-04-25" }),
+        makeSleep({ id: 101, source: "eight_sleep", date: "2026-04-25" }),
+        makeSleep({ id: 102, source: "whoop", date: "2026-04-24" }),
+      ],
+      []
+    );
+    expect(events.map((e) => e.id).sort()).toEqual(["sleep-101", "sleep-102"]);
+  });
+
+  it("uses unique sleep keys so multiple-source data does not collide", () => {
+    const events = buildHistoryEvents(
+      [],
+      [
+        makeSleep({ id: 1, source: "eight_sleep", date: "2026-04-25" }),
+        makeSleep({ id: 2, source: "whoop", date: "2026-04-26" }),
+      ],
+      []
+    );
+    const ids = events.map((e) => e.id);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });
 

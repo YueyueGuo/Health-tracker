@@ -181,7 +181,7 @@ function sleepToEvent(s: SleepSession): HistoryEvent {
       ? "text-brand-amber"
       : "text-sky-400";
   return {
-    id: `sleep-${s.date}`,
+    id: `sleep-${s.id}`,
     category: "Health",
     type: "MorningStatus",
     title: "Sleep & Recovery",
@@ -217,7 +217,8 @@ function sleepToEvent(s: SleepSession): HistoryEvent {
 
 /** Merge raw API responses into a unified, newest-first timeline.
  *  Strength rows whose `activity_id` matches a Strava WeightTraining
- *  activity dedup with the strength row winning. */
+ *  activity dedup with the strength row winning. Sleep rows are deduped
+ *  by date (eight_sleep wins over whoop when both are present). */
 export function buildHistoryEvents(
   activities: ActivitySummary[],
   sleep: SleepSession[],
@@ -226,6 +227,13 @@ export function buildHistoryEvents(
   const linkedActivityIds = new Set(
     strength.map((s) => s.activity_id).filter((x): x is number => x != null)
   );
+  const sleepByDate = new Map<string, SleepSession>();
+  for (const s of sleep) {
+    const existing = sleepByDate.get(s.date);
+    if (!existing || (s.source === "eight_sleep" && existing.source !== "eight_sleep")) {
+      sleepByDate.set(s.date, s);
+    }
+  }
   const events: HistoryEvent[] = [];
   for (const a of activities) {
     if (linkedActivityIds.has(a.id)) continue;
@@ -234,7 +242,7 @@ export function buildHistoryEvents(
   for (const s of strength) {
     events.push(strengthToEvent(s));
   }
-  for (const s of sleep) {
+  for (const s of sleepByDate.values()) {
     events.push(sleepToEvent(s));
   }
   events.sort((a, b) =>
