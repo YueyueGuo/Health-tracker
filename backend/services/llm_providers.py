@@ -53,6 +53,7 @@ class AnthropicProvider(LLMProvider):
     MODELS = {
         "claude-sonnet": "claude-sonnet-4-20250514",
         "claude-opus": "claude-opus-4-20250514",
+        "claude-opus-4-7": "claude-opus-4-7",
         "claude-haiku": "claude-haiku-4-5-20251001",
     }
 
@@ -145,6 +146,8 @@ class OpenAIProvider(LLMProvider):
     """GPT models via OpenAI SDK."""
 
     MODELS = {
+        "gpt-5.5": "gpt-5.5-2026-04-23",
+        "gpt-5.5-pro": "gpt-5.5-pro-2026-04-23",
         "gpt-4o": "gpt-4o",
         "gpt-4o-mini": "gpt-4o-mini",
         "gpt-4-turbo": "gpt-4-turbo",

@@ -80,14 +80,20 @@ class LLMSettings(BaseSettings):
     google_ai_api_key: str = ""
     default_llm_provider: str = "claude-sonnet"
     # Model used for the dashboard insights (daily recommendation +
-    # latest-workout takeaway). gpt-4o is the primary because the user's
-    # OpenAI key is set and Anthropic is empty; haiku/sonnet were falling
-    # through silently to OpenAI anyway. Paying for the better model on
-    # the primary call now that the prompt is richer (goals, RPE,
-    # feedback, baselines).
-    dashboard_model: str = "gpt-4o"
+    # latest-workout takeaway). Keep this on the strongest general model;
+    # card-level overrides can still pick a different registered model.
+    dashboard_model: str = "gpt-5.5"
     # Ordered fallback chain if the primary model fails.
-    dashboard_fallback_models: list[str] = ["claude-sonnet", "gpt-4o-mini"]
+    dashboard_fallback_models: list[str] = [
+        "claude-opus-4-7",
+        "gemini-2.5-pro",
+        "gpt-4o",
+    ]
+
+    @classmethod
+    def available_dashboard_models(cls) -> list[str]:
+        """Models surfaced in the dashboard insight picker."""
+        return ["gpt-5.5", "gpt-5.5-pro", "claude-opus-4-7", "gemini-2.5-pro"]
 
     @field_validator("dashboard_fallback_models", mode="before")
     @classmethod
