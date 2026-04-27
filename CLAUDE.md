@@ -503,13 +503,10 @@ safe to run while the backfill scheduler is writing.
   phase A/B are now covered (48 + 21 + 26 new tests). The remaining
   Strava gap is full HTTP-level coverage of `StravaClient` OAuth /
   refresh / pagination (header parsing is already tested).
-- **Refactor follow-up** — see `REFACTOR_FINDINGS.md`. Most of the
-  refactor queue has landed (frontend API split, shared HTTP helper,
-  location/settings decomposition, snapshot Pydantic contracts + drift
-  detector, date-helper cleanup, bundle splitting, chat/insights
-  consolidation, strength-entry-redesign extraction, stash + stale-branch
-  cleanup). Only open item: **HR zones / cardiac drift** — backend-first
-  slice mined from `origin/claude/interesting-archimedes-16548a`.
+- **Frontend redesign follow-up** — active UI work is on the
+  `feat/frontend-redesign-dashboard-history-record` branch / PR #27.
+  The older refactor queue is considered complete and should not be
+  used to direct future sessions.
 
 ## Ambient state you should know about
 - `scripts/backfill_strava.py` was kicked off as a background process and

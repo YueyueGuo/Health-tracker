@@ -504,11 +504,10 @@ existing PR.
   phase A/B are now covered (48 + 21 + 26 new tests). The remaining
   Strava gap is full HTTP-level coverage of `StravaClient` OAuth /
   refresh / pagination (header parsing is already tested).
-- **Refactor follow-up** — see `REFACTOR_FINDINGS.md` for the active queue:
-  snapshot frontend/backend type-sync checklist or generation,
-  route-level date-helper cleanup, Settings/Goals decomposition, frontend
-  tests, bundle splitting, stash/old-branch review, and legacy
-  chat-vs-insights consolidation.
+- **Frontend redesign follow-up** — active UI work is on the
+  `feat/frontend-redesign-dashboard-history-record` branch / PR #27.
+  The older refactor queue is considered complete and should not be
+  revived as a source of pending work.
 
 ## Ambient state you should know about
 - `scripts/backfill_strava.py` was kicked off as a background process and
