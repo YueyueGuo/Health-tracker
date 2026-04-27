@@ -163,11 +163,16 @@ async def test_daily_recommendation_fallback_chain(db, monkeypatch):
     stub_fallback = _StubProvider(VALID_REC)
     _install_provider(
         monkeypatch,
-        {"claude-haiku": stub_primary, "claude-sonnet": stub_fallback, "gpt-4o-mini": None},
+        {
+            "claude-haiku": stub_primary,
+            "claude-opus-4-7": stub_fallback,
+            "gemini-2.5-pro": None,
+            "gpt-4o": None,
+        },
     )
 
     result = await insights.get_daily_recommendation(db, model="claude-haiku")
-    assert result.model == "claude-sonnet"
+    assert result.model == "claude-opus-4-7"
     assert result.recommendation.intensity == "easy"
 
 
@@ -178,8 +183,9 @@ async def test_daily_recommendation_all_fail_raises(db, monkeypatch):
         monkeypatch,
         {
             "claude-haiku": _StubProvider(err),
-            "claude-sonnet": _StubProvider(err),
-            "gpt-4o-mini": _StubProvider(err),
+            "claude-opus-4-7": _StubProvider(err),
+            "gemini-2.5-pro": _StubProvider(err),
+            "gpt-4o": _StubProvider(err),
         },
     )
     with pytest.raises(Exception):

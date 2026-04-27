@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.config import settings
 from backend.database import get_db
 from backend.models import RecommendationFeedback
 from backend.services import insights, training_metrics
@@ -39,6 +40,12 @@ async def training_metrics_snapshot(db: AsyncSession = Depends(get_db)):
     feeds the LLM recommendation. Useful for debugging + the training-load
     card on the dashboard."""
     return await training_metrics.get_full_snapshot(db)
+
+
+@router.get("/models")
+async def dashboard_models():
+    """List dashboard insight models in picker order."""
+    return {"models": settings.llm.available_dashboard_models()}
 
 
 @router.get("/daily-recommendation")
