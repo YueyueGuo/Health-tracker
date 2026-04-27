@@ -1,4 +1,4 @@
-import { fetchJson } from "./http";
+import { fetchJson, fetchOptionalJson } from "./http";
 
 // ── Domain types ────────────────────────────────────────────────────────────
 
@@ -99,6 +99,12 @@ export function fetchStrengthSessions(limit = 20): Promise<StrengthSession[]> {
 
 export function fetchStrengthSession(date: string): Promise<StrengthSessionDetail> {
   return fetchJson<StrengthSessionDetail>(`/strength/session/${date}`);
+}
+
+export function fetchStrengthSessionOptional(
+  date: string
+): Promise<StrengthSessionDetail | null> {
+  return fetchOptionalJson<StrengthSessionDetail>(`/strength/session/${date}`);
 }
 
 export function createStrengthSession(

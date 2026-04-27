@@ -3,9 +3,9 @@ import { useUnits } from "../hooks/useUnits";
 
 const navItems = [
   { to: "/", label: "Dashboard" },
-  { to: "/activities", label: "Activities" },
+  { to: "/history", label: "History" },
+  { to: "/record", label: "Record" },
   { to: "/sleep", label: "Sleep" },
-  { to: "/strength", label: "Strength" },
   { to: "/recovery", label: "Recovery" },
   { to: "/training", label: "Training Load" },
   { to: "/ask", label: "Ask AI" },

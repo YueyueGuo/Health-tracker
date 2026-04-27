@@ -1,3 +1,21 @@
+/* Inter (used by the new dashboard); legacy pages still resolve to system-ui via the Tailwind font stack fallback. */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Shimmer used by the AI recommendation card. */
+.bg-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.03) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  background-size: 200% 100%;
+}
+
 * {
   margin: 0;
   padding: 0;

@@ -474,8 +474,6 @@ safe to run while the backfill scheduler is writing.
   before committing frontend changes.
 - CI lives in `.github/workflows/ci.yml` and runs Ruff, pytest, frontend
   typecheck, and frontend build on PRs/pushes to `main`.
-- Commit messages include `Co-Authored-By: Oz <oz-agent@warp.dev>` per Warp
-  convention.
 - When working in parallel with another agent, each agent should be on its
   **own branch**. We hit a merge conflict once because two agents pushed to
   the same branch.
