@@ -385,9 +385,8 @@ Two phases, resumable via `elevation_enriched`:
   preventing a future default from retroactively applying. When the user
   sets a home default via `/settings`, re-run `backfill_elevation.py`.
 ## Frontend layout
-- Routes wired in `frontend/src/App.tsx`: `/`, `/activities`, `/activities/:id`,
-  `/sleep`, `/recovery`, `/training`, `/ask`, `/settings`,
-  `/strength`, `/strength/new`.
+- Routes wired in `frontend/src/App.tsx`: `/`, `/record`, `/history`,
+  `/activities/:id`, `/sleep`, `/recovery`, `/training`, `/ask`, `/settings`.
 - Dashboard includes `WeeklySummaryCards` (4-week strip).
 - ActivityList has a Classification column + filter, Pace/HR + Relative
   Effort columns.
@@ -415,16 +414,19 @@ Two phases, resumable via `elevation_enriched`:
 - Location search/GPS flows are shared between Settings and Activity Detail
   via `frontend/src/components/location/{LocationSearchForm,GpsLocationForm}.tsx`
   plus `frontend/src/hooks/{useDebouncedLocationSearch,useCurrentPosition}.ts`.
-- `StrengthEntry.tsx` (route `/strength/new`) has a Live/Retro mode toggle.
-  Live mode shows a rest timer and a "Log" action per set that stamps
-  `performed_at` (naive-local, no tz) and auto-appends a fresh row. Retro
-  mode is the original bulk-entry form. Payload: `performed_at: null` on
-  retro; `YYYY-MM-DDTHH:mm:ss` on live.
-- `Strength.tsx` session detail renders `StrengthHrChart` (Recharts, red
-  line with a `ReferenceDot` per logged set) and a `.hr-pill` HR column
-  per exercise when the linked Strava activity's `time` + `heartrate`
-  streams are already cached. Additive — retro / no-stream / no-
-  performed_at sessions render unchanged.
+- `Record.tsx` (route `/record`) is the strength entry page. Live-only:
+  every saved set gets a `performed_at` naive-local timestamp stamped by
+  the per-set "Log" tap (`YYYY-MM-DDTHH:mm:ss`, no tz). The Retro
+  bulk-entry mode from the old `StrengthEntry.tsx` was intentionally
+  removed in the redesign — the backend still accepts
+  `performed_at: null` so legacy rows continue to deserialize, but new
+  payloads always carry it.
+- The standalone strength session-detail page (`Strength.tsx` +
+  `StrengthHrChart`) was removed in the redesign. The backend HR
+  attachment logic in `backend/services/strength_hr.py` is still wired
+  through `session_summary` and remains correct; it's just not rendered
+  anywhere in the new UI yet. Re-surface in `Record.tsx` or a future
+  history detail view as a follow-up.
 
 ## Strength HR attachment (`backend/services/strength_hr.py`)
 
