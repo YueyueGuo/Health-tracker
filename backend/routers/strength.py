@@ -32,8 +32,9 @@ router = APIRouter()
 class StrengthSetInput(BaseModel):
     """One set in a bulk-insert payload.
 
-    ``performed_at`` is an optional naive-local wall-clock timestamp
-    stamped in Live entry mode. Retro entries leave it as ``None``.
+    ``performed_at`` is a naive-local wall-clock timestamp stamped when
+    the set is logged. Optional for legacy rows created before
+    Live-only entry mode; new sets always carry it.
     """
 
     exercise_name: str = Field(..., min_length=1, max_length=100)

@@ -1,4 +1,4 @@
-import { fetchJson } from "./http";
+import { fetchJson, fetchOptionalJson } from "./http";
 
 // ── Domain types ────────────────────────────────────────────────────────────
 
@@ -12,8 +12,8 @@ export interface StrengthSet {
   weight_kg: number | null;
   rpe: number | null;
   notes: string | null;
-  /** Naive-local ISO datetime string stamped in Live entry mode.
-   *  Null on Retro entries. */
+  /** Naive-local ISO datetime stamped when the set was logged.
+   *  Optional only for legacy rows created before Live-only mode. */
   performed_at?: string | null;
   /** Working-HR window ending at ``performed_at`` (45s lookback).
    *  Populated on the session_summary response when the linked Strava
@@ -70,7 +70,7 @@ export interface StrengthSetInput {
   weight_kg: number | null;
   rpe: number | null;
   notes: string | null;
-  /** Naive-local ISO string (no tz) stamped by Live-mode "Log set" taps. */
+  /** Naive-local ISO string (no tz) stamped by the "Log set" tap. */
   performed_at?: string | null;
 }
 
@@ -99,6 +99,12 @@ export function fetchStrengthSessions(limit = 20): Promise<StrengthSession[]> {
 
 export function fetchStrengthSession(date: string): Promise<StrengthSessionDetail> {
   return fetchJson<StrengthSessionDetail>(`/strength/session/${date}`);
+}
+
+export function fetchStrengthSessionOptional(
+  date: string
+): Promise<StrengthSessionDetail | null> {
+  return fetchOptionalJson<StrengthSessionDetail>(`/strength/session/${date}`);
 }
 
 export function createStrengthSession(

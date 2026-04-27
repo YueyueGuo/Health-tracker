@@ -4,10 +4,11 @@ Scope decision for the `stash@{1}` / `strength-entry-redesign WIP` + `origin/cla
 
 ## Baseline correction
 
-`REFACTOR_FINDINGS.md` and the auto-memory both assert that live/retro entry
-modes + per-set HR attachment already shipped. They did not. That work
-lives on `origin/claude/interesting-archimedes-16548a` and never merged to
-`main`. Current `main` has:
+The earlier refactor notes and auto-memory both asserted that live/retro
+entry modes + per-set HR attachment already shipped. They did not at the
+time this design doc was written. That work lived on
+`origin/claude/interesting-archimedes-16548a` and had not yet merged to
+`main`. Current `main` at that point had:
 
 - `frontend/src/pages/StrengthEntry.tsx` — flat row-based table; manual
   `set_number` on every row; no timestamps.
@@ -47,7 +48,7 @@ ideas are frontend-local.
 | `backend/services/strength_hr.py` (`_slice_hr_for_set`, `attach_hr_to_sets`, decimator) | ✅ keep — **PR 3** | Read-only: reads cached `activity_streams`, never triggers Strava fetch. Matches the "streams stay lazy" architectural rule. 45 s window, skips 0/None dropouts. |
 | `session_summary` emits `hr_curve`, `activity_start_iso`, per-set `avg_hr`/`max_hr` | ✅ keep — **PR 3** | Purely additive to the existing response. Retro sessions render without these fields. Snapshot contract drift test does not cover `/strength` payloads, so keep the `frontend/src/api/strength.ts` types in sync manually. |
 | Per-set HR pills + HR curve chart in session detail | ✅ keep — **PR 4** | Gate on `hr_curve != null`; retro sessions stay unchanged. |
-| HR zones + cardiac drift helpers in `backend/services/training_metrics.py` (`summarize_hr_zones`, `assign_lap_hr_zones`, `compute_hr_drift`) + `ActivityDetail` auto-stream loading | ⛔ **out of scope** | Separate slice — see `REFACTOR_FINDINGS.md` "HR Zones / Cardiac Drift Follow-Up". |
+| HR zones + cardiac drift helpers in `backend/services/training_metrics.py` (`summarize_hr_zones`, `assign_lap_hr_zones`, `compute_hr_drift`) + `ActivityDetail` auto-stream loading | ⛔ **out of scope** | Separate slice at the time; avoid auto-stream loading because the current architecture keeps Strava streams lazy. |
 
 Conflicts with current `main`:
 
