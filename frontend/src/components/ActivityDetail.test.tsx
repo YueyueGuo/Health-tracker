@@ -50,13 +50,8 @@ vi.mock("../hooks/useUnits", () => ({
   formatTemperature: (c: number | null | undefined) =>
     c == null ? "—" : `${Math.round(c)}°`,
   formatWindSpeed: () => "8 mph",
-  formatDistance: (meters: number | null | undefined) =>
-    meters == null ? "—" : `${Math.round(meters)} m`,
   formatElevation: (meters: number | null | undefined) =>
     meters == null ? "—" : `${Math.round(meters)} m`,
-  formatPaceOrSpeed: () => "5:00 /km",
-  isCyclingSport: (s: string | null | undefined) =>
-    typeof s === "string" && /ride/i.test(s),
 }));
 
 vi.mock("./ClassificationBadge", () => ({
