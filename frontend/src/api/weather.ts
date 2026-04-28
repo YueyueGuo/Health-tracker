@@ -1,4 +1,4 @@
-import { fetchJson, fetchOptionalJson } from "./http";
+import { fetchOptionalJson } from "./http";
 
 export interface WeatherSnapshot {
   id: number;
@@ -21,16 +21,6 @@ export interface WeatherSnapshot {
   raw_data?: Record<string, unknown> | null;
 }
 
-export interface WeatherBackfillResult {
-  enriched: number;
-  skipped: number;
-  failed: number;
-  remaining: number;
-  batch: number;
-  dry_run: boolean;
-  configured: boolean;
-}
-
 /**
  * Fetch the weather snapshot joined to ``activityId``.
  *
@@ -45,19 +35,4 @@ export async function getActivityWeather(
   return fetchOptionalJson<WeatherSnapshot>(
     `/activities/${activityId}/weather${qs}`
   );
-}
-
-/**
- * Kick off a weather-enrichment pass on the backend.
- */
-export async function backfillWeather(
-  params: { batch?: number; dry_run?: boolean } = {}
-): Promise<WeatherBackfillResult> {
-  return fetchJson<WeatherBackfillResult>("/weather/backfill", {
-    method: "POST",
-    body: JSON.stringify({
-      batch: params.batch ?? 50,
-      dry_run: params.dry_run ?? false,
-    }),
-  });
 }

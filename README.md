@@ -54,7 +54,7 @@ python scripts/backfill_strava.py --no-list    # skip Phase A, only enrich
 python scripts/classify_all.py                 # classify enriched activities
 ```
 
-Agent context for future work lives in [`CLAUDE.md`](CLAUDE.md).
+Agent context for future work lives in [`AGENTS.md`](AGENTS.md) (see also [`CLAUDE.md`](CLAUDE.md) for a Claude-specific pointer).
 
 ### 5. Start the App
 

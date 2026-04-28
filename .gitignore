@@ -23,7 +23,6 @@ env/
 *.db-shm
 *.db-wal
 *.bak
-backfill.log
 
 # IDE
 .claude/
@@ -38,9 +37,13 @@ backfill.log
 Thumbs.db
 
 # Node / Frontend
-frontend/node_modules/
+node_modules/
 frontend/dist/
 frontend/.cache/
+.vite/
+
+# Python tooling caches
+.ruff_cache/
 
 # Testing
 .pytest_cache/

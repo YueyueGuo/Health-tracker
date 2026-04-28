@@ -2,7 +2,7 @@ import type { ActivitySummary } from "../api/activities";
 import type { SleepSession } from "../api/sleep";
 import type { StrengthSession } from "../api/strength";
 
-export type EventCategory = "Workout" | "Health";
+type EventCategory = "Workout" | "Health";
 export type EventType =
   | "Ride"
   | "Run"
@@ -12,7 +12,7 @@ export type EventType =
   | "Other"
   | "MorningStatus";
 
-export interface EventMetric {
+interface EventMetric {
   label: string;
   value: string;
   /** Tailwind text-color class. Omit for default white. */

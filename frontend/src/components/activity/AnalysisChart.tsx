@@ -17,7 +17,7 @@ import {
   speedValue,
 } from "./utils";
 
-export type AnalysisMode = "run" | "ride" | "strength";
+type AnalysisMode = "run" | "ride" | "strength";
 
 interface Props {
   mode: AnalysisMode;

@@ -6,7 +6,7 @@ import { Header } from "./dashboard/Header";
 import { EnvironmentBar } from "./dashboard/EnvironmentBar";
 import { BottomNav } from "./dashboard/BottomNav";
 
-export interface HomeOutletContext {
+interface HomeOutletContext {
   today: DashboardToday | null;
   todayLoading: boolean;
   todayError: string | null;

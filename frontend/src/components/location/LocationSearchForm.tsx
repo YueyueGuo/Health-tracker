@@ -119,7 +119,7 @@ export default function LocationSearchForm({
   );
 }
 
-export function formatLocationSearchHit(hit: LocationSearchHit): string {
+function formatLocationSearchHit(hit: LocationSearchHit): string {
   return [hit.name, hit.admin1, hit.country].filter(Boolean).join(", ");
 }
 

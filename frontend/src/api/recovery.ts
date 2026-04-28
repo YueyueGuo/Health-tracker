@@ -1,7 +1,7 @@
 import { fetchJson } from "./http";
 import type { RecoveryTrend } from "./dashboard";
 
-export interface RecoveryRecord extends RecoveryTrend {
+interface RecoveryRecord extends RecoveryTrend {
   id: number;
   source: string;
   skin_temp: number | null;

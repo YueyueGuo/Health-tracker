@@ -6,7 +6,7 @@ interface CardProps {
   className?: string;
 }
 
-export const cardVariants = {
+const cardVariants = {
   hidden: { opacity: 0, y: 20 },
   show: {
     opacity: 1,

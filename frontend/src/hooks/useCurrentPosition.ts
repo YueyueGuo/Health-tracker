@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-export interface CurrentPosition {
+interface CurrentPosition {
   lat: number;
   lng: number;
 }

@@ -98,7 +98,7 @@ export interface ActivityDetail extends ActivitySummary {
   raw_data: Record<string, unknown> | null;
 }
 
-export interface ActivityClassificationResult {
+interface ActivityClassificationResult {
   classified: boolean;
   reason?: string;
   type?: Exclude<ClassificationType, null>;
@@ -134,8 +134,4 @@ export function reclassifyActivity(id: number) {
   return fetchJson<ActivityClassificationResult>(`/activities/${id}/classify`, {
     method: "POST",
   });
-}
-
-export function fetchSportTypes() {
-  return fetchJson<string[]>("/activities/types");
 }
