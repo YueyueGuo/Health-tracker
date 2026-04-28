@@ -12,6 +12,7 @@ import {
 } from "recharts";
 import { useState } from "react";
 import { useApi } from "../hooks/useApi";
+import { fetchRecovery } from "../api/recovery";
 import {
   fetchSleepSessions,
   fetchSleepTrends,
@@ -19,6 +20,8 @@ import {
   SleepSession,
   WakeEvent,
 } from "../api/sleep";
+import { Card } from "./ui/Card";
+import { SleepRecoveryDetailsCard } from "./sleep/SleepRecoveryDetailsCard";
 
 // Stage palette picked for hue separation rather than pretty variance on
 // a single hue: deep = navy (darkest blue), REM = teal/cyan (cool), light
@@ -43,18 +46,23 @@ export default function Sleep() {
     []
   );
   const { data: latest, loading: latestLoading } = useApi(fetchLatestSleep, []);
+  const { data: recoveryRows, loading: recoveryLoading } = useApi(
+    () => fetchRecovery(2),
+    []
+  );
+  const latestRecovery = recoveryRows?.[0] ?? null;
 
-  if (trendsLoading || sessionsLoading || latestLoading) {
+  if (trendsLoading || sessionsLoading || latestLoading || recoveryLoading) {
     return <div className="loading">Loading sleep data...</div>;
   }
   if (trendsError) return <div className="error">{trendsError}</div>;
 
   if ((!trends || trends.length === 0) && !latest) {
     return (
-      <div>
+      <div className="pb-8">
         <div className="page-header">
           <h1>Sleep</h1>
-          <p>No sleep data available. Connect Eight Sleep to get started.</p>
+          <p>No sleep data available. Connect a sleep tracker to get started.</p>
         </div>
       </div>
     );
@@ -82,24 +90,29 @@ export default function Sleep() {
     .slice(0, 14);
 
   return (
-    <div>
-      <div className="page-header">
-        <h1>Sleep</h1>
-        <p>Eight Sleep nightly scores, stages, and recovery signals</p>
-      </div>
+    <div className="pb-8 space-y-4">
+      <SleepRecoveryDetailsCard sleep={latest ?? null} recovery={latestRecovery} />
 
-      {latest && <LatestNightSummary session={latest} />}
-
-      <div className="filter-bar">
-        <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
+      <div className="flex items-center justify-end gap-2 pt-1">
+        <label htmlFor="sleep-trend-days" className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">
+          Trends
+        </label>
+        <select
+          id="sleep-trend-days"
+          value={days}
+          onChange={(e) => setDays(Number(e.target.value))}
+          className="text-xs bg-card border border-cardBorder rounded-lg px-3 py-2 text-slate-200"
+        >
           <option value={30}>Last 30 days</option>
           <option value={60}>Last 60 days</option>
           <option value={90}>Last 90 days</option>
         </select>
       </div>
 
-      <div className="card">
-        <h2>Sleep Score</h2>
+      <Card className="p-4">
+        <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wider mb-4">
+          Sleep score
+        </h3>
         <ResponsiveContainer width="100%" height={250}>
           <LineChart data={scoreChartData}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -129,10 +142,12 @@ export default function Sleep() {
             />
           </LineChart>
         </ResponsiveContainer>
-      </div>
+      </Card>
 
-      <div className="card">
-        <h2>Nightly Stages — Last 30 Days</h2>
+      <Card className="p-4">
+        <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wider mb-4">
+          Nightly stages — last 30 days
+        </h3>
         <ResponsiveContainer width="100%" height={280}>
           <BarChart data={stagesChartData}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -156,11 +171,13 @@ export default function Sleep() {
             <Bar dataKey="awake" stackId="stages" fill={STAGE_COLORS.awake} name="Awake" />
           </BarChart>
         </ResponsiveContainer>
-      </div>
+      </Card>
 
-      <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-        <div style={{ padding: "24px 24px 0 24px" }}>
-          <h2>Recent Nights</h2>
+      <Card className="p-0 overflow-hidden">
+        <div className="px-5 pt-5 pb-3 border-b border-cardBorder/50">
+          <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wider">
+            Recent nights
+          </h3>
         </div>
         <table className="data-table">
           <thead>
@@ -204,71 +221,9 @@ export default function Sleep() {
           </tbody>
         </table>
         {recentNights.length === 0 && (
-          <div style={{ padding: 24, color: "var(--text-muted)" }}>
-            No recent nights found.
-          </div>
+          <div className="p-6 text-sm text-slate-500">No recent nights found.</div>
         )}
-      </div>
-    </div>
-  );
-}
-
-function LatestNightSummary({ session }: { session: SleepSession }) {
-  return (
-    <div className="metric-grid">
-      <div className="metric-card">
-        <div className="label">Last Sleep Score</div>
-        <div className="value" style={{ color: getSleepColor(session.sleep_score) }}>
-          {session.sleep_score != null ? Math.round(session.sleep_score) : "—"}
-        </div>
-        <div className="subtext">{formatShortDate(session.date)}</div>
-      </div>
-      <div className="metric-card">
-        <div className="label">Duration</div>
-        <div className="value">{formatDurationMinutes(session.total_duration)}</div>
-        <div className="subtext">
-          {session.sleep_fitness_score != null
-            ? `Fitness: ${Math.round(session.sleep_fitness_score)}`
-            : ""}
-        </div>
-      </div>
-      <div className="metric-card">
-        <div className="label">Bed / Wake</div>
-        <div className="value" style={{ fontSize: 20 }}>
-          {formatClock(session.bed_time)} → {formatClock(session.wake_time)}
-        </div>
-        <div className="subtext">
-          {session.awake_time != null
-            ? `${session.awake_time}m awake in bed`
-            : ""}
-        </div>
-      </div>
-      <div className="metric-card">
-        <div className="label">Sleep Latency</div>
-        <div className="value">{formatLatency(session.latency)}</div>
-        <div className="subtext">
-          {session.waso_duration != null && session.wake_count != null
-            ? `${session.waso_duration}m WASO · ${session.wake_count} wake${
-                session.wake_count === 1 ? "" : "s"
-              }`
-            : session.waso_duration != null
-              ? `${session.waso_duration}m WASO`
-              : "Time to fall asleep"}
-        </div>
-      </div>
-      <div className="metric-card">
-        <div className="label">HR / HRV</div>
-        <div className="value" style={{ fontSize: 20 }}>
-          {session.avg_hr != null ? `${Math.round(session.avg_hr)} bpm` : "—"}
-          {" · "}
-          {session.hrv != null ? `${Math.round(session.hrv)} ms` : "—"}
-        </div>
-        <div className="subtext">
-          {session.respiratory_rate != null
-            ? `Resp: ${session.respiratory_rate.toFixed(1)} /min`
-            : ""}
-        </div>
-      </div>
+      </Card>
     </div>
   );
 }
@@ -324,14 +279,6 @@ function getSleepColor(score?: number | null): string {
 
 function formatShortDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-function formatClock(iso: string | null): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-  });
 }
 
 function formatDurationMinutes(minutes?: number | null): string {
