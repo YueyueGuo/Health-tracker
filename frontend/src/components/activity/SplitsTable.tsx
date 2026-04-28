@@ -2,8 +2,8 @@ import { Card } from "../ui/Card";
 import type { ActivityLap } from "../../api/activities";
 import { useUnits } from "../../hooks/useUnits";
 import {
+  distanceWithUnit,
   elevationToDisplay,
-  metersToDisplay,
   paceShort,
   speedShort,
 } from "./utils";
@@ -52,7 +52,7 @@ export default function SplitsTable({ variant, laps }: Props) {
               >
                 <div className="font-bold text-slate-400">{lap.lap_index}</div>
                 <div className="font-medium text-white">
-                  {metersToDisplay(lap.distance, units)}
+                  {distanceWithUnit(lap.distance, units)}
                 </div>
                 {variant === "run" ? (
                   <div className="font-medium text-white">

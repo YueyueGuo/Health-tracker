@@ -12,16 +12,15 @@ import type { ActivityDetail } from "../../api/activities";
 import type { WeatherSnapshot } from "../../api/weather";
 import { useUnits } from "../../hooks/useUnits";
 import AnalysisChart from "./AnalysisChart";
-import HRZonesBar from "./HRZonesBar";
 import MetricGrid, { type MetricCellData } from "./MetricGrid";
 import SplitsTable from "./SplitsTable";
 import WeatherStrip from "./WeatherStrip";
+import ZonesBar from "./ZonesBar";
 import {
-  distanceUnitLabel,
+  distanceToDisplay,
   elevationToDisplay,
   elevationUnitLabel,
   formatHmsCompact,
-  metersToDisplay,
   paceShort,
   paceUnitLabel,
 } from "./utils";
@@ -47,11 +46,12 @@ export default function ActivityDetailRun({
   const cells: MetricCellData[] = [];
 
   if (activity.distance != null) {
+    const distance = distanceToDisplay(activity.distance, units);
     cells.push({
       label: "Distance",
       icon: <MapPin size={12} />,
-      value: metersToDisplay(activity.distance, units),
-      unit: distanceUnitLabel(units),
+      value: distance.value,
+      unit: distance.unit,
     });
   }
   cells.push({
@@ -121,7 +121,7 @@ export default function ActivityDetailRun({
         onLoadStreams={onLoadStreams}
         streamsCached={activity.streams_cached}
       />
-      <HRZonesBar zones={activity.zones} />
+      <ZonesBar zones={activity.zones} />
       <SplitsTable variant="run" laps={activity.laps} />
     </div>
   );

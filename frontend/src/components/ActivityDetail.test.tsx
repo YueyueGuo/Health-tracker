@@ -266,6 +266,61 @@ describe("ActivityDetailPage", () => {
     expect(screen.getByText("Avg Speed")).toBeInTheDocument();
   });
 
+  it("renders a power zone card when a ride has no HR zones", async () => {
+    mockedFetchActivity.mockResolvedValue(
+      makeActivity({
+        name: "Power Zone Ride",
+        sport_type: "Ride",
+        zones: [
+          {
+            type: "power",
+            distribution_buckets: [
+              { min: 0, max: 120, time: 300 },
+              { min: 121, max: 180, time: 600 },
+            ],
+          },
+        ],
+      })
+    );
+
+    render(<ActivityDetailPage />);
+    await screen.findByText("Power Zone Ride");
+    expect(screen.getByText("Time in Power Zones")).toBeInTheDocument();
+  });
+
+  it("keeps sub-mile split distances labeled in meters", async () => {
+    mockedFetchActivity.mockResolvedValue(
+      makeActivity({
+        laps: [
+          {
+            lap_index: 1,
+            name: null,
+            elapsed_time: 90,
+            moving_time: 90,
+            distance: 400,
+            start_date: null,
+            average_speed: 4,
+            max_speed: null,
+            average_heartrate: 140,
+            max_heartrate: 150,
+            average_cadence: null,
+            average_watts: null,
+            total_elevation_gain: 0,
+            pace_zone: null,
+            hr_zone: null,
+            split: null,
+            start_index: null,
+            end_index: null,
+          },
+        ],
+      })
+    );
+
+    render(<ActivityDetailPage />);
+    await screen.findByText("Evening Run");
+    expect(screen.getByText("400 m")).toBeInTheDocument();
+  });
+
   it("renders Strength layout (no Distance, no Splits) for a WeightTraining activity", async () => {
     mockedFetchActivity.mockResolvedValue(
       makeActivity({

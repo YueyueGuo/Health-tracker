@@ -9,10 +9,10 @@ import {
 import { useUnits } from "../../hooks/useUnits";
 import AnalysisChart from "./AnalysisChart";
 import ExercisesTable from "./ExercisesTable";
-import HRZonesBar from "./HRZonesBar";
 import MetricGrid, { type MetricCellData } from "./MetricGrid";
 import WeatherStrip from "./WeatherStrip";
 import { formatHmsCompact, formatVolumeWeight } from "./utils";
+import ZonesBar from "./ZonesBar";
 
 interface Props {
   activity: ActivityDetail;
@@ -111,7 +111,7 @@ export default function ActivityDetailStrength({
         onLoadStreams={onLoadStreams}
         streamsCached={activity.streams_cached}
       />
-      <HRZonesBar zones={activity.zones} />
+      <ZonesBar zones={activity.zones} />
       {session && session.exercises.length > 0 && (
         <ExercisesTable exercises={session.exercises} />
       )}

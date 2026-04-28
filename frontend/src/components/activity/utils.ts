@@ -65,23 +65,33 @@ export function speedUnitLabel(units: UnitSystem): string {
   return units === "imperial" ? "mph" : "km/h";
 }
 
-export function distanceUnitLabel(units: UnitSystem): string {
-  return units === "imperial" ? "mi" : "km";
-}
-
 export function elevationUnitLabel(units: UnitSystem): string {
   return units === "imperial" ? "ft" : "m";
 }
 
-export function metersToDisplay(
+export function distanceToDisplay(
+  meters: number | null | undefined,
+  units: UnitSystem
+): { value: string; unit: string } {
+  if (meters == null) return { value: "—", unit: "" };
+  if (units === "imperial") {
+    if (meters < METERS_PER_MILE) {
+      return { value: Math.round(meters).toString(), unit: "m" };
+    }
+    return { value: (meters / METERS_PER_MILE).toFixed(2), unit: "mi" };
+  }
+  if (meters < 1000) {
+    return { value: Math.round(meters).toString(), unit: "m" };
+  }
+  return { value: (meters / 1000).toFixed(2), unit: "km" };
+}
+
+export function distanceWithUnit(
   meters: number | null | undefined,
   units: UnitSystem
 ): string {
-  if (meters == null) return "—";
-  if (units === "imperial") {
-    return (meters / METERS_PER_MILE).toFixed(2);
-  }
-  return (meters / 1000).toFixed(2);
+  const distance = distanceToDisplay(meters, units);
+  return distance.unit ? `${distance.value} ${distance.unit}` : distance.value;
 }
 
 export function elevationToDisplay(
