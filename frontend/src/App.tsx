@@ -32,9 +32,9 @@ export default function App() {
       <Route element={<AppShell />}>
         <Route path="/record" element={routeElement(<Record />)} />
         <Route path="/history" element={routeElement(<History />)} />
+        <Route path="/activities/:id" element={routeElement(<ActivityDetail />)} />
       </Route>
       <Route element={<Layout />}>
-        <Route path="/activities/:id" element={routeElement(<ActivityDetail />)} />
         <Route path="/sleep" element={routeElement(<Sleep />)} />
         <Route path="/recovery" element={routeElement(<RecoveryPanel />)} />
         <Route path="/training" element={routeElement(<TrainingLoad />)} />

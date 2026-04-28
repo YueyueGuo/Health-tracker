@@ -1,95 +1,45 @@
+import { useState } from "react";
 import { useParams } from "react-router-dom";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Legend,
-  BarChart,
-  Bar,
-} from "recharts";
-import { useApi } from "../hooks/useApi";
 import {
   fetchActivity,
   fetchActivityStreams,
   reclassifyActivity,
-  type ZoneDistribution,
+  type ActivityDetail,
 } from "../api/activities";
-import {
-  fetchLatestWorkoutInsight,
-  type WorkoutInsight,
-} from "../api/insights";
+import { fetchLatestWorkoutInsight, type WorkoutInsight } from "../api/insights";
 import { getActivityWeather } from "../api/weather";
-import { useState } from "react";
-import ClassificationBadge from "./ClassificationBadge";
+import { useApi } from "../hooks/useApi";
+import { classifyActivity } from "../lib/historyEvents";
+import { getErrorMessage } from "../utils/errors";
+import ActivityDetailRide from "./activity/ActivityDetailRide";
+import ActivityDetailRun from "./activity/ActivityDetailRun";
+import ActivityDetailStrength from "./activity/ActivityDetailStrength";
+import ActivityHeader from "./activity/ActivityHeader";
+import WorkoutInsightView from "./activity/WorkoutInsightView";
 import LocationPicker from "./LocationPicker";
 import RPECard from "./RPECard";
-import WeatherCard from "./WeatherCard";
-import {
-  formatDistance,
-  formatElevation,
-  formatPaceOrSpeed,
-  isCyclingSport,
-  useUnits,
-  type UnitSystem,
-} from "../hooks/useUnits";
-import { getErrorMessage } from "../utils/errors";
 
-// Mirrors the tier thresholds in backend/services/classifier.py. Kept in
-// sync manually — if you change one, change the other.
-const ALT_LOW_M = 610;
-const ALT_MODERATE_M = 1500;
-const ALT_HIGH_M = 2500;
-
-// Drift commentary applies only to steady-state classifications. Mirrors
-// the gating in the WorkoutInsight system prompt.
-const STEADY_STATE_CLASSIFICATIONS = new Set(["easy", "endurance", "tempo"]);
-
-// Drift thresholds (relative HR change between halves). See plan doc.
-function driftTier(value: number): { label: string; tone: "good" | "warn" | "bad" } {
-  const v = Math.abs(value);
-  if (v < 0.05) return { label: "well-paired", tone: "good" };
-  if (v < 0.10) return { label: "moderate", tone: "warn" };
-  return { label: "significant", tone: "bad" };
-}
-
-function formatDriftPct(value: number | null): string {
-  if (value == null) return "—";
-  return `${(value * 100).toFixed(1)}%`;
-}
-
-function altitudeTierLabel(elevation_m: number): string | null {
-  if (elevation_m >= ALT_HIGH_M) return "high altitude";
-  if (elevation_m >= ALT_MODERATE_M) return "moderate altitude";
-  if (elevation_m >= ALT_LOW_M) return "low altitude";
-  return null;
-}
-
-export default function ActivityDetail() {
+export default function ActivityDetailPage() {
   const { id } = useParams<{ id: string }>();
   const activityId = Number(id);
-  const { units } = useUnits();
   const { data: activity, loading, error, reload } = useApi(
     () => fetchActivity(activityId),
     [activityId]
   );
-  // Weather is fetched independently so a missing snapshot (404) doesn't
-  // block the rest of the detail view. We always request ``?raw=true``
-  // so the card can render the OpenWeatherMap icon when available.
   const { data: weather } = useApi(
     () => getActivityWeather(activityId, { raw: true }),
     [activityId]
   );
+
   const [insight, setInsight] = useState<WorkoutInsight | null>(null);
   const [insightModel, setInsightModel] = useState<string | null>(null);
   const [insightError, setInsightError] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+
   const [streams, setStreams] = useState<Record<string, number[]> | null>(null);
   const [streamsLoading, setStreamsLoading] = useState(false);
   const [streamsError, setStreamsError] = useState<string | null>(null);
+
   const [reclassifying, setReclassifying] = useState(false);
 
   const handleAnalyze = async () => {
@@ -99,8 +49,8 @@ export default function ActivityDetail() {
       const result = await fetchLatestWorkoutInsight({ activityId });
       setInsight(result.insight);
       setInsightModel(result.model);
-    } catch (error) {
-      setInsightError(getErrorMessage(error));
+    } catch (e) {
+      setInsightError(getErrorMessage(e));
     } finally {
       setAnalyzing(false);
     }
@@ -112,8 +62,8 @@ export default function ActivityDetail() {
     try {
       const s = await fetchActivityStreams(activityId);
       setStreams(s);
-    } catch (error) {
-      setStreamsError(getErrorMessage(error));
+    } catch (e) {
+      setStreamsError(getErrorMessage(e));
     } finally {
       setStreamsLoading(false);
     }
@@ -129,469 +79,75 @@ export default function ActivityDetail() {
     }
   };
 
-  if (loading) return <div className="loading">Loading activity...</div>;
-  if (error) return <div className="error">{error}</div>;
+  if (loading) return <div className="text-sm text-slate-400 p-4">Loading activity…</div>;
+  if (error) return <div className="text-sm text-brand-red p-4">{error}</div>;
   if (!activity) return null;
 
+  const SportView = pickSportView(activity);
+
   return (
-    <div>
-      <div className="page-header">
-        <h1>{activity.name}</h1>
-        <p>
-          {activity.sport_type} &middot;{" "}
-          {activity.start_date_local &&
-            new Date(activity.start_date_local).toLocaleDateString("en-US", {
-              weekday: "long",
-              month: "long",
-              day: "numeric",
-              year: "numeric",
-            })}
-        </p>
-        <div style={{ marginTop: 8 }}>
-          <ClassificationBadge
-            type={activity.classification_type}
-            flags={activity.classification_flags}
-          />
-          {activity.enrichment_status !== "complete" && (
-            <span className="chip" style={{ marginLeft: 8 }}>
-              {activity.enrichment_status}
-            </span>
-          )}
-          {activity.classification_type && (
-            <button
-              onClick={handleReclassify}
-              disabled={reclassifying}
-              style={{
-                marginLeft: 12,
-                background: "transparent",
-                border: "1px solid var(--border)",
-                color: "var(--text-muted)",
-                fontSize: 11,
-                padding: "2px 10px",
-                borderRadius: 4,
-                cursor: "pointer",
-              }}
-            >
-              {reclassifying ? "Reclassifying…" : "Reclassify"}
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div className="metric-grid">
-        {activity.distance != null && (
-          <div className="metric-card">
-            <div className="label">Distance</div>
-            <div className="value">{formatDistance(activity.distance, units)}</div>
-          </div>
-        )}
-        <div className="metric-card">
-          <div className="label">Duration</div>
-          <div className="value">{formatDuration(activity.moving_time)}</div>
-          {activity.elapsed_time !== activity.moving_time && (
-            <div className="subtext">Elapsed: {formatDuration(activity.elapsed_time)}</div>
-          )}
-        </div>
-        {activity.average_hr && (
-          <div className="metric-card">
-            <div className="label">Avg HR</div>
-            <div className="value">{Math.round(activity.average_hr)} bpm</div>
-            {activity.max_hr && <div className="subtext">Max: {Math.round(activity.max_hr)} bpm</div>}
-          </div>
-        )}
-        {activity.hr_drift != null &&
-          activity.classification_type &&
-          STEADY_STATE_CLASSIFICATIONS.has(activity.classification_type) &&
-          (() => {
-            const tier = driftTier(activity.hr_drift);
-            const decoupling =
-              activity.pace_hr_decoupling ?? activity.power_hr_decoupling;
-            const decouplingLabel =
-              activity.pace_hr_decoupling != null
-                ? "Pace–HR"
-                : activity.power_hr_decoupling != null
-                  ? "Power–HR"
-                  : null;
-            const toneColor =
-              tier.tone === "good"
-                ? "var(--success, #10b981)"
-                : tier.tone === "warn"
-                  ? "var(--warning, #f59e0b)"
-                  : "var(--danger, #ef4444)";
-            return (
-              <div className="metric-card">
-                <div className="label">Cardiac Drift</div>
-                <div className="value" style={{ color: toneColor }}>
-                  {formatDriftPct(activity.hr_drift)}
-                </div>
-                <div className="subtext">
-                  {tier.label}
-                  {decoupling != null && decouplingLabel && (
-                    <>
-                      {" • "}
-                      {decouplingLabel}: {formatDriftPct(decoupling)}
-                    </>
-                  )}
-                </div>
-              </div>
-            );
-          })()}
-        {activity.average_speed && activity.distance && (
-          <div className="metric-card">
-            <div className="label">
-              {isCyclingSport(activity.sport_type) ? "Avg Speed" : "Avg Pace"}
-            </div>
-            <div className="value">
-              {formatPaceOrSpeed(activity.average_speed, activity.sport_type, units)}
-            </div>
-          </div>
-        )}
-        {activity.average_power != null && (
-          <div className="metric-card">
-            <div className="label">Avg Power</div>
-            <div className="value">{Math.round(activity.average_power)} W</div>
-            {activity.weighted_avg_power != null && (
-              <div className="subtext">
-                Normalized: {Math.round(activity.weighted_avg_power)} W
-                {activity.device_watts === false && " • estimated"}
-                {activity.device_watts === true && " • power meter"}
-              </div>
-            )}
-          </div>
-        )}
-        {activity.total_elevation != null && activity.total_elevation > 0 && (
-          <div className="metric-card">
-            <div className="label">Elevation Gain</div>
-            <div className="value">{formatElevation(activity.total_elevation, units)}</div>
-          </div>
-        )}
-        {activity.base_elevation_m != null &&
-          activity.base_elevation_m >= ALT_LOW_M && (
-            <div className="metric-card">
-              <div className="label">Base Altitude</div>
-              <div className="value">
-                {formatElevation(activity.base_elevation_m, units)}
-              </div>
-              {(() => {
-                const tier = altitudeTierLabel(activity.base_elevation_m!);
-                return tier ? (
-                  <div className="subtext">{tier}</div>
-                ) : null;
-              })()}
-            </div>
-          )}
-        {activity.kilojoules != null && (
-          <div className="metric-card">
-            <div className="label">Work</div>
-            <div className="value">{Math.round(activity.kilojoules)} kJ</div>
-            {activity.calories != null && (
-              <div className="subtext">{Math.round(activity.calories)} kcal</div>
-            )}
-          </div>
-        )}
-        {activity.suffer_score != null && (
-          <div className="metric-card">
-            <div className="label">Relative Effort</div>
-            <div className="value">{activity.suffer_score}</div>
-          </div>
-        )}
-      </div>
-
-      <RPECard
-        activityId={activityId}
-        initialRpe={activity.rpe}
-        initialNotes={activity.user_notes}
-        ratedAt={activity.rated_at}
-        onSaved={reload}
+    <div className="pb-24 pt-2">
+      <ActivityHeader
+        activity={activity}
+        reclassifying={reclassifying}
+        onReclassify={handleReclassify}
       />
-
-      <WeatherCard weather={weather} />
-
-      {/* Indoor / no-GPS activities: let the user attach a saved location
-          so we can still compute base altitude. */}
-      {activity.start_lat == null && activity.start_lng == null && (
-        <LocationPicker
+      <SportView
+        activity={activity}
+        weather={weather}
+        streams={streams}
+        streamsLoading={streamsLoading}
+        streamsError={streamsError}
+        onLoadStreams={handleLoadStreams}
+      />
+      <div className="space-y-3 mt-3">
+        <RPECard
           activityId={activityId}
-          currentLocationId={activity.location_id}
-          onChange={reload}
+          initialRpe={activity.rpe}
+          initialNotes={activity.user_notes}
+          ratedAt={activity.rated_at}
+          onSaved={reload}
         />
-      )}
-
-      {activity.laps && activity.laps.length > 0 && (
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-          <h2 style={{ padding: "20px 24px 12px" }}>Laps</h2>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Distance</th>
-                <th>Moving</th>
-                <th>Pace</th>
-                <th>Avg HR</th>
-                <th>Avg Power</th>
-                <th>Pace Zone</th>
-                <th>HR Zone</th>
-              </tr>
-            </thead>
-            <tbody>
-              {activity.laps.map((lap) => (
-                <tr key={lap.lap_index} className={laneClass(lap.pace_zone)}>
-                  <td>{lap.lap_index}</td>
-                  <td>{formatDistance(lap.distance, units)}</td>
-                  <td>{formatDuration(lap.moving_time)}</td>
-                  <td>
-                    {lap.average_speed
-                      ? formatPaceOrSpeed(lap.average_speed, activity.sport_type, units)
-                      : "—"}
-                  </td>
-                  <td>{lap.average_heartrate ? Math.round(lap.average_heartrate) : "—"}</td>
-                  <td>{lap.average_watts ? `${Math.round(lap.average_watts)} W` : "—"}</td>
-                  <td>{lap.pace_zone ?? "—"}</td>
-                  <td>{lap.hr_zone ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {activity.zones && activity.zones.length > 0 && (
-        <div className="card">
-          <h2>Time in Zone</h2>
-          {activity.zones.map((z) => (
-            <ZoneChart key={z.type} zone={z} />
-          ))}
-        </div>
-      )}
-
-      <div className="card">
-        <h2>Stream Data</h2>
-        {!streams && !streamsLoading && (
-          <div>
-            <p style={{ color: "var(--text-muted)", marginBottom: 12 }}>
-              Per-sample heart rate, pace, and elevation. Fetched on demand from Strava.
-              {activity.streams_cached && " (Previously cached.)"}
-            </p>
-            <button className="btn" onClick={handleLoadStreams}>
-              Load Streams
-            </button>
-          </div>
-        )}
-        {streamsLoading && <div className="loading">Loading streams...</div>}
-        {streamsError && <div className="error">{streamsError}</div>}
-        {streams && (
-          <StreamsChart
-            streams={streams}
-            units={units}
-            sportType={activity.sport_type}
+        {activity.start_lat == null && activity.start_lng == null && (
+          <LocationPicker
+            activityId={activityId}
+            currentLocationId={activity.location_id}
+            onChange={reload}
           />
         )}
-      </div>
-
-      <div className="card">
-        <h2>AI Analysis</h2>
-        {!insight && !insightError && (
-          <button className="btn" onClick={handleAnalyze} disabled={analyzing}>
-            {analyzing ? "Analyzing..." : "Analyze This Workout"}
-          </button>
-        )}
-        {insightError && (
-          <div className="error" style={{ marginBottom: 12 }}>{insightError}</div>
-        )}
-        {insight && (
-          <WorkoutInsightView insight={insight} model={insightModel} />
-        )}
+        <WorkoutInsightView
+          insight={insight}
+          model={insightModel}
+          error={insightError}
+          analyzing={analyzing}
+          onAnalyze={handleAnalyze}
+        />
       </div>
     </div>
   );
 }
 
-// ── Sub-components ─────────────────────────────────────────────────────
+type SportViewProps = {
+  activity: ActivityDetail;
+  weather: Awaited<ReturnType<typeof getActivityWeather>>;
+  streams: Record<string, number[]> | null;
+  streamsLoading: boolean;
+  streamsError: string | null;
+  onLoadStreams: () => void;
+};
 
-function WorkoutInsightView({
-  insight,
-  model,
-}: {
-  insight: WorkoutInsight;
-  model: string | null;
-}) {
-  return (
-    <div style={{ lineHeight: 1.6 }}>
-      <h3 style={{ marginTop: 0 }}>{insight.headline}</h3>
-      <p style={{ marginTop: 0 }}>{insight.takeaway}</p>
-      {insight.notable_segments.length > 0 && (
-        <>
-          <h4 style={{ marginBottom: 4 }}>Notable segments</h4>
-          <ul style={{ marginTop: 0 }}>
-            {insight.notable_segments.map((s, i) => (
-              <li key={i}>
-                <strong>{s.label}:</strong> {s.detail}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      {insight.vs_history && (
-        <>
-          <h4 style={{ marginBottom: 4 }}>vs. history</h4>
-          <p style={{ marginTop: 0 }}>{insight.vs_history}</p>
-        </>
-      )}
-      {insight.flags.length > 0 && (
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-          {insight.flags.map((f) => (
-            <span
-              key={f}
-              style={{
-                background: "var(--bg-hover)",
-                padding: "2px 8px",
-                borderRadius: 4,
-                fontSize: 12,
-              }}
-            >
-              {f}
-            </span>
-          ))}
-        </div>
-      )}
-      {model && (
-        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 12 }}>
-          Model: {model}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ZoneChart({ zone }: { zone: ZoneDistribution }) {
-  const data = zone.distribution_buckets.map((b, i) => ({
-    name: zoneBucketLabel(zone.type, b, i),
-    minutes: Math.round((b.time || 0) / 60),
-    time: b.time,
-  }));
-  return (
-    <div style={{ marginBottom: 24 }}>
-      <div style={{ color: "var(--text-muted)", fontSize: 12, marginBottom: 8, textTransform: "uppercase" }}>
-        {zone.type}
-      </div>
-      <ResponsiveContainer width="100%" height={180}>
-        <BarChart data={data} layout="vertical" margin={{ left: 40, right: 20 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-          <XAxis type="number" stroke="var(--text-muted)" />
-          <YAxis type="category" dataKey="name" stroke="var(--text-muted)" width={90} />
-          <Tooltip
-            contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
-            formatter={(value) => [`${value as number} min`, "Time"]}
-          />
-          <Bar dataKey="minutes" fill="#6366f1" />
-        </BarChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
-function StreamsChart({
-  streams,
-  units,
-  sportType,
-}: {
-  streams: Record<string, number[]>;
-  units: UnitSystem;
-  sportType: string | null | undefined;
-}) {
-  const hasHR = (streams.heartrate?.length ?? 0) > 0;
-  const hasPace = (streams.velocity_smooth?.length ?? 0) > 0;
-  const hasAltitude = (streams.altitude?.length ?? 0) > 0;
-  const timeData = streams.time || [];
-  const cycling = isCyclingSport(sportType);
-
-  // For cycling: render speed (mph or km/h). For running/other: render pace
-  // in decimal minutes per mile/km so the y-axis reads natively.
-  const metersPerUnit = units === "imperial" ? 1609.344 : 1000;
-  const chartData = timeData.map((t, i) => {
-    const mps = streams.velocity_smooth?.[i];
-    let yValue: number | undefined;
-    if (mps && mps > 0) {
-      if (cycling) {
-        // Speed → mph or km/h
-        yValue = units === "imperial"
-          ? (mps * 3600) / 1609.344
-          : (mps * 3600) / 1000;
-      } else {
-        // Pace → min per mile / km
-        yValue = metersPerUnit / mps / 60;
-      }
-    }
-    return {
-      time: Math.round(t / 60),
-      hr: streams.heartrate?.[i],
-      speed: yValue,
-      altitude: streams.altitude?.[i],
-    };
-  });
-
-  if (chartData.length === 0 || (!hasHR && !hasPace && !hasAltitude)) {
-    return <div style={{ color: "var(--text-muted)" }}>No stream data available.</div>;
+function pickSportView(activity: ActivityDetail): React.FC<SportViewProps> {
+  const category = classifyActivity(activity.sport_type);
+  switch (category) {
+    case "Ride":
+      return ActivityDetailRide;
+    case "Strength":
+      return ActivityDetailStrength;
+    case "Run":
+    case "Hike":
+    case "Walk":
+    case "Other":
+    default:
+      return ActivityDetailRun;
   }
-
-  const paceLabel = cycling
-    ? units === "imperial"
-      ? "Speed (mph)"
-      : "Speed (km/h)"
-    : units === "imperial"
-      ? "Pace (min/mi)"
-      : "Pace (min/km)";
-
-  return (
-    <ResponsiveContainer width="100%" height={350}>
-      <LineChart data={chartData}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-        <XAxis
-          dataKey="time"
-          label={{ value: "Minutes", position: "insideBottom", offset: -5, fill: "var(--text-muted)" }}
-          stroke="var(--text-muted)"
-        />
-        {hasHR && <YAxis yAxisId="hr" orientation="left" stroke="#ef4444" domain={["auto", "auto"]} />}
-        {hasPace && (
-          <YAxis
-            yAxisId="pace"
-            orientation="right"
-            stroke="#6366f1"
-            reversed={!cycling}
-            domain={["auto", "auto"]}
-          />
-        )}
-        <Tooltip contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border)" }} />
-        <Legend />
-        {hasHR && (
-          <Line yAxisId="hr" type="monotone" dataKey="hr" stroke="#ef4444" dot={false} name="Heart Rate (bpm)" />
-        )}
-        {hasPace && (
-          <Line yAxisId="pace" type="monotone" dataKey="speed" stroke="#6366f1" dot={false} name={paceLabel} />
-        )}
-      </LineChart>
-    </ResponsiveContainer>
-  );
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function laneClass(paceZone: number | null | undefined): string {
-  if (paceZone == null) return "";
-  return `lap-row-z${Math.max(1, Math.min(6, paceZone))}`;
-}
-
-function formatDuration(seconds: number | null | undefined): string {
-  if (!seconds) return "—";
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  return h > 0 ? `${h}h ${m}m` : `${m}m ${s}s`;
-}
-
-function zoneBucketLabel(type: string, b: { min: number; max: number }, i: number): string {
-  const suffix = b.max === -1 ? `\u2265${b.min}` : `${b.min}–${b.max}`;
-  if (type === "heartrate") return `Z${i + 1} (${suffix} bpm)`;
-  if (type === "power") return `${suffix} W`;
-  return `Z${i + 1}`;
 }
