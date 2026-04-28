@@ -21,6 +21,7 @@ Personal health tracker: ingests **Strava**, **Eight Sleep**, **Whoop**, and **O
 | `frontend/src/` | Pages, components; `api/*.ts` domain clients; `api/http.ts` shared fetch |
 | `scripts/` | Backfills, setup, one-offs (see below) |
 | `alembic/` | Migrations (history is a **DAG**, not one linear list) |
+| `Dockerfile`, `railway.toml` | Production image (API + Vite `dist`); Railway notes in [`deploy/README.md`](deploy/README.md) |
 
 ## Stack
 

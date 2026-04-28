@@ -121,3 +121,35 @@ tail -f ~/.health-tracker/logs/stderr.log
 **Dashboard loads but sync fails on phone** — CORS. Confirm `TAILSCALE_HOSTNAME` in `.env` matches the hostname you're opening, then restart: `launchctl kickstart -k gui/$(id -u)/com.healthtracker`.
 
 **Mac sleeps and the service stops responding** — `launchd` resumes the process when the Mac wakes. If you want strictly zero downtime, go to System Settings → Battery → Prevent your Mac from automatically sleeping when the display is off.
+
+---
+
+## Railway (public HTTPS)
+
+One Docker service serves the API and the built SPA. Railway injects `PORT` (handled by the image CMD).
+
+### 1. New project → **Deploy from GitHub** (or the CLI) using this repo.
+
+### 2. Create a **volume** mounted at `/data` so SQLite survives redeploys.
+
+In the service → **Settings** → **Volumes**: mount path `/data`.
+
+### 3. Variables (Railway **Variables** tab)
+
+| Variable | Example | Notes |
+|----------|---------|-------|
+| `DATABASE_URL` | `sqlite+aiosqlite:////data/health_tracker.db` | Four slashes before `data` = absolute path in the container. |
+| `PUBLIC_BASE_URL` | `https://your-service.up.railway.app` | No trailing slash. Required for **Strava / Whoop OAuth** redirect URLs. Copy from Railway **Settings → Networking → Public URL**. |
+| `SYNC_ON_STARTUP` | `false` | Optional: avoids a long first boot while the healthcheck runs. Scheduler still runs on an interval. |
+| … | … | Copy the rest from your local `.env` (Strava, Eight Sleep, Whoop, LLM keys, etc.). |
+
+Register **OAuth redirect URIs** with providers:
+
+- Strava: `https://<your-public-host>/api/auth/strava/callback`
+- Whoop: `https://<your-public-host>/api/auth/whoop/callback`
+
+### 4. Deploy
+
+Push to the connected branch or trigger a deploy. Open the public URL; you should see the dashboard.
+
+**Eight Sleep / Whoop token persist**: the app normally writes refreshed tokens back to `.env`. In Docker that file is not your Railway variables. Prefer setting long‑lived tokens as Railway variables, or re-auth when the container is recreated.

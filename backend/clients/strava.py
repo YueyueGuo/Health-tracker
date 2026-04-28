@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime
+from urllib.parse import quote
 
 import httpx
 
@@ -180,9 +181,10 @@ class StravaClient:
     # ── OAuth2 ──────────────────────────────────────────────────────
 
     def get_authorization_url(self, redirect_uri: str) -> str:
+        q = quote(redirect_uri, safe="")
         return (
             f"{self.AUTH_URL}?client_id={self._client_id}"
-            f"&redirect_uri={redirect_uri}"
+            f"&redirect_uri={q}"
             f"&response_type=code"
             f"&scope=read,activity:read_all"
         )

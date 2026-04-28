@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import date, datetime, timezone
+from urllib.parse import quote
 
 import httpx
 
@@ -76,9 +77,10 @@ class WhoopClient:
     def get_authorization_url(self, redirect_uri: str, state: str) -> str:
         # Whoop requires `state` >= 8 chars (CSRF guard). The `offline`
         # scope triggers Whoop to return a refresh token on code exchange.
+        q = quote(redirect_uri, safe="")
         return (
             f"{self.AUTH_URL}?client_id={self._client_id}"
-            f"&redirect_uri={redirect_uri}"
+            f"&redirect_uri={q}"
             f"&response_type=code"
             f"&scope=offline+read:recovery+read:sleep+read:workout+read:cycles+read:profile"
             f"&state={state}"

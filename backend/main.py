@@ -65,6 +65,7 @@ def create_app() -> FastAPI:
     if settings.tailscale_hostname:
         host = settings.tailscale_hostname
         origins.extend([f"http://{host}", f"https://{host}", f"http://{host}:{settings.port}"])
+    origins.extend(settings.cors_origins)
 
     app.add_middleware(
         CORSMiddleware,

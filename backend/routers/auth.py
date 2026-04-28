@@ -29,11 +29,19 @@ def _oauth_redirect_host() -> str:
     return host
 
 
+def _oauth_callback_base() -> str:
+    """Base URL for OAuth redirect_uri (scheme + host [+ port], no path)."""
+    pub = (settings.public_base_url or "").strip().rstrip("/")
+    if pub:
+        return pub
+    return f"http://{_oauth_redirect_host()}:{settings.port}"
+
+
 @router.get("/strava")
 async def strava_auth(request: Request):
     """Initiate Strava OAuth2 flow."""
     client = StravaClient()
-    redirect_uri = f"http://{_oauth_redirect_host()}:{settings.port}/api/auth/strava/callback"
+    redirect_uri = f"{_oauth_callback_base()}/api/auth/strava/callback"
     url = client.get_authorization_url(redirect_uri)
     await client.close()
     return RedirectResponse(url)
@@ -65,7 +73,7 @@ async def whoop_auth(request: Request):
     state per request; strict echo-verification is optional and skipped.
     """
     client = WhoopClient()
-    redirect_uri = f"http://{_oauth_redirect_host()}:{settings.port}/api/auth/whoop/callback"
+    redirect_uri = f"{_oauth_callback_base()}/api/auth/whoop/callback"
     state = secrets.token_urlsafe(16)  # ~22 chars, comfortably >= 8
     url = client.get_authorization_url(redirect_uri, state=state)
     await client.close()
@@ -104,9 +112,7 @@ async def whoop_callback(
     try:
         # Must match the redirect_uri used in /whoop exactly, or Whoop's
         # token endpoint returns invalid_grant.
-        redirect_uri = (
-            f"http://{_oauth_redirect_host()}:{settings.port}/api/auth/whoop/callback"
-        )
+        redirect_uri = f"{_oauth_callback_base()}/api/auth/whoop/callback"
         try:
             tokens = await client.exchange_code(code, redirect_uri=redirect_uri)
         except Exception as e:  # noqa: BLE001 — surface all upstream errors clearly

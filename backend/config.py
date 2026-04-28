@@ -114,6 +114,10 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     tailscale_hostname: str = ""
+    # Public URL for OAuth callbacks (e.g. https://your-app.up.railway.app). No trailing slash.
+    public_base_url: str = ""
+    # Extra CORS origins (comma-separated), e.g. https://custom.domain.com
+    cors_origins: list[str] = []
 
     # Weather provider. Supported values:
     #   "openmeteo"       — Open-Meteo ERA5 archive (default, free, no key)
@@ -127,6 +131,15 @@ class Settings(BaseSettings):
     whoop: WhoopSettings = Field(default_factory=WhoopSettings)
     weather: WeatherSettings = Field(default_factory=WeatherSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _parse_cors_origins(cls, v):
+        if v is None or v == "":
+            return []
+        if isinstance(v, str):
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v
 
 
 settings = Settings()
