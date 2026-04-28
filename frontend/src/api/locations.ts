@@ -28,7 +28,7 @@ export interface LocationSearchHit {
   population: number | null;
 }
 
-export interface CreateLocationPayload {
+interface CreateLocationPayload {
   name: string;
   lat?: number;
   lng?: number;
@@ -37,7 +37,7 @@ export interface CreateLocationPayload {
   is_default?: boolean;
 }
 
-export interface PatchLocationPayload {
+interface PatchLocationPayload {
   name?: string;
   lat?: number;
   lng?: number;

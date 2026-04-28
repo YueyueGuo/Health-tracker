@@ -1,6 +1,6 @@
 import { fetchJson } from "./http";
 
-export interface WeeklyStats {
+interface WeeklyStats {
   week_start: string;
   week_end: string;
   total_activities: number;
@@ -10,7 +10,7 @@ export interface WeeklyStats {
   sport_breakdown: Record<string, number>;
 }
 
-export interface MetricPoint {
+interface MetricPoint {
   date: string;
   value: number;
 }
@@ -22,7 +22,7 @@ export interface TrainingLoad {
   daily_load: MetricPoint[];
 }
 
-export interface SleepTrend {
+interface SleepTrend {
   date: string;
   source: string;
   sleep_score: number | null;
@@ -56,7 +56,7 @@ export function fetchDashboardOverview() {
   return fetchJson<DashboardOverview>("/dashboard/overview");
 }
 
-export interface SleepTodayPayload {
+interface SleepTodayPayload {
   last_night_score: number | null;
   last_night_duration_min: number | null;
   last_night_deep_min: number | null;
@@ -64,7 +64,7 @@ export interface SleepTodayPayload {
   last_night_date: string | null;
 }
 
-export interface RecoveryTodayPayload {
+interface RecoveryTodayPayload {
   today_hrv: number | null;
   today_resting_hr: number | null;
   hrv_baseline_7d: number | null;
@@ -72,7 +72,7 @@ export interface RecoveryTodayPayload {
   hrv_source: "eight_sleep" | "whoop" | null;
 }
 
-export interface TrainingTodayPayload {
+interface TrainingTodayPayload {
   yesterday_stress: number;
   week_to_date_load: number;
   acwr: number | null;
@@ -80,7 +80,7 @@ export interface TrainingTodayPayload {
   days_since_hard: number | null;
 }
 
-export interface EnvironmentForecastPayload {
+interface EnvironmentForecastPayload {
   temp_c: number | null;
   high_c: number | null;
   low_c: number | null;
@@ -97,7 +97,7 @@ export interface EnvironmentPollenPayload {
   ragweed: number | null;
 }
 
-export interface EnvironmentAirQualityPayload {
+interface EnvironmentAirQualityPayload {
   us_aqi: number | null;
   european_aqi: number | null;
   pollen: EnvironmentPollenPayload | null;
@@ -115,10 +115,6 @@ export interface DashboardToday {
   training: TrainingTodayPayload;
   environment: EnvironmentTodayPayload | null;
 }
-
-export const ACWR_TOOLTIP =
-  "Acute:Chronic Workload Ratio -- last 7 days of training load divided by " +
-  "last 28 days. >1.5 elevated injury risk; 0.8-1.3 optimal; <0.8 detraining.";
 
 export function fetchDashboardToday() {
   return fetchJson<DashboardToday>("/dashboard/today");

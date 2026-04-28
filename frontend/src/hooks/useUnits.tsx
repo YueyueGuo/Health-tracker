@@ -35,7 +35,7 @@ const FEET_PER_METER = 3.28084;
 // ── Formatters ──────────────────────────────────────────────────────
 
 /** Format a distance in meters. Short distances always render in meters. */
-export function formatDistance(
+function formatDistance(
   meters: number | null | undefined,
   units: UnitSystem
 ): string {
@@ -68,7 +68,7 @@ export function formatDistanceShort(
  * Format pace (time per unit distance) for running-style activities.
  * Input is speed in m/s (Strava/Open-Meteo convention).
  */
-export function formatPace(
+function formatPace(
   speedMps: number | null | undefined,
   units: UnitSystem
 ): string {
@@ -85,7 +85,7 @@ export function formatPace(
  * Format speed (distance per unit time) for cycling-style activities.
  * Input is speed in m/s.
  */
-export function formatSpeed(
+function formatSpeed(
   speedMps: number | null | undefined,
   units: UnitSystem
 ): string {
@@ -146,12 +146,12 @@ const CYCLING_SPORTS = new Set([
   "velomobile",
 ]);
 
-export function isCyclingSport(sportType: string | null | undefined): boolean {
+function isCyclingSport(sportType: string | null | undefined): boolean {
   if (!sportType) return false;
   return CYCLING_SPORTS.has(sportType.toLowerCase());
 }
 
-export function formatPaceOrSpeed(
+function formatPaceOrSpeed(
   speedMps: number | null | undefined,
   sportType: string | null | undefined,
   units: UnitSystem

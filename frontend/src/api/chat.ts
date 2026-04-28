@@ -1,6 +1,6 @@
 import { fetchJson } from "./http";
 
-export interface ChatResponse {
+interface ChatResponse {
   answer: string;
   model: string;
   tokens_used?: number | null;

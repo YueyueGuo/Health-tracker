@@ -2,7 +2,7 @@ import { fetchJson, fetchOptionalJson } from "./http";
 
 // ── Domain types ────────────────────────────────────────────────────────────
 
-export interface StrengthSet {
+interface StrengthSet {
   id: number;
   activity_id: number | null;
   date: string; // YYYY-MM-DD
@@ -74,31 +74,16 @@ export interface StrengthSetInput {
   performed_at?: string | null;
 }
 
-export interface StrengthSessionCreate {
+interface StrengthSessionCreate {
   date: string; // YYYY-MM-DD
   activity_id: number | null;
   sets: StrengthSetInput[];
-}
-
-export interface StrengthSetPatch {
-  exercise_name?: string;
-  set_number?: number;
-  reps?: number;
-  weight_kg?: number | null;
-  rpe?: number | null;
-  notes?: string | null;
-  performed_at?: string | null;
-  activity_id?: number | null;
 }
 
 // ── Fetchers ────────────────────────────────────────────────────────────────
 
 export function fetchStrengthSessions(limit = 20): Promise<StrengthSession[]> {
   return fetchJson<StrengthSession[]>(`/strength/sessions?limit=${limit}`);
-}
-
-export function fetchStrengthSession(date: string): Promise<StrengthSessionDetail> {
-  return fetchJson<StrengthSessionDetail>(`/strength/session/${date}`);
 }
 
 export function fetchStrengthSessionOptional(
@@ -114,20 +99,6 @@ export function createStrengthSession(
     method: "POST",
     body: JSON.stringify(payload),
   });
-}
-
-export function updateStrengthSet(
-  id: number,
-  patch: StrengthSetPatch
-): Promise<StrengthSet> {
-  return fetchJson<StrengthSet>(`/strength/sets/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(patch),
-  });
-}
-
-export function deleteStrengthSet(id: number): Promise<void> {
-  return fetchJson<void>(`/strength/sets/${id}`, { method: "DELETE" });
 }
 
 export function fetchStrengthProgression(

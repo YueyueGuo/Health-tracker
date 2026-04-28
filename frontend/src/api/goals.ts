@@ -15,7 +15,7 @@ export interface Goal {
   status: GoalStatus;
 }
 
-export interface CreateGoalPayload {
+interface CreateGoalPayload {
   race_type: string;
   description?: string | null;
   target_date: string;
@@ -23,7 +23,7 @@ export interface CreateGoalPayload {
   status?: GoalStatus;
 }
 
-export interface PatchGoalPayload {
+interface PatchGoalPayload {
   race_type?: string;
   description?: string | null;
   target_date?: string;
