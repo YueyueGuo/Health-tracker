@@ -1,5 +1,6 @@
 import GoalsSection from "../components/GoalsSection";
 import LocationSettingsSection from "../components/settings/LocationSettingsSection";
+import SyncSection from "../components/settings/SyncSection";
 
 /**
  * Settings page: manage your saved ``user_locations``.
@@ -20,6 +21,7 @@ export default function Settings() {
       </div>
 
       <GoalsSection />
+      <SyncSection />
       <LocationSettingsSection />
     </div>
   );

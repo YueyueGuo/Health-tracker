@@ -109,6 +109,8 @@ class Settings(BaseSettings):
     # App
     database_url: str = _DEFAULT_DB_URL
     sync_interval_hours: float = 2
+    # Kick off a background sync when the API server starts.
+    sync_on_startup: bool = True
     host: str = "0.0.0.0"
     port: int = 8000
     tailscale_hostname: str = ""

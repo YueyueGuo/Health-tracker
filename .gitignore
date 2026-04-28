@@ -52,3 +52,4 @@ htmlcov/
 
 # Logs
 *.log
+.gstack/

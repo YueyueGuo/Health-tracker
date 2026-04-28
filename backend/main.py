@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import pathlib
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,10 +28,28 @@ async def lifespan(app: FastAPI):
     app.state.scheduler = scheduler
     logger.info("Scheduler started")
 
+    if settings.sync_on_startup:
+        # Fire-and-forget so startup isn't blocked by API latency / rate limits.
+        from backend.scheduler import _run_sync
+
+        async def _startup_sync():
+            try:
+                await _run_sync("all")
+            except Exception:
+                logger.exception("Startup sync failed")
+
+        app.state.startup_sync_task = asyncio.create_task(_startup_sync())
+        logger.info("Startup sync scheduled")
+
     try:
         yield
     finally:
         scheduler.shutdown(wait=False)
+        startup_sync_task = getattr(app.state, "startup_sync_task", None)
+        if startup_sync_task and not startup_sync_task.done():
+            startup_sync_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await startup_sync_task
         logger.info("Scheduler stopped")
 
 
@@ -65,6 +84,7 @@ def create_app() -> FastAPI:
         goals,
         insights,
         locations,
+        profile,
         recovery,
         sleep,
         strength,
@@ -92,6 +112,7 @@ def create_app() -> FastAPI:
     app.include_router(insights.router, prefix="/api/insights", tags=["insights"])
     app.include_router(locations.router, prefix="/api/locations", tags=["locations"])
     app.include_router(goals.router, prefix="/api/goals", tags=["goals"])
+    app.include_router(profile.router, prefix="/api/profile", tags=["profile"])
 
     @app.get("/api/health")
     async def health_check():

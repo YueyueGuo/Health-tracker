@@ -14,7 +14,7 @@ const ITEMS: Item[] = [
   { to: "/history", label: "History", icon: History },
   { to: "/record", label: "Record", icon: PlusCircle },
   { to: "/training", label: "Trends", icon: LineChart },
-  { to: "/settings", label: "Profile", icon: User },
+  { to: "/profile", label: "Profile", icon: User },
 ];
 
 export function BottomNav() {

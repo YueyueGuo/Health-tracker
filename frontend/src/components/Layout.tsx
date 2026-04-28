@@ -7,8 +7,10 @@ const navItems = [
   { to: "/record", label: "Record" },
   { to: "/sleep", label: "Sleep" },
   { to: "/recovery", label: "Recovery" },
-  { to: "/training", label: "Training Load" },
+  { to: "/training", label: "Trends" },
   { to: "/ask", label: "Ask AI" },
+  { to: "/profile", label: "Profile" },
+  { to: "/settings", label: "Settings" },
 ];
 
 export default function Layout() {

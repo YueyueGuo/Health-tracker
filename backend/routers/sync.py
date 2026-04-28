@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -118,6 +118,40 @@ async def sync_status(db: AsyncSession = Depends(get_db)):
     statuses["strava_quota"] = StravaClient.quota_usage()
 
     return statuses
+
+
+@router.get("/debug/db")
+async def debug_db(db: AsyncSession = Depends(get_db)):
+    """Debug: report which SQLite file this process is using.
+
+    This is intentionally safe to call from the UI so you can quickly confirm
+    the backend is pointing at the DB you expect (e.g. repo-local vs ~/.health-tracker).
+    """
+    from backend.config import settings
+
+    # SQLite reports attached databases (main/temp); main.file is what we care about.
+    rows = (await db.execute(text("PRAGMA database_list"))).all()
+    db_list = [
+        {"seq": r[0], "name": r[1], "file": r[2]}
+        for r in rows
+    ]
+    main_file = next((r["file"] for r in db_list if r["name"] == "main"), None)
+
+    counts = {}
+    for table in ("activities", "sleep_sessions", "recovery_records", "sync_logs"):
+        try:
+            n = (await db.execute(text(f"SELECT COUNT(*) FROM {table}"))).scalar_one()
+            counts[table] = int(n)
+        except Exception:
+            # Table might not exist yet in a fresh DB.
+            counts[table] = None
+
+    return {
+        "database_url": settings.database_url,
+        "sqlite_main_file": main_file,
+        "database_list": db_list,
+        "row_counts": counts,
+    }
 
 
 @router.get("/debug/strava-raw")
