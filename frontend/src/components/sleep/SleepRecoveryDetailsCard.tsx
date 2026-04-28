@@ -38,8 +38,10 @@ export function SleepRecoveryDetailsCard({
   const navigate = useNavigate();
   const { units } = useUnits();
 
-  const recoveryLabel = sourceLabel(recovery?.source) ?? "WHOOP";
-  const sleepLabel = sourceLabel(sleep?.source) ?? "Eight Sleep";
+  const recoverySourceName = sourceLabel(recovery?.source) ?? "—";
+  const sleepSourceName = sourceLabel(sleep?.source) ?? "—";
+  const recoveryColumnLabel = sourceLabel(recovery?.source) ?? "Recovery";
+  const sleepColumnLabel = sourceLabel(sleep?.source) ?? "Sleep";
   const headerDate = formatHeaderDate(sleep?.date ?? recovery?.date ?? null);
 
   const recoveryScore = recovery?.recovery_score ?? null;
@@ -49,8 +51,10 @@ export function SleepRecoveryDetailsCard({
   const eightHrv = sleep?.hrv ?? null;
   const whoopRhr = recovery?.resting_hr ?? null;
   const eightRhr = sleep?.avg_hr ?? null;
+  // Recovery API has no nightly sleep duration; keep null until WHOOP sleep is wired.
   const whoopTotalSleepMin: number | null = null;
   const eightTotalSleepMin = sleep?.total_duration ?? null;
+  // RecoveryRecord has no respiratory rate.
   const whoopResp = null as number | null;
   const eightResp = sleep?.respiratory_rate ?? null;
 
@@ -106,7 +110,7 @@ export function SleepRecoveryDetailsCard({
 
   return (
     <div className="pb-2 pt-2">
-      <div className="px-1 mb-3 sticky top-0 z-20 bg-dashboard/95 backdrop-blur-md pt-1 pb-3 -mx-4 px-4 sm:mx-0 sm:px-0">
+      <div className="mb-3 sticky top-0 z-20 bg-dashboard/95 backdrop-blur-md pt-1 pb-3 -mx-4 px-4 sm:mx-0 sm:px-0">
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -129,7 +133,7 @@ export function SleepRecoveryDetailsCard({
         <div className="grid grid-cols-2 gap-3">
           <Card className="p-4 flex flex-col items-center justify-center">
             <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-3">
-              {recoveryLabel} Recovery
+              Recovery
             </div>
             <CircularProgress
               value={recoveryScore ?? 0}
@@ -141,11 +145,14 @@ export function SleepRecoveryDetailsCard({
                 {recoveryScore != null ? `${Math.round(recoveryScore)}%` : "—"}
               </span>
             </CircularProgress>
+            <span className="text-[10px] text-slate-500 mt-2 bg-slate-800/50 px-2 py-0.5 rounded">
+              {recoverySourceName}
+            </span>
           </Card>
 
           <Card className="p-4 flex flex-col items-center justify-center">
             <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-3">
-              {sleepLabel} Sleep
+              Sleep
             </div>
             <CircularProgress
               value={sleepScore ?? 0}
@@ -157,6 +164,9 @@ export function SleepRecoveryDetailsCard({
                 {sleepScore != null ? Math.round(sleepScore) : "—"}
               </span>
             </CircularProgress>
+            <span className="text-[10px] text-slate-500 mt-2 bg-slate-800/50 px-2 py-0.5 rounded">
+              {sleepSourceName}
+            </span>
           </Card>
         </div>
 
@@ -166,10 +176,10 @@ export function SleepRecoveryDetailsCard({
               Metric
             </div>
             <div className="text-[10px] font-bold text-slate-300 uppercase tracking-wider text-right">
-              {recoveryLabel}
+              {recoveryColumnLabel}
             </div>
             <div className="text-[10px] font-bold text-sky-400 uppercase tracking-wider text-right">
-              {sleepLabel}
+              {sleepColumnLabel}
             </div>
             <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right">
               Δ Diff
@@ -177,7 +187,7 @@ export function SleepRecoveryDetailsCard({
           </div>
 
           <div className="p-2 space-y-1">
-            {comparisons.map((comp, idx) => {
+            {comparisons.map((comp) => {
               const Icon = comp.icon;
               const { text, tone } = diffDisplay(
                 comp.whoopNum,
@@ -186,7 +196,7 @@ export function SleepRecoveryDetailsCard({
               );
               return (
                 <div
-                  key={idx}
+                  key={comp.label}
                   className="grid grid-cols-[1.2fr_1fr_1fr_0.8fr] gap-2 p-2 items-center rounded hover:bg-cardBorder/20 transition-colors"
                 >
                   <div className="flex items-center gap-2 text-slate-300">
@@ -225,7 +235,7 @@ export function SleepRecoveryDetailsCard({
           <div className="space-y-4 mb-5">
             <div>
               <div className="flex justify-between text-[10px] font-bold text-slate-300 mb-1.5">
-                <span>{recoveryLabel}</span>
+                <span>{recoveryColumnLabel}</span>
               </div>
               <div className="h-4 w-full rounded-full overflow-hidden bg-slate-800/60 border border-cardBorder/30" />
               <p className="text-[10px] text-slate-500 mt-1">No stage breakdown for this source.</p>
@@ -233,25 +243,25 @@ export function SleepRecoveryDetailsCard({
 
             <div>
               <div className="flex justify-between text-[10px] font-bold text-sky-400 mb-1.5">
-                <span>{sleepLabel}</span>
+                <span>{sleepColumnLabel}</span>
               </div>
               {hasEightStages && stages ? (
                 <div className="h-4 w-full flex rounded-full overflow-hidden gap-0.5">
                   <div
-                    className="bg-slate-700 h-full min-w-[2px]"
-                    style={{ width: `${stages.pct.awake}%` }}
+                    className="bg-sky-900 h-full min-w-[2px]"
+                    style={{ width: `${stages.pct.deep}%` }}
                   />
                   <div
-                    className="bg-blue-800 h-full min-w-[2px]"
-                    style={{ width: `${stages.pct.light}%` }}
-                  />
-                  <div
-                    className="bg-blue-600 h-full min-w-[2px]"
+                    className="bg-sky-600 h-full min-w-[2px]"
                     style={{ width: `${stages.pct.rem}%` }}
                   />
                   <div
-                    className="bg-blue-400 h-full min-w-[2px]"
-                    style={{ width: `${stages.pct.deep}%` }}
+                    className="bg-sky-300 h-full min-w-[2px]"
+                    style={{ width: `${stages.pct.light}%` }}
+                  />
+                  <div
+                    className="bg-slate-700 h-full min-w-[2px]"
+                    style={{ width: `${stages.pct.awake}%` }}
                   />
                 </div>
               ) : (
@@ -266,20 +276,20 @@ export function SleepRecoveryDetailsCard({
                 Stage
               </div>
               <div className="text-[9px] font-bold text-slate-300 uppercase tracking-wider text-right">
-                {recoveryLabel}
+                {recoveryColumnLabel}
               </div>
               <div className="text-[9px] font-bold text-sky-400 uppercase tracking-wider text-right">
-                {sleepLabel}
+                {sleepColumnLabel}
               </div>
             </div>
 
             <div className="space-y-2">
               {(
                 [
+                  { key: "deep" as const, label: "Deep", dot: "bg-sky-900" },
+                  { key: "rem" as const, label: "REM", dot: "bg-sky-600" },
+                  { key: "light" as const, label: "Light", dot: "bg-sky-300" },
                   { key: "awake" as const, label: "Awake", dot: "bg-slate-700" },
-                  { key: "light" as const, label: "Light", dot: "bg-blue-800" },
-                  { key: "rem" as const, label: "REM", dot: "bg-blue-600" },
-                  { key: "deep" as const, label: "Deep", dot: "bg-blue-400" },
                 ] as const
               ).map((row) => (
                 <div
@@ -316,7 +326,7 @@ export function SleepRecoveryDetailsCard({
         <div className="grid grid-cols-2 gap-3">
           <Card className="p-3 border-slate-500/20">
             <div className="text-[10px] font-bold text-slate-300 uppercase tracking-wider mb-3">
-              {recoveryLabel} Insights
+              {recoveryColumnLabel} Insights
             </div>
             <div className="space-y-3">
               {recovery?.strain_score != null && (
@@ -358,17 +368,21 @@ export function SleepRecoveryDetailsCard({
                   </div>
                 </div>
               )}
-              {recovery?.strain_score == null &&
-                recovery?.skin_temp == null &&
-                recovery?.spo2 == null && (
+              {recovery == null ? (
+                <p className="text-[10px] text-slate-500">No recovery data.</p>
+              ) : (
+                recovery.strain_score == null &&
+                recovery.skin_temp == null &&
+                recovery.spo2 == null && (
                   <p className="text-[10px] text-slate-500">No extra recovery metrics.</p>
-                )}
+                )
+              )}
             </div>
           </Card>
 
           <Card className="p-3 border-sky-400/20">
             <div className="text-[10px] font-bold text-sky-400 uppercase tracking-wider mb-3">
-              {sleepLabel} Insights
+              {sleepColumnLabel} Insights
             </div>
             <div className="space-y-3">
               <div>
