@@ -66,6 +66,7 @@ async def get_sleep_trends(
             "date": s.date.isoformat(),
             "source": s.source,
             "sleep_score": s.sleep_score,
+            "sleep_fitness_score": s.sleep_fitness_score,
             "total_duration": s.total_duration,
             "deep_sleep": s.deep_sleep,
             "rem_sleep": s.rem_sleep,
@@ -74,6 +75,10 @@ async def get_sleep_trends(
             "hrv": s.hrv,
             "avg_hr": s.avg_hr,
             "respiratory_rate": s.respiratory_rate,
+            # Whoop-only extras so the trend chart can split/color by source later.
+            "sleep_efficiency": s.sleep_efficiency,
+            "sleep_consistency": s.sleep_consistency,
+            "sleep_debt_min": s.sleep_debt_min,
         }
         for s in sessions
     ]

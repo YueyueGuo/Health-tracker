@@ -188,12 +188,20 @@ async def _upsert_recovery(
 
 
 async def _upsert_sleep(db: AsyncSession, rec: dict) -> str | None:
+    # Skip naps. Whoop returns naps via the same /activity/sleep endpoint with
+    # nap=true, but a nap on the same wake date as a main sleep would collide
+    # with the (source, date) unique constraint and fail the upsert. We don't
+    # surface naps in the UI today; treat them as no-ops.
+    if rec.get("nap"):
+        return None
+
     sleep_date = _sleep_wake_date(rec)
     if sleep_date is None:
         return None
 
     score = rec.get("score") or {}
     stages = score.get("stage_summary") or {}
+    sleep_needed = score.get("sleep_needed") or {}
 
     def _ms_to_min(ms: int | None) -> int | None:
         return int(ms // 60_000) if isinstance(ms, (int, float)) else None
@@ -214,6 +222,11 @@ async def _upsert_sleep(db: AsyncSession, rec: dict) -> str | None:
         "sleep_score": score.get("sleep_performance_percentage"),
         "respiratory_rate": score.get("respiratory_rate"),
         "wake_count": stages.get("disturbance_count"),
+        # Whoop-only extras. Eight Sleep doesn't surface these.
+        "sleep_efficiency": score.get("sleep_efficiency_percentage"),
+        "sleep_consistency": score.get("sleep_consistency_percentage"),
+        "sleep_need_baseline_min": _ms_to_min(sleep_needed.get("baseline_milli")),
+        "sleep_debt_min": _ms_to_min(sleep_needed.get("need_from_sleep_debt_milli")),
         "raw_data": rec,
     }
 

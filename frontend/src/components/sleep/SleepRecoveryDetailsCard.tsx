@@ -4,8 +4,10 @@ import {
   Battery,
   BedDouble,
   ChevronLeft,
+  Gauge,
   Heart,
   Moon,
+  Repeat,
   Thermometer,
   Timer,
   Wind,
@@ -27,36 +29,47 @@ const SOURCE_LABEL: Record<string, string> = {
 type DiffTone = "positive" | "negative" | "neutral";
 
 export interface SleepRecoveryDetailsCardProps {
-  sleep: SleepSession | null;
+  whoopSleep: SleepSession | null;
+  eightSleep: SleepSession | null;
   recovery: RecoveryRecord | null;
 }
 
 export function SleepRecoveryDetailsCard({
-  sleep,
+  whoopSleep,
+  eightSleep,
   recovery,
 }: SleepRecoveryDetailsCardProps) {
   const navigate = useNavigate();
   const { units } = useUnits();
 
-  const recoverySourceName = sourceLabel(recovery?.source) ?? "—";
-  const sleepSourceName = sourceLabel(sleep?.source) ?? "—";
-  const recoveryColumnLabel = sourceLabel(recovery?.source) ?? "Recovery";
-  const sleepColumnLabel = sourceLabel(sleep?.source) ?? "Sleep";
-  const headerDate = formatHeaderDate(sleep?.date ?? recovery?.date ?? null);
+  const whoopColumnLabel =
+    sourceLabel(whoopSleep?.source) ??
+    sourceLabel(recovery?.source) ??
+    "WHOOP";
+  const eightSleepColumnLabel = sourceLabel(eightSleep?.source) ?? "Eight Sleep";
+  const headerDate = formatHeaderDate(
+    pickLatestDate(whoopSleep?.date, eightSleep?.date, recovery?.date),
+  );
 
   const recoveryScore = recovery?.recovery_score ?? null;
-  const sleepScore = sleep?.sleep_score ?? null;
+  // Right-hand circle is *only* Eight Sleep's nightly score. Do not fall back
+  // to WHOOP here — that made the UI look like "everything is WHOOP" when
+  // Eight was missing or paired to a different calendar night.
+  const sleepScore = eightSleep?.sleep_score ?? null;
 
-  const whoopHrv = recovery?.hrv ?? null;
-  const eightHrv = sleep?.hrv ?? null;
-  const whoopRhr = recovery?.resting_hr ?? null;
-  const eightRhr = sleep?.avg_hr ?? null;
-  // Recovery API has no nightly sleep duration; keep null until WHOOP sleep is wired.
-  const whoopTotalSleepMin: number | null = null;
-  const eightTotalSleepMin = sleep?.total_duration ?? null;
-  // RecoveryRecord has no respiratory rate.
-  const whoopResp = null as number | null;
-  const eightResp = sleep?.respiratory_rate ?? null;
+  // Cross-fill HRV / resting HR on the WHOOP column from the same-day
+  // Recovery row when the sleep payload doesn't carry them. Whoop's
+  // /activity/sleep endpoint omits HR aggregates; they only live on
+  // /recovery, so without this fallback the WHOOP column is sparse.
+  const whoopHrv = whoopSleep?.hrv ?? recovery?.hrv ?? null;
+  const whoopRhr = whoopSleep?.avg_hr ?? recovery?.resting_hr ?? null;
+  const whoopTotalSleepMin = whoopSleep?.total_duration ?? null;
+  const whoopResp = whoopSleep?.respiratory_rate ?? null;
+
+  const eightHrv = eightSleep?.hrv ?? null;
+  const eightRhr = eightSleep?.avg_hr ?? null;
+  const eightTotalSleepMin = eightSleep?.total_duration ?? null;
+  const eightResp = eightSleep?.respiratory_rate ?? null;
 
   const comparisons: {
     label: string;
@@ -105,8 +118,15 @@ export function SleepRecoveryDetailsCard({
     },
   ];
 
-  const stages = computeStagePercents(sleep);
-  const hasEightStages = stages != null && stages.total > 0;
+  const whoopStages = computeStagePercents(whoopSleep);
+  const eightStages = computeStagePercents(eightSleep);
+  const hasWhoopStages = whoopStages != null && whoopStages.total > 0;
+  const hasEightStages = eightStages != null && eightStages.total > 0;
+
+  const showWhoopExtras =
+    whoopSleep?.sleep_efficiency != null ||
+    whoopSleep?.sleep_consistency != null ||
+    whoopSleep?.sleep_debt_min != null;
 
   return (
     <div className="pb-2 pt-2">
@@ -125,6 +145,15 @@ export function SleepRecoveryDetailsCard({
               Sleep & Recovery
             </h1>
             <p className="text-[10px] text-slate-400">{headerDate}</p>
+            {whoopSleep?.date &&
+              eightSleep?.date &&
+              whoopSleep.date !== eightSleep.date && (
+                <p className="text-[9px] text-amber-400/90 mt-1 max-w-[280px] leading-snug">
+                  WHOOP and Eight label this night on different dates (
+                  {formatHeaderDate(whoopSleep.date)} vs {formatHeaderDate(eightSleep.date)}); the
+                  table below still compares those two rows side-by-side.
+                </p>
+              )}
           </div>
         </div>
       </div>
@@ -146,7 +175,7 @@ export function SleepRecoveryDetailsCard({
               </span>
             </CircularProgress>
             <span className="text-[10px] text-slate-500 mt-2 bg-slate-800/50 px-2 py-0.5 rounded">
-              {recoverySourceName}
+              {whoopColumnLabel}
             </span>
           </Card>
 
@@ -165,7 +194,7 @@ export function SleepRecoveryDetailsCard({
               </span>
             </CircularProgress>
             <span className="text-[10px] text-slate-500 mt-2 bg-slate-800/50 px-2 py-0.5 rounded">
-              {sleepSourceName}
+              {eightSleepColumnLabel}
             </span>
           </Card>
         </div>
@@ -176,10 +205,10 @@ export function SleepRecoveryDetailsCard({
               Metric
             </div>
             <div className="text-[10px] font-bold text-slate-300 uppercase tracking-wider text-right">
-              {recoveryColumnLabel}
+              {whoopColumnLabel}
             </div>
             <div className="text-[10px] font-bold text-sky-400 uppercase tracking-wider text-right">
-              {sleepColumnLabel}
+              {eightSleepColumnLabel}
             </div>
             <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right">
               Δ Diff
@@ -192,7 +221,7 @@ export function SleepRecoveryDetailsCard({
               const { text, tone } = diffDisplay(
                 comp.whoopNum,
                 comp.eightNum,
-                comp.lowerIsBetter
+                comp.lowerIsBetter,
               );
               return (
                 <div
@@ -235,33 +264,58 @@ export function SleepRecoveryDetailsCard({
           <div className="space-y-4 mb-5">
             <div>
               <div className="flex justify-between text-[10px] font-bold text-slate-300 mb-1.5">
-                <span>{recoveryColumnLabel}</span>
+                <span>{whoopColumnLabel}</span>
               </div>
-              <div className="h-4 w-full rounded-full overflow-hidden bg-slate-800/60 border border-cardBorder/30" />
-              <p className="text-[10px] text-slate-500 mt-1">No stage breakdown for this source.</p>
+              {hasWhoopStages && whoopStages ? (
+                <div className="h-4 w-full flex rounded-full overflow-hidden gap-0.5">
+                  <div
+                    className="bg-sky-900 h-full min-w-[2px]"
+                    style={{ width: `${whoopStages.pct.deep}%` }}
+                  />
+                  <div
+                    className="bg-sky-600 h-full min-w-[2px]"
+                    style={{ width: `${whoopStages.pct.rem}%` }}
+                  />
+                  <div
+                    className="bg-sky-300 h-full min-w-[2px]"
+                    style={{ width: `${whoopStages.pct.light}%` }}
+                  />
+                  <div
+                    className="bg-slate-700 h-full min-w-[2px]"
+                    style={{ width: `${whoopStages.pct.awake}%` }}
+                  />
+                </div>
+              ) : (
+                <>
+                  <div className="h-4 w-full rounded-full bg-slate-800/60 border border-cardBorder/30" />
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    No stage breakdown for this source.
+                  </p>
+                </>
+              )}
             </div>
 
             <div>
               <div className="flex justify-between text-[10px] font-bold text-sky-400 mb-1.5">
-                <span>{sleepColumnLabel}</span>
+                <span>{eightSleepColumnLabel}</span>
               </div>
-              {hasEightStages && stages ? (
+              {hasEightStages && eightStages ? (
                 <div className="h-4 w-full flex rounded-full overflow-hidden gap-0.5">
                   <div
                     className="bg-sky-900 h-full min-w-[2px]"
-                    style={{ width: `${stages.pct.deep}%` }}
+                    style={{ width: `${eightStages.pct.deep}%` }}
                   />
                   <div
                     className="bg-sky-600 h-full min-w-[2px]"
-                    style={{ width: `${stages.pct.rem}%` }}
+                    style={{ width: `${eightStages.pct.rem}%` }}
                   />
                   <div
                     className="bg-sky-300 h-full min-w-[2px]"
-                    style={{ width: `${stages.pct.light}%` }}
+                    style={{ width: `${eightStages.pct.light}%` }}
                   />
                   <div
                     className="bg-slate-700 h-full min-w-[2px]"
-                    style={{ width: `${stages.pct.awake}%` }}
+                    style={{ width: `${eightStages.pct.awake}%` }}
                   />
                 </div>
               ) : (
@@ -270,55 +324,113 @@ export function SleepRecoveryDetailsCard({
             </div>
           </div>
 
-          <div className="border-t border-cardBorder/50 pt-3">
-            <div className="grid grid-cols-[1fr_1fr_1fr] gap-2 mb-2 px-1">
+          <div className="border-t border-cardBorder/50 pt-3 overflow-x-auto">
+            <div className="min-w-[300px] sm:min-w-0">
+            <div className="grid grid-cols-[1.2fr_1fr_1fr_0.8fr] gap-2 mb-2 px-1">
               <div className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
                 Stage
               </div>
               <div className="text-[9px] font-bold text-slate-300 uppercase tracking-wider text-right">
-                {recoveryColumnLabel}
+                {whoopColumnLabel}
               </div>
               <div className="text-[9px] font-bold text-sky-400 uppercase tracking-wider text-right">
-                {sleepColumnLabel}
+                {eightSleepColumnLabel}
+              </div>
+              <div className="text-[9px] font-bold text-slate-500 uppercase tracking-wider text-right">
+                Δ Diff
               </div>
             </div>
 
             <div className="space-y-2">
               {(
                 [
-                  { key: "deep" as const, label: "Deep", dot: "bg-sky-900" },
-                  { key: "rem" as const, label: "REM", dot: "bg-sky-600" },
-                  { key: "light" as const, label: "Light", dot: "bg-sky-300" },
-                  { key: "awake" as const, label: "Awake", dot: "bg-slate-700" },
+                  {
+                    key: "deep" as const,
+                    label: "Deep",
+                    dot: "bg-sky-900",
+                    lowerIsBetter: false,
+                  },
+                  {
+                    key: "rem" as const,
+                    label: "REM",
+                    dot: "bg-sky-600",
+                    lowerIsBetter: false,
+                  },
+                  {
+                    key: "light" as const,
+                    label: "Light",
+                    dot: "bg-sky-300",
+                    lowerIsBetter: false,
+                  },
+                  {
+                    key: "awake" as const,
+                    label: "Awake",
+                    dot: "bg-slate-700",
+                    lowerIsBetter: true,
+                  },
                 ] as const
-              ).map((row) => (
-                <div
-                  key={row.key}
-                  className="grid grid-cols-[1fr_1fr_1fr] gap-2 px-1 items-center"
-                >
-                  <div className="flex items-center gap-1.5">
-                    <div className={`w-2 h-2 rounded-sm ${row.dot}`} />
-                    <span className="text-xs text-slate-400">{row.label}</span>
+              ).map((row) => {
+                const wMin =
+                  hasWhoopStages && whoopStages ? whoopStages.minutes[row.key] : null;
+                const eMin =
+                  hasEightStages && eightStages ? eightStages.minutes[row.key] : null;
+                const { text: diffText, tone: diffTone } = stageRelativeDiff(
+                  wMin,
+                  eMin,
+                  row.lowerIsBetter,
+                );
+                return (
+                  <div
+                    key={row.key}
+                    className="grid grid-cols-[1.2fr_1fr_1fr_0.8fr] gap-2 px-1 items-center"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <div className={`w-2 h-2 rounded-sm ${row.dot}`} />
+                      <span className="text-xs text-slate-400">{row.label}</span>
+                    </div>
+                    <div className="text-right">
+                      {hasWhoopStages && whoopStages ? (
+                        <>
+                          <span className="text-xs font-bold text-white">
+                            {formatStageCell(whoopStages.minutes[row.key])}
+                          </span>
+                          <span className="text-[10px] text-slate-500 ml-1">
+                            ({whoopStages.pct[row.key]}%)
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-xs text-slate-500">—</span>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      {hasEightStages && eightStages ? (
+                        <>
+                          <span className="text-xs font-bold text-white">
+                            {formatStageCell(eightStages.minutes[row.key])}
+                          </span>
+                          <span className="text-[10px] text-slate-500 ml-1">
+                            ({eightStages.pct[row.key]}%)
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-xs text-slate-500">—</span>
+                      )}
+                    </div>
+                    <div
+                      className={`text-[11px] font-bold text-right whitespace-nowrap tabular-nums ${
+                        diffTone === "positive"
+                          ? "text-brand-green"
+                          : diffTone === "negative"
+                            ? "text-brand-red"
+                            : "text-slate-400"
+                      }`}
+                    >
+                      {diffText}
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <span className="text-xs text-slate-500">—</span>
-                  </div>
-                  <div className="text-right">
-                    {hasEightStages && stages ? (
-                      <>
-                        <span className="text-xs font-bold text-white">
-                          {formatStageCell(stages.minutes[row.key])}
-                        </span>
-                        <span className="text-[10px] text-slate-500 ml-1">
-                          ({stages.pct[row.key]}%)
-                        </span>
-                      </>
-                    ) : (
-                      <span className="text-xs text-slate-500">—</span>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
+            </div>
             </div>
           </div>
         </Card>
@@ -326,7 +438,7 @@ export function SleepRecoveryDetailsCard({
         <div className="grid grid-cols-2 gap-3">
           <Card className="p-3 border-slate-500/20">
             <div className="text-[10px] font-bold text-slate-300 uppercase tracking-wider mb-3">
-              {recoveryColumnLabel} Insights
+              {whoopColumnLabel} Insights
             </div>
             <div className="space-y-3">
               {recovery?.strain_score != null && (
@@ -368,21 +480,56 @@ export function SleepRecoveryDetailsCard({
                   </div>
                 </div>
               )}
-              {recovery == null ? (
-                <p className="text-[10px] text-slate-500">No recovery data.</p>
-              ) : (
-                recovery.strain_score == null &&
-                recovery.skin_temp == null &&
-                recovery.spo2 == null && (
-                  <p className="text-[10px] text-slate-500">No extra recovery metrics.</p>
-                )
+              {whoopSleep?.sleep_efficiency != null && (
+                <div>
+                  <div className="flex items-center gap-1.5 text-slate-400 mb-0.5">
+                    <Gauge size={12} />
+                    <span className="text-[9px] uppercase tracking-wider font-medium">
+                      Efficiency
+                    </span>
+                  </div>
+                  <div className="text-sm font-bold text-white">
+                    {whoopSleep.sleep_efficiency.toFixed(1)}%
+                  </div>
+                </div>
+              )}
+              {whoopSleep?.sleep_consistency != null && (
+                <div>
+                  <div className="flex items-center gap-1.5 text-slate-400 mb-0.5">
+                    <Repeat size={12} />
+                    <span className="text-[9px] uppercase tracking-wider font-medium">
+                      Consistency
+                    </span>
+                  </div>
+                  <div className="text-sm font-bold text-white">
+                    {whoopSleep.sleep_consistency.toFixed(0)}%
+                  </div>
+                </div>
+              )}
+              {whoopSleep?.sleep_debt_min != null && (
+                <div>
+                  <div className="flex items-center gap-1.5 text-slate-400 mb-0.5">
+                    <BedDouble size={12} />
+                    <span className="text-[9px] uppercase tracking-wider font-medium">
+                      Sleep debt
+                    </span>
+                  </div>
+                  <div className="text-sm font-bold text-white">
+                    {formatDurationMinutes(whoopSleep.sleep_debt_min)}
+                  </div>
+                </div>
+              )}
+              {recovery == null && !showWhoopExtras && (
+                <p className="text-[10px] text-slate-500">
+                  No {whoopColumnLabel} data yet.
+                </p>
               )}
             </div>
           </Card>
 
           <Card className="p-3 border-sky-400/20">
             <div className="text-[10px] font-bold text-sky-400 uppercase tracking-wider mb-3">
-              {sleepColumnLabel} Insights
+              {eightSleepColumnLabel} Insights
             </div>
             <div className="space-y-3">
               <div>
@@ -393,7 +540,7 @@ export function SleepRecoveryDetailsCard({
                   </span>
                 </div>
                 <div className="text-sm font-bold text-white">
-                  {formatLatency(sleep?.latency)}
+                  {formatLatency(eightSleep?.latency)}
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -405,8 +552,8 @@ export function SleepRecoveryDetailsCard({
                     </span>
                   </div>
                   <div className="text-sm font-bold text-white">
-                    {sleep?.waso_duration != null
-                      ? `${Math.round(sleep.waso_duration)}m`
+                    {eightSleep?.waso_duration != null
+                      ? `${Math.round(eightSleep.waso_duration)}m`
                       : "—"}
                   </div>
                 </div>
@@ -418,7 +565,9 @@ export function SleepRecoveryDetailsCard({
                     </span>
                   </div>
                   <div className="text-sm font-bold text-white">
-                    {sleep?.wake_count != null ? String(sleep.wake_count) : "—"}
+                    {eightSleep?.wake_count != null
+                      ? String(eightSleep.wake_count)
+                      : "—"}
                   </div>
                 </div>
               </div>
@@ -430,8 +579,8 @@ export function SleepRecoveryDetailsCard({
                   </span>
                 </div>
                 <div className="text-sm font-bold text-white">
-                  {sleep?.bed_temp != null
-                    ? formatTemperature(sleep.bed_temp, units)
+                  {eightSleep?.bed_temp != null
+                    ? formatTemperature(eightSleep.bed_temp, units)
                     : "—"}
                 </div>
               </div>
@@ -446,6 +595,17 @@ export function SleepRecoveryDetailsCard({
 function sourceLabel(source: string | null | undefined): string | null {
   if (!source) return null;
   return SOURCE_LABEL[source.toLowerCase()] ?? source;
+}
+
+function pickLatestDate(
+  ...candidates: Array<string | null | undefined>
+): string | null {
+  // ISO date strings sort lexicographically, which lines up with chronology.
+  const valid = candidates.filter(
+    (d): d is string => typeof d === "string" && d.length > 0,
+  );
+  if (valid.length === 0) return null;
+  return valid.reduce((acc, d) => (d > acc ? d : acc));
 }
 
 function formatHeaderDate(iso: string | null): string {
@@ -517,7 +677,7 @@ function computeStagePercents(session: SleepSession | null): {
 function diffDisplay(
   whoop: number | null,
   eight: number | null,
-  lowerIsBetter: boolean
+  lowerIsBetter: boolean,
 ): { text: string; tone: DiffTone } {
   if (whoop == null || eight == null || whoop === 0) {
     return { text: "—", tone: "neutral" };
@@ -531,4 +691,39 @@ function diffDisplay(
   const bad = lowerIsBetter ? raw > 0 : raw < 0;
   const tone: DiffTone = good ? "positive" : bad ? "negative" : "neutral";
   return { text, tone };
+}
+
+function toFiniteNumber(v: unknown): number | null {
+  if (v == null) return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Same relative % idea as ``diffDisplay`` for the metrics table, but sleep
+ * stages can legitimately be **0 min on WHOOP** while Eight still has time.
+ * The global helper treats ``whoop === 0`` as "no diff" and would blank every
+ * such row — this variant treats a zero WHOOP baseline with positive Eight
+ * minutes as ``+100%`` (then applies the same good/bad coloring).
+ */
+function stageRelativeDiff(
+  whoopMin: number | null | undefined,
+  eightMin: number | null | undefined,
+  lowerIsBetter: boolean,
+): { text: string; tone: DiffTone } {
+  const w = toFiniteNumber(whoopMin);
+  const e = toFiniteNumber(eightMin);
+  if (w == null || e == null) return { text: "—", tone: "neutral" };
+  if (w <= 0 && e <= 0) return { text: "—", tone: "neutral" };
+
+  if (w <= 0) {
+    const raw = 100;
+    const text = "+100%";
+    const good = lowerIsBetter ? raw < 0 : raw > 0;
+    const bad = lowerIsBetter ? raw > 0 : raw < 0;
+    const tone: DiffTone = good ? "positive" : bad ? "negative" : "neutral";
+    return { text, tone };
+  }
+
+  return diffDisplay(w, e, lowerIsBetter);
 }

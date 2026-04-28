@@ -9,6 +9,7 @@ export interface WakeEvent {
 export interface SleepSession {
   id: number;
   source: string;
+  external_id?: string | null;
   date: string;
   bed_time: string | null;
   wake_time: string | null;
@@ -31,7 +32,14 @@ export interface SleepSession {
   out_of_bed_count?: number | null;
   out_of_bed_duration?: number | null; // minutes
   wake_events?: WakeEvent[] | null;
+  // Whoop-only extras (null on Eight Sleep rows).
+  sleep_efficiency?: number | null; // %, time asleep / in bed
+  sleep_consistency?: number | null; // %, schedule regularity
+  sleep_need_baseline_min?: number | null;
+  sleep_debt_min?: number | null;
 }
+
+export type SleepSource = "whoop" | "eight_sleep";
 
 export function fetchSleepSessions(days = 30): Promise<SleepSession[]> {
   return fetchJson<SleepSession[]>(`/sleep?days=${days}`);
@@ -43,4 +51,17 @@ export function fetchSleepTrends(days = 30): Promise<SleepSession[]> {
 
 export function fetchLatestSleep(): Promise<SleepSession | null> {
   return fetchJson<SleepSession | null>(`/sleep/latest`);
+}
+
+/**
+ * Fetch the latest sleep session for a single source. Used by the
+ * sleep details card so the WHOOP and Eight Sleep columns each bind
+ * to their own most-recent row instead of fighting over /sleep/latest.
+ */
+export function fetchLatestSleepBySource(
+  source: SleepSource,
+): Promise<SleepSession | null> {
+  return fetchJson<SleepSession | null>(
+    `/sleep/latest?source=${encodeURIComponent(source)}`,
+  );
 }

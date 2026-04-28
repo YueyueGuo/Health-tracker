@@ -39,5 +39,12 @@ class SleepSession(Base):
     out_of_bed_count: Mapped[int | None] = mapped_column(Integer)
     out_of_bed_duration: Mapped[int | None] = mapped_column(Integer)  # minutes
     wake_events: Mapped[list | None] = mapped_column(JSON)  # [{type, duration_sec, start}]
+    # Whoop-specific sleep extras. Whoop's score object exposes these for every
+    # sleep cycle but they have no Eight Sleep equivalent, so they stay null on
+    # Eight Sleep rows.
+    sleep_efficiency: Mapped[float | None] = mapped_column(Float)  # %, time asleep / in bed
+    sleep_consistency: Mapped[float | None] = mapped_column(Float)  # %, schedule regularity
+    sleep_need_baseline_min: Mapped[int | None] = mapped_column(Integer)  # baseline need
+    sleep_debt_min: Mapped[int | None] = mapped_column(Integer)  # accrued sleep debt
     raw_data: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

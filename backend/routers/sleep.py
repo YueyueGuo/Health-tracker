@@ -89,11 +89,23 @@ async def sleep_consistency(
 
 
 @router.get("/latest")
-async def latest_sleep(db: AsyncSession = Depends(get_db)):
-    """Get the most recent sleep session."""
-    result = await db.execute(
-        select(SleepSession).order_by(SleepSession.date.desc()).limit(1)
-    )
+async def latest_sleep(
+    source: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the most recent sleep session, optionally filtered by source.
+
+    The ``source`` filter is the contract the comparison card relies on:
+    callers fetch ``/sleep/latest?source=whoop`` and ``?source=eight_sleep``
+    in parallel so each column on the side-by-side card binds to the
+    correct provider. Without the filter we'd return whichever provider
+    happens to have the newer ``date``, which makes Whoop stats invisible
+    most days (Eight Sleep usually wins by one calendar day).
+    """
+    query = select(SleepSession).order_by(SleepSession.date.desc()).limit(1)
+    if source:
+        query = query.where(SleepSession.source == source)
+    result = await db.execute(query)
     session = result.scalar_one_or_none()
     if not session:
         return None
@@ -104,6 +116,7 @@ def _sleep_dict(s: SleepSession) -> dict:
     return {
         "id": s.id,
         "source": s.source,
+        "external_id": s.external_id,
         "date": s.date.isoformat(),
         "bed_time": s.bed_time.isoformat() if s.bed_time else None,
         "wake_time": s.wake_time.isoformat() if s.wake_time else None,
@@ -113,8 +126,21 @@ def _sleep_dict(s: SleepSession) -> dict:
         "light_sleep": s.light_sleep,
         "awake_time": s.awake_time,
         "sleep_score": s.sleep_score,
+        "sleep_fitness_score": s.sleep_fitness_score,
         "avg_hr": s.avg_hr,
         "hrv": s.hrv,
         "respiratory_rate": s.respiratory_rate,
         "bed_temp": s.bed_temp,
+        "tnt_count": s.tnt_count,
+        "latency": s.latency,
+        "wake_count": s.wake_count,
+        "waso_duration": s.waso_duration,
+        "out_of_bed_count": s.out_of_bed_count,
+        "out_of_bed_duration": s.out_of_bed_duration,
+        "wake_events": s.wake_events,
+        # Whoop-only extras (null on Eight Sleep rows).
+        "sleep_efficiency": s.sleep_efficiency,
+        "sleep_consistency": s.sleep_consistency,
+        "sleep_need_baseline_min": s.sleep_need_baseline_min,
+        "sleep_debt_min": s.sleep_debt_min,
     }

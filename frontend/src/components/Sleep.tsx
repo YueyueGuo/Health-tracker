@@ -12,16 +12,24 @@ import {
 } from "recharts";
 import { useState } from "react";
 import { useApi } from "../hooks/useApi";
-import { fetchRecovery } from "../api/recovery";
+import { fetchRecovery, type RecoveryRecord } from "../api/recovery";
 import {
   fetchSleepSessions,
   fetchSleepTrends,
-  fetchLatestSleep,
+  fetchLatestSleepBySource,
   SleepSession,
   WakeEvent,
 } from "../api/sleep";
 import { Card } from "./ui/Card";
 import { SleepRecoveryDetailsCard } from "./sleep/SleepRecoveryDetailsCard";
+
+const SOURCE_PILL_LABEL: Record<string, string> = {
+  whoop: "WHOOP",
+  eight_sleep: "Eight Sleep",
+  oura: "Oura",
+  garmin: "Garmin",
+  manual: "Manual",
+};
 
 // Stage palette picked for hue separation rather than pretty variance on
 // a single hue: deep = navy (darkest blue), REM = teal/cyan (cool), light
@@ -45,19 +53,38 @@ export default function Sleep() {
     () => fetchSleepSessions(30),
     []
   );
-  const { data: latest, loading: latestLoading } = useApi(fetchLatestSleep, []);
-  const { data: recoveryRows, loading: recoveryLoading } = useApi(
-    () => fetchRecovery(2),
+  // Fetch the latest row for each source independently so the card binds
+  // each column to its own provider (Eight Sleep usually leads Whoop by a
+  // calendar day, so a global /sleep/latest hides Whoop most days).
+  const { data: latestWhoop, loading: latestWhoopLoading } = useApi(
+    () => fetchLatestSleepBySource("whoop"),
     []
   );
-  const latestRecovery = recoveryRows?.[0] ?? null;
+  const { data: latestEight, loading: latestEightLoading } = useApi(
+    () => fetchLatestSleepBySource("eight_sleep"),
+    []
+  );
+  const { data: recoveryRows, loading: recoveryLoading } = useApi(
+    () => fetchRecovery(14),
+    []
+  );
 
-  if (trendsLoading || sessionsLoading || latestLoading || recoveryLoading) {
+  if (
+    trendsLoading ||
+    sessionsLoading ||
+    latestWhoopLoading ||
+    latestEightLoading ||
+    recoveryLoading
+  ) {
     return <div className="loading">Loading sleep data...</div>;
   }
   if (trendsError) return <div className="error">{trendsError}</div>;
 
-  if ((!trends || trends.length === 0) && !latest) {
+  if (
+    (!trends || trends.length === 0) &&
+    !latestWhoop &&
+    !latestEight
+  ) {
     return (
       <div className="pb-8">
         <div className="page-header">
@@ -67,6 +94,20 @@ export default function Sleep() {
       </div>
     );
   }
+
+  // Merge list + latest endpoints so a row that only exists on /latest is still
+  // visible to the pairing pass (edge race with sync timing).
+  const sessionPool = mergeSleepSessions(sessions, latestWhoop, latestEight);
+  const { whoopSleep: cardWhoop, eightSleep: cardEight } = resolveSleepPairForCard(
+    sessionPool,
+    latestWhoop,
+    latestEight,
+  );
+  const cardRecovery = pickRecoveryForSleeps(
+    recoveryRows,
+    cardWhoop?.date,
+    cardEight?.date,
+  );
 
   const scoreChartData = (trends || []).map((s) => ({
     date: formatShortDate(s.date),
@@ -91,7 +132,11 @@ export default function Sleep() {
 
   return (
     <div className="pb-8 space-y-4">
-      <SleepRecoveryDetailsCard sleep={latest ?? null} recovery={latestRecovery} />
+      <SleepRecoveryDetailsCard
+        whoopSleep={cardWhoop}
+        eightSleep={cardEight}
+        recovery={cardRecovery}
+      />
 
       <div className="flex items-center justify-end gap-2 pt-1">
         <label htmlFor="sleep-trend-days" className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">
@@ -183,6 +228,7 @@ export default function Sleep() {
           <thead>
             <tr>
               <th>Date</th>
+              <th>Source</th>
               <th>Score</th>
               <th>Duration</th>
               <th>Stages (D / R / L / A)</th>
@@ -196,6 +242,9 @@ export default function Sleep() {
             {recentNights.map((n) => (
               <tr key={n.id} style={{ cursor: "default" }}>
                 <td>{formatShortDate(n.date)}</td>
+                <td>
+                  <SourcePill source={n.source} />
+                </td>
                 <td style={{ color: getSleepColor(n.sleep_score), fontWeight: 600 }}>
                   {n.sleep_score != null ? Math.round(n.sleep_score) : "—"}
                 </td>
@@ -447,4 +496,139 @@ function formatStages(n: SleepSession): string {
   return `${fmt(n.deep_sleep)} / ${fmt(n.rem_sleep)} / ${fmt(n.light_sleep)} / ${fmt(
     n.awake_time
   )}`;
+}
+
+/** ISO calendar date (YYYY-MM-DD) plus/minus whole days in UTC. */
+function addDaysIso(isoDate: string, deltaDays: number): string {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const t = Date.UTC(y, m - 1, d + deltaDays);
+  return new Date(t).toISOString().slice(0, 10);
+}
+
+function mergeSleepSessions(
+  list: SleepSession[] | null | undefined,
+  latestWhoop: SleepSession | null | undefined,
+  latestEight: SleepSession | null | undefined,
+): SleepSession[] {
+  const out = [...(list ?? [])];
+  for (const extra of [latestWhoop, latestEight]) {
+    if (extra && !out.some((r) => r.id === extra.id)) out.push(extra);
+  }
+  return out;
+}
+
+function findEightForWhoopNight(
+  pool: SleepSession[],
+  whoop: SleepSession,
+): SleepSession | null {
+  // WHOOP keys nights by wake (end) date; Eight Sleep trend ``day`` is often
+  // the same calendar day but can sit ±1 day depending on timezone / API
+  // semantics. Try same day first, then neighbors.
+  for (const off of [0, -1, 1] as const) {
+    const d = addDaysIso(whoop.date, off);
+    const hit = pool.find((r) => r.source === "eight_sleep" && r.date === d);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function findWhoopForEightNight(
+  pool: SleepSession[],
+  eight: SleepSession,
+): SleepSession | null {
+  for (const off of [0, -1, 1] as const) {
+    const d = addDaysIso(eight.date, off);
+    const hit = pool.find((r) => r.source === "whoop" && r.date === d);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
+ * Pick WHOOP + Eight Sleep rows that describe the *same* physical night.
+ * ``/sleep/latest?source=…`` alone compares unrelated calendar rows when the
+ * two vendors label wake night differently; this walks recent WHOOP nights
+ * (newest first) until an Eight row lines up on the same day or ±1.
+ */
+function resolveSleepPairForCard(
+  pool: SleepSession[],
+  latestWhoop: SleepSession | null | undefined,
+  latestEight: SleepSession | null | undefined,
+): { whoopSleep: SleepSession | null; eightSleep: SleepSession | null } {
+  const whoopRows = pool
+    .filter((r) => r.source === "whoop")
+    .sort((a, b) => b.date.localeCompare(a.date));
+  for (const w of whoopRows) {
+    const e = findEightForWhoopNight(pool, w);
+    if (e) return { whoopSleep: w, eightSleep: e };
+  }
+  const eightRows = pool
+    .filter((r) => r.source === "eight_sleep")
+    .sort((a, b) => b.date.localeCompare(a.date));
+  for (const e of eightRows) {
+    const w = findWhoopForEightNight(pool, e);
+    if (w) return { whoopSleep: w, eightSleep: e };
+  }
+  return {
+    whoopSleep: latestWhoop ?? null,
+    eightSleep: latestEight ?? null,
+  };
+}
+
+/** WHOOP recovery rows are keyed by cycle day — try ±1 around each sleep date. */
+function pickRecoveryForSleeps(
+  rows: RecoveryRecord[] | null | undefined,
+  whoopNight: string | null | undefined,
+  eightNight: string | null | undefined,
+): RecoveryRecord | null {
+  if (!rows?.length) return null;
+  const tryDates: string[] = [];
+  for (const base of [whoopNight, eightNight]) {
+    if (!base) continue;
+    for (const off of [0, -1, 1] as const) {
+      tryDates.push(addDaysIso(base, off));
+    }
+  }
+  const seen = new Set<string>();
+  for (const d of tryDates) {
+    if (seen.has(d)) continue;
+    seen.add(d);
+    const hit = rows.find((r) => r.date === d);
+    if (hit) return hit;
+  }
+  return rows[0] ?? null;
+}
+
+function SourcePill({ source }: { source: string }) {
+  const label = SOURCE_PILL_LABEL[source.toLowerCase()] ?? source;
+  // Per-source color so Whoop and Eight Sleep rows are visually distinct
+  // without relying on the user reading the label every time.
+  const isWhoop = source.toLowerCase() === "whoop";
+  const styles = isWhoop
+    ? {
+        background: "rgba(239, 68, 68, 0.12)",
+        color: "#fca5a5",
+        border: "1px solid rgba(239, 68, 68, 0.25)",
+      }
+    : {
+        background: "rgba(56, 189, 248, 0.12)",
+        color: "#7dd3fc",
+        border: "1px solid rgba(56, 189, 248, 0.25)",
+      };
+  return (
+    <span
+      style={{
+        ...styles,
+        fontSize: 10,
+        fontWeight: 600,
+        padding: "2px 6px",
+        borderRadius: 4,
+        textTransform: "uppercase",
+        letterSpacing: "0.04em",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </span>
+  );
 }
