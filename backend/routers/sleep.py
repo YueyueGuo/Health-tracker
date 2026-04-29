@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date as _date
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -91,6 +93,9 @@ async def sleep_consistency(
 @router.get("/latest")
 async def latest_sleep(
     source: str | None = Query(None),
+    on_or_before: _date | None = Query(
+        None, description="Latest session whose date is <= this YYYY-MM-DD"
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """Get the most recent sleep session, optionally filtered by source.
@@ -101,10 +106,16 @@ async def latest_sleep(
     correct provider. Without the filter we'd return whichever provider
     happens to have the newer ``date``, which makes Whoop stats invisible
     most days (Eight Sleep usually wins by one calendar day).
+
+    The optional ``on_or_before`` anchors the lookup to a past date so the
+    Home page can re-scope the morning-status card when the user navigates
+    backwards.
     """
     query = select(SleepSession).order_by(SleepSession.date.desc()).limit(1)
     if source:
         query = query.where(SleepSession.source == source)
+    if on_or_before is not None:
+        query = query.where(SleepSession.date <= on_or_before)
     result = await db.execute(query)
     session = result.scalar_one_or_none()
     if not session:

@@ -4,9 +4,11 @@ import { renderWithQuery } from "../test/renderWithQuery";
 import { describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
-vi.mock("../api/activities", () => ({
-  fetchActivities: () =>
-    Promise.resolve([
+vi.mock("../api/dashboard", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/dashboard")>()),
+  fetchDashboardHistory: () =>
+    Promise.resolve({
+      activities: [
       {
         id: 1,
         strava_id: 1001,
@@ -49,12 +51,8 @@ vi.mock("../api/activities", () => ({
         user_notes: null,
         rated_at: null,
       },
-    ]),
-}));
-
-vi.mock("../api/sleep", () => ({
-  fetchSleepSessions: () =>
-    Promise.resolve([
+      ],
+      sleep: [
       {
         id: 1,
         source: "eight_sleep",
@@ -95,12 +93,8 @@ vi.mock("../api/sleep", () => ({
         tnt_count: 12,
         latency: 1500,
       },
-    ]),
-}));
-
-vi.mock("../api/strength", () => ({
-  fetchStrengthSessions: () =>
-    Promise.resolve([
+      ],
+      strength: [
       {
         date: "2026-04-24",
         exercise_count: 4,
@@ -108,7 +102,8 @@ vi.mock("../api/strength", () => ({
         total_volume_kg: 5630,
         activity_id: null,
       },
-    ]),
+      ],
+    }),
 }));
 
 import History from "./History";

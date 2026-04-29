@@ -4,11 +4,15 @@ import logging
 from datetime import date, datetime, timedelta
 from importlib.util import find_spec
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
+from backend.models import Activity, SleepSession
+from backend.routers.activities import _activity_summary
+from backend.routers.sleep import _sleep_dict
 from backend.services import sleep_recovery_snapshot, training_load_snapshot
 from backend.services.metrics import (
     get_recovery_trends,
@@ -17,7 +21,8 @@ from backend.services.metrics import (
     get_weekly_stats,
 )
 from backend.services.snapshot_models import EnvironmentTodaySnapshot
-from backend.services.time_utils import local_today
+from backend.services.strength import list_sessions, progression, search_exercises
+from backend.services.time_utils import local_today, utc_now_naive
 
 if find_spec("backend.services.environment"):
     from backend.services.environment import fetch_environment_today
@@ -82,22 +87,114 @@ async def dashboard_overview(db: AsyncSession = Depends(get_db)):
     }
 
 
-@router.get("/today", response_model=DashboardToday)
-async def dashboard_today(db: AsyncSession = Depends(get_db)):
-    """Get the dashboard's current sleep, recovery, load, and environment state."""
+@router.get("/history")
+async def dashboard_history(
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(200, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bundle the History page's cold-load data into one API request."""
+    cutoff = utc_now_naive() - timedelta(days=days)
+    activities_result = await db.execute(
+        select(Activity)
+        .where(Activity.start_date >= cutoff)
+        .order_by(Activity.start_date.desc())
+        .limit(limit)
+    )
+    activities = activities_result.scalars().all()
+    sleep_result = await db.execute(
+        select(SleepSession)
+        .where(SleepSession.date >= local_today() - timedelta(days=days))
+        .order_by(SleepSession.date.desc())
+    )
+    sleep = sleep_result.scalars().all()
+
+    return {
+        "activities": [_activity_summary(a) for a in activities],
+        "sleep": [_sleep_dict(s) for s in sleep],
+        "strength": await list_sessions(db, limit=200),
+    }
+
+
+@router.get("/training-trends")
+async def dashboard_training_trends(
+    days: int = Query(90, ge=1, le=365),
+    limit: int = Query(200, ge=1, le=200),
+    exercise: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bundle the Trends page's cold-load data into one API request.
+
+    The frontend still asks for a new bundle when the selected exercise
+    changes, but the initial page load avoids six independent Railway
+    round trips.
+    """
+    cutoff = utc_now_naive() - timedelta(days=days)
+    activities_result = await db.execute(
+        select(Activity)
+        .where(Activity.start_date >= cutoff)
+        .order_by(Activity.start_date.desc())
+        .limit(limit)
+    )
+    activities = activities_result.scalars().all()
+    exercises = await search_exercises(db, q=None, limit=20)
+    selected_exercise = exercise or (exercises[0] if exercises else None)
+
+    return {
+        "activities": [_activity_summary(a) for a in activities],
+        "recovery": await get_recovery_trends(db, days=days, today=local_today()),
+        "sleep": await get_sleep_trends(db, days=days, today=local_today()),
+        "strength_sessions": await list_sessions(db, limit=200),
+        "strength_exercises": exercises,
+        "selected_exercise": selected_exercise,
+        "strength_progression": (
+            await progression(db, exercise_name=selected_exercise, days=days)
+            if selected_exercise
+            else []
+        ),
+    }
+
+
+def _parse_dashboard_date(raw: str | None) -> date:
+    """Parse ?date= for the dashboard. Empty -> today; future -> 400."""
     today = local_today()
-    sleep = await sleep_recovery_snapshot.get_sleep_snapshot(db, days=14, today=today)
+    if not raw:
+        return today
+    try:
+        parsed = date.fromisoformat(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid date; expected YYYY-MM-DD") from exc
+    if parsed > today:
+        raise HTTPException(status_code=400, detail="Future dates are not supported")
+    return parsed
+
+
+@router.get("/today", response_model=DashboardToday)
+async def dashboard_today(
+    date: str | None = Query(None, description="YYYY-MM-DD; defaults to today"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the dashboard's sleep, recovery, load, and environment for a given date.
+
+    Defaults to today. Past dates re-anchor sleep/recovery/training but skip
+    environment (no historical forecast). Future dates return 400.
+    """
+    target = _parse_dashboard_date(date)
+    sleep = await sleep_recovery_snapshot.get_sleep_snapshot(db, days=14, today=target)
     recovery = await sleep_recovery_snapshot.get_recovery_snapshot(
-        db, days=7, today=today
+        db, days=7, today=target
     )
     training = await training_load_snapshot.get_training_load_snapshot(
-        db, days=42, today=today
+        db, days=42, today=target
     )
 
-    try:
-        environment = await fetch_environment_today(db)
-    except Exception:
-        logger.exception("Failed to fetch dashboard environment snapshot")
+    if target == local_today():
+        try:
+            environment = await fetch_environment_today(db)
+        except Exception:
+            logger.exception("Failed to fetch dashboard environment snapshot")
+            environment = None
+    else:
         environment = None
 
     return {
@@ -116,7 +213,7 @@ async def dashboard_today(db: AsyncSession = Depends(get_db)):
             "hrv_trend": recovery["hrv_trend"],
             "hrv_source": recovery["hrv_source"],
         },
-        "training": _dashboard_training_payload(training, today),
+        "training": _dashboard_training_payload(training, target),
         "environment": environment,
     }
 

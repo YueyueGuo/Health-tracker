@@ -49,8 +49,17 @@ export function fetchSleepTrends(days = 30): Promise<SleepSession[]> {
   return fetchJson<SleepSession[]>(`/sleep/trends?days=${days}`);
 }
 
-export function fetchLatestSleep(): Promise<SleepSession | null> {
-  return fetchJson<SleepSession | null>(`/sleep/latest`);
+export function fetchLatestSleep(opts?: {
+  source?: SleepSource;
+  onOrBefore?: string;
+}): Promise<SleepSession | null> {
+  const qs = new URLSearchParams();
+  if (opts?.source) qs.set("source", opts.source);
+  if (opts?.onOrBefore) qs.set("on_or_before", opts.onOrBefore);
+  const query = qs.toString();
+  return fetchJson<SleepSession | null>(
+    `/sleep/latest${query ? `?${query}` : ""}`,
+  );
 }
 
 /**

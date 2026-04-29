@@ -52,9 +52,29 @@ async def dashboard_models():
 async def daily_recommendation(
     refresh: bool = Query(False, description="Force regen (ignore cache)."),
     model: str | None = Query(None, description="Override the LLM model."),
+    target_date: date | None = Query(
+        None,
+        alias="date",
+        description="YYYY-MM-DD; past dates only return cached results.",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
-    """LLM-driven daily training recommendation. Cached per-day per-inputs-hash."""
+    """LLM-driven daily training recommendation. Cached per-day per-inputs-hash.
+
+    When ``date`` is omitted or equals today, behavior is unchanged: cached
+    if available, otherwise call the LLM. When ``date`` is in the past, we
+    only look up cached recommendations — never regenerate — and return
+    ``None`` on a cache miss. Future dates are rejected.
+    """
+    today = local_today()
+    target = target_date or today
+    if target > today:
+        raise HTTPException(status_code=400, detail="Future dates are not supported")
+
+    if target != today:
+        cached = await insights.get_cached_recommendation_for_date(db, target)
+        return cached.to_dict() if cached else None
+
     try:
         result = await insights.get_daily_recommendation(db, model=model, refresh=refresh)
     except Exception:
@@ -139,12 +159,23 @@ async def latest_workout_insight(
     activity_id: int | None = Query(None, description="Optional activity id; defaults to latest."),
     refresh: bool = Query(False, description="Force regen (ignore cache)."),
     model: str | None = Query(None, description="Override the LLM model."),
+    target_date: date | None = Query(
+        None,
+        alias="date",
+        description="Restrict to the activity that occurred on this YYYY-MM-DD.",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """LLM-driven insight on a workout (latest by default). Cached per activity."""
+    if target_date and target_date > local_today():
+        raise HTTPException(status_code=400, detail="Future dates are not supported")
     try:
         result = await insights.get_latest_workout_insight(
-            db, activity_id=activity_id, model=model, refresh=refresh
+            db,
+            activity_id=activity_id,
+            model=model,
+            refresh=refresh,
+            on_date=target_date,
         )
     except Exception:
         logger.exception("latest_workout_insight failed")
