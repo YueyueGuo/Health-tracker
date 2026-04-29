@@ -1,10 +1,12 @@
 import { Heart, Moon } from "lucide-react";
+import { useOutletContext } from "react-router-dom";
 import { Card } from "../ui/Card";
 import { CircularProgress } from "../ui/CircularProgress";
 import { useApi } from "../../hooks/useApi";
 import { fetchLatestSleep } from "../../api/sleep";
 import { fetchRecovery } from "../../api/recovery";
 import { useUnits, formatTemperature } from "../../hooks/useUnits";
+import type { HomeOutletContext } from "../HomeLayout";
 
 const SOURCE_LABEL: Record<string, string> = {
   whoop: "WHOOP",
@@ -16,8 +18,13 @@ const SOURCE_LABEL: Record<string, string> = {
 
 export function MorningStatusCard() {
   const { units } = useUnits();
-  const sleep = useApi(["sleep", "latest"], fetchLatestSleep);
-  const recovery = useApi(["recovery", "recent", 2], () => fetchRecovery(2));
+  const { dateStr, isToday } = useOutletContext<HomeOutletContext>();
+  const sleep = useApi(["sleep", "latest", dateStr], () =>
+    fetchLatestSleep(isToday ? undefined : { onOrBefore: dateStr }),
+  );
+  const recovery = useApi(["recovery", "recent", 2, dateStr], () =>
+    fetchRecovery(2, isToday ? undefined : dateStr),
+  );
 
   const latestSleep = sleep.data;
   const latestRecovery = recovery.data?.[0] ?? null;

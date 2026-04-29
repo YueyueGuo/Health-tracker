@@ -1,4 +1,5 @@
 import { Bike, Dumbbell, Flame, Mountain, Heart } from "lucide-react";
+import { useOutletContext } from "react-router-dom";
 import { Card } from "../ui/Card";
 import { useApi } from "../../hooks/useApi";
 import { fetchLatestWorkoutInsight } from "../../api/insights";
@@ -10,11 +11,18 @@ import {
   formatElevation,
   useUnits,
 } from "../../hooks/useUnits";
+import type { HomeOutletContext } from "../HomeLayout";
+import { relativeDateLabel } from "../../utils/date";
 
 export function YesterdayActivityCard() {
   const { units } = useUnits();
-  const insight = useApi(["insights", "latest-workout-snapshot"], () =>
-    fetchLatestWorkoutInsight(),
+  const { dateStr, isToday, selectedDate } =
+    useOutletContext<HomeOutletContext>();
+  const insight = useApi(
+    ["insights", "latest-workout-snapshot", dateStr, isToday],
+    () =>
+      fetchLatestWorkoutInsight(isToday ? undefined : { date: dateStr }),
+    { staleTime: 3 * 60_000 },
   );
 
   const workout = insight.data?.workout ?? null;
@@ -40,21 +48,27 @@ export function YesterdayActivityCard() {
   }
 
   if (insight.error || !workout) {
+    const emptyHeading = isToday
+      ? "Recent Activity"
+      : `${relativeDateLabel(selectedDate)}'s Activity`;
+    const emptyMessage = insight.error
+      ? "Couldn't load workout."
+      : isToday
+        ? "No recent workouts. Sync to see activity."
+        : "No workout on this date.";
     return (
       <Card className="p-4">
         <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wider mb-3">
-          Recent Activity
+          {emptyHeading}
         </h3>
-        <p className="text-xs text-slate-500">
-          {insight.error
-            ? "Couldn't load latest workout."
-            : "No recent workouts. Sync to see activity."}
-        </p>
+        <p className="text-xs text-slate-500">{emptyMessage}</p>
       </Card>
     );
   }
 
-  const heading = relativeDateHeading(workoutDate);
+  const heading = isToday
+    ? relativeDateHeading(workoutDate)
+    : `${relativeDateLabel(selectedDate)}'s Activity`;
   const sport = workout.sport_type?.toLowerCase() ?? "";
   const isRide = sport.includes("ride");
   const SportIcon = isRide ? Bike : Heart;

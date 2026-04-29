@@ -3,9 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Filter } from "lucide-react";
 import { useApi } from "../hooks/useApi";
-import { fetchActivities } from "../api/activities";
-import { fetchSleepSessions } from "../api/sleep";
-import { fetchStrengthSessions } from "../api/strength";
+import { fetchDashboardHistory } from "../api/dashboard";
 import {
   applyHistoryFilter,
   buildHistoryEvents,
@@ -24,28 +22,22 @@ export default function History() {
   const [activeFilter, setActiveFilter] = useState<FilterId>("All");
   const [days, setDays] = useState(30);
 
-  const activities = useApi(
-    ["activities", "history", { days, limit: 200 }],
-    () => fetchActivities({ days, limit: 200 }),
-  );
-  const sleep = useApi(["sleep", "sessions", days], () =>
-    fetchSleepSessions(days),
-  );
-  const strength = useApi(["strength", "sessions", 60], () =>
-    fetchStrengthSessions(60),
+  const history = useApi(
+    ["dashboard", "history", { days, limit: 200 }],
+    () => fetchDashboardHistory(days, 200),
   );
 
-  const loading = activities.loading || sleep.loading || strength.loading;
-  const error = activities.error || sleep.error || strength.error;
+  const loading = history.loading;
+  const error = history.error;
 
   const allEvents = useMemo(
     () =>
       buildHistoryEvents(
-        activities.data ?? [],
-        sleep.data ?? [],
-        strength.data ?? []
+        history.data?.activities ?? [],
+        history.data?.sleep ?? [],
+        history.data?.strength ?? []
       ),
-    [activities.data, sleep.data, strength.data]
+    [history.data]
   );
   const filtered = useMemo(
     () => applyHistoryFilter(allEvents, activeFilter),

@@ -8,8 +8,11 @@ export interface RecoveryRecord extends RecoveryTrend {
   calories: number | null;
 }
 
-export function fetchRecovery(days = 30) {
-  return fetchJson<RecoveryRecord[]>(`/recovery?days=${days}`);
+export function fetchRecovery(days = 30, asOf?: string) {
+  const qs = new URLSearchParams();
+  qs.set("days", String(days));
+  if (asOf) qs.set("as_of", asOf);
+  return fetchJson<RecoveryRecord[]>(`/recovery?${qs.toString()}`);
 }
 
 export function fetchRecoveryTrends(days = 30) {

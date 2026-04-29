@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-from backend.models import Activity, Recovery, SleepSession
+from backend.models import Activity, Recovery, SleepSession, StrengthSet
 import backend.routers.dashboard as dashboard_router_module
 
 from .conftest import make_client
@@ -139,3 +139,88 @@ async def test_dashboard_today_tolerates_environment_failure(
 
     assert response.status_code == 200
     assert response.json()["environment"] is None
+
+
+async def test_dashboard_history_bundles_full_timeline_payload(
+    client, db, monkeypatch
+):
+    today = date(2026, 1, 8)
+    monkeypatch.setattr(dashboard_router_module, "local_today", lambda: today)
+    monkeypatch.setattr(
+        dashboard_router_module,
+        "utc_now_naive",
+        lambda: datetime.combine(today, datetime.min.time()),
+    )
+
+    activity = _activity(101, today - timedelta(days=1), suffer_score=20)
+    sleep = SleepSession(
+        source="eight_sleep",
+        date=today - timedelta(days=1),
+        wake_time=datetime(2026, 1, 7, 6, 45),
+        sleep_score=82,
+        sleep_fitness_score=76,
+        total_duration=470,
+    )
+    strength = StrengthSet(
+        date=today - timedelta(days=1),
+        exercise_name="Back Squat",
+        set_number=1,
+        reps=5,
+        weight_kg=100,
+    )
+    db.add_all([activity, sleep, strength])
+    await db.commit()
+
+    response = await client.get("/api/dashboard/history?days=30")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["activities"][0]["name"] == "Activity 101"
+    assert payload["sleep"][0]["id"] == sleep.id
+    assert payload["sleep"][0]["wake_time"] == "2026-01-07T06:45:00"
+    assert payload["strength"][0]["date"] == "2026-01-07"
+    assert payload["strength"][0]["total_sets"] == 1
+
+
+async def test_dashboard_training_trends_bundles_initial_trends(
+    client, db, monkeypatch
+):
+    today = date(2026, 1, 8)
+    monkeypatch.setattr(dashboard_router_module, "local_today", lambda: today)
+    monkeypatch.setattr(
+        dashboard_router_module,
+        "utc_now_naive",
+        lambda: datetime.combine(today, datetime.min.time()),
+    )
+
+    db.add_all(
+        [
+            _activity(201, today - timedelta(days=1), suffer_score=20),
+            Recovery(source="whoop", date=today - timedelta(days=1), recovery_score=70),
+            SleepSession(
+                source="eight_sleep",
+                date=today - timedelta(days=1),
+                sleep_score=82,
+            ),
+            StrengthSet(
+                date=today - timedelta(days=1),
+                exercise_name="Back Squat",
+                set_number=1,
+                reps=5,
+                weight_kg=100,
+            ),
+        ]
+    )
+    await db.commit()
+
+    response = await client.get("/api/dashboard/training-trends?days=30")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["activities"][0]["strava_id"] == 201
+    assert payload["recovery"][0]["recovery_score"] == 70.0
+    assert payload["sleep"][0]["sleep_score"] == 82.0
+    assert payload["strength_sessions"][0]["total_sets"] == 1
+    assert payload["strength_exercises"] == ["Back Squat"]
+    assert payload["selected_exercise"] == "Back Squat"
+    assert isinstance(payload["strength_progression"], list)

@@ -9,12 +9,14 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
 
 from pydantic import BaseModel, ValidationError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
+from backend.models import AnalysisCache
 from backend.services import training_metrics
 from backend.services.insight_cache import _cache_get, _cache_put, _hash_inputs
 from backend.services.insight_prompts import (
@@ -176,6 +178,46 @@ class WorkoutInsightResult:
         }
 
 
+async def get_cached_recommendation_for_date(
+    db: AsyncSession, target_date: date
+) -> DailyRecommendationResult | None:
+    """Look up the most recently created cached daily-rec for a past date.
+
+    Cache keys are formed as ``daily_rec:{YYYY-MM-DD}:{model}:{inputs_hash}``.
+    For a given date there may be 0..N matching rows (multiple inputs hashes
+    or models throughout the day). We return the newest non-expired one, or
+    None. Never calls the LLM — this is the read path for the date-navigator.
+    """
+    prefix = f"daily_rec:{target_date.isoformat()}:"
+    rows = await db.execute(
+        select(AnalysisCache)
+        .where(AnalysisCache.query_hash.like(f"{prefix}%"))
+        .order_by(AnalysisCache.created_at.desc())
+    )
+    for row in rows.scalars().all():
+        try:
+            payload = json.loads(row.response_text)
+        except json.JSONDecodeError:
+            continue
+        recommendation = payload.get("recommendation")
+        if recommendation is None:
+            continue
+        try:
+            parsed = DailyRecommendation.model_validate(recommendation)
+        except ValidationError:
+            continue
+        return DailyRecommendationResult(
+            recommendation=parsed,
+            inputs=payload.get("inputs") or {},
+            model=payload.get("model") or row.model,
+            generated_at=payload.get("generated_at") or "",
+            cached=True,
+            cache_key=row.query_hash,
+            recommendation_date=target_date.isoformat(),
+        )
+    return None
+
+
 async def get_daily_recommendation(
     db: AsyncSession,
     model: str | None = None,
@@ -247,8 +289,11 @@ async def get_latest_workout_insight(
     activity_id: int | None = None,
     model: str | None = None,
     refresh: bool = False,
+    on_date: date | None = None,
 ) -> WorkoutInsightResult | None:
-    snapshot = await training_metrics.get_latest_workout_snapshot(db, activity_id)
+    snapshot = await training_metrics.get_latest_workout_snapshot(
+        db, activity_id, on_date=on_date
+    )
     if not snapshot:
         return None
 

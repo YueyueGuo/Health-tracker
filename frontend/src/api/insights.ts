@@ -17,7 +17,7 @@
 //    "added on one side, forgot the other" drift, but it does NOT check types
 //    or nullability — those are still manual.
 
-import { fetchJson } from "./http";
+import { fetchJson, fetchOptionalJson } from "./http";
 
 export type Intensity = "rest" | "recovery" | "easy" | "moderate" | "quality";
 export type Confidence = "high" | "medium" | "low";
@@ -309,12 +309,17 @@ export function fetchTrainingMetrics() {
   return fetchJson<FullSnapshot>("/insights/training-metrics");
 }
 
-export function fetchDailyRecommendation(refresh = false, model?: string) {
+export function fetchDailyRecommendation(
+  refresh = false,
+  model?: string,
+  date?: string,
+) {
   const qs = new URLSearchParams();
   if (refresh) qs.set("refresh", "true");
   if (model) qs.set("model", model);
+  if (date) qs.set("date", date);
   const query = qs.toString();
-  return fetchJson<DailyRecommendationResponse>(
+  return fetchJson<DailyRecommendationResponse | null>(
     `/insights/daily-recommendation${query ? `?${query}` : ""}`
   );
 }
@@ -323,13 +328,17 @@ export function fetchLatestWorkoutInsight(opts?: {
   activityId?: number;
   refresh?: boolean;
   model?: string;
+  date?: string;
 }) {
   const qs = new URLSearchParams();
   if (opts?.activityId) qs.set("activity_id", String(opts.activityId));
   if (opts?.refresh) qs.set("refresh", "true");
   if (opts?.model) qs.set("model", opts.model);
+  if (opts?.date) qs.set("date", opts.date);
   const query = qs.toString();
-  return fetchJson<WorkoutInsightResponse>(
-    `/insights/latest-workout${query ? `?${query}` : ""}`
+  // 404 (no activity for the requested date) is an expected empty state,
+  // not an error — surface it as null so the card can render "no workout".
+  return fetchOptionalJson<WorkoutInsightResponse>(
+    `/insights/latest-workout${query ? `?${query}` : ""}`,
   );
 }

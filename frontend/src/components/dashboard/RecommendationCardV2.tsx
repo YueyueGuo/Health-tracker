@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Sparkles, ThumbsUp, ThumbsDown, RefreshCw } from "lucide-react";
+import { useOutletContext } from "react-router-dom";
 import { Card } from "../ui/Card";
 import { useApi } from "../../hooks/useApi";
 import { fetchDailyRecommendation } from "../../api/insights";
@@ -7,17 +8,21 @@ import {
   postRecommendationFeedback,
   type VoteValue,
 } from "../../api/feedback";
+import type { HomeOutletContext } from "../HomeLayout";
 
 export function RecommendationCardV2() {
+  const { dateStr, isToday } = useOutletContext<HomeOutletContext>();
   const { data, loading, error, setData } = useApi(
-    ["insights", "daily-recommendation", false],
-    () => fetchDailyRecommendation(false),
+    ["insights", "daily-recommendation", dateStr],
+    () => fetchDailyRecommendation(false, undefined, isToday ? undefined : dateStr),
+    { staleTime: 10 * 60_000 },
   );
   const [refreshing, setRefreshing] = useState(false);
   const [vote, setVote] = useState<VoteValue | null>(null);
   const [voteSaving, setVoteSaving] = useState<VoteValue | null>(null);
 
   const handleRefresh = async () => {
+    if (!isToday) return;
     setRefreshing(true);
     try {
       const fresh = await fetchDailyRecommendation(true);
@@ -82,49 +87,55 @@ export function RecommendationCardV2() {
                   </p>
                 )}
               </>
+            ) : !isToday ? (
+              <p className="text-xs text-slate-400 leading-relaxed">
+                No AI recommendation saved for this date.
+              </p>
             ) : null}
           </div>
 
-          <div className="flex items-center gap-2 mt-1">
-            <button
-              type="button"
-              onClick={() => handleVote("up")}
-              disabled={!data || voteSaving !== null}
-              aria-label="Thumbs up"
-              className={`p-2.5 rounded-lg transition-colors ${
-                vote === "up"
-                  ? "bg-brand-green/20 text-brand-green"
-                  : "bg-cardBorder/50 hover:bg-cardBorder text-slate-300"
-              } disabled:opacity-50`}
-            >
-              <ThumbsUp size={16} />
-            </button>
-            <button
-              type="button"
-              onClick={() => handleVote("down")}
-              disabled={!data || voteSaving !== null}
-              aria-label="Thumbs down"
-              className={`p-2.5 rounded-lg transition-colors ${
-                vote === "down"
-                  ? "bg-brand-red/20 text-brand-red"
-                  : "bg-cardBorder/50 hover:bg-cardBorder text-slate-300"
-              } disabled:opacity-50`}
-            >
-              <ThumbsDown size={16} />
-            </button>
-            <button
-              type="button"
-              onClick={handleRefresh}
-              disabled={refreshing || loading}
-              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg bg-cardBorder/50 hover:bg-cardBorder transition-colors text-slate-300 text-xs font-semibold disabled:opacity-50"
-            >
-              <RefreshCw
-                size={14}
-                className={refreshing ? "animate-spin" : ""}
-              />
-              {refreshing ? "Generating…" : "Try something else"}
-            </button>
-          </div>
+          {isToday && (
+            <div className="flex items-center gap-2 mt-1">
+              <button
+                type="button"
+                onClick={() => handleVote("up")}
+                disabled={!data || voteSaving !== null}
+                aria-label="Thumbs up"
+                className={`p-2.5 rounded-lg transition-colors ${
+                  vote === "up"
+                    ? "bg-brand-green/20 text-brand-green"
+                    : "bg-cardBorder/50 hover:bg-cardBorder text-slate-300"
+                } disabled:opacity-50`}
+              >
+                <ThumbsUp size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleVote("down")}
+                disabled={!data || voteSaving !== null}
+                aria-label="Thumbs down"
+                className={`p-2.5 rounded-lg transition-colors ${
+                  vote === "down"
+                    ? "bg-brand-red/20 text-brand-red"
+                    : "bg-cardBorder/50 hover:bg-cardBorder text-slate-300"
+                } disabled:opacity-50`}
+              >
+                <ThumbsDown size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={refreshing || loading}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg bg-cardBorder/50 hover:bg-cardBorder transition-colors text-slate-300 text-xs font-semibold disabled:opacity-50"
+              >
+                <RefreshCw
+                  size={14}
+                  className={refreshing ? "animate-spin" : ""}
+                />
+                {refreshing ? "Generating…" : "Try something else"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </Card>

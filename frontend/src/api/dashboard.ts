@@ -1,4 +1,10 @@
 import { fetchJson } from "./http";
+import type { ActivitySummary } from "./activities";
+import type { SleepSession } from "./sleep";
+import type {
+  ProgressionPoint,
+  StrengthSession,
+} from "./strength";
 
 interface WeeklyStats {
   week_start: string;
@@ -116,6 +122,44 @@ export interface DashboardToday {
   environment: EnvironmentTodayPayload | null;
 }
 
-export function fetchDashboardToday() {
-  return fetchJson<DashboardToday>("/dashboard/today");
+export function fetchDashboardToday(date?: string) {
+  const query = date ? `?date=${encodeURIComponent(date)}` : "";
+  return fetchJson<DashboardToday>(`/dashboard/today${query}`);
+}
+
+export interface DashboardHistoryBundle {
+  activities: ActivitySummary[];
+  sleep: SleepSession[];
+  strength: StrengthSession[];
+}
+
+export function fetchDashboardHistory(days = 30, limit = 200) {
+  const qs = new URLSearchParams();
+  qs.set("days", String(days));
+  qs.set("limit", String(limit));
+  return fetchJson<DashboardHistoryBundle>(`/dashboard/history?${qs}`);
+}
+
+export interface DashboardTrainingTrendsBundle {
+  activities: ActivitySummary[];
+  recovery: RecoveryTrend[];
+  sleep: SleepSession[];
+  strength_sessions: StrengthSession[];
+  strength_exercises: string[];
+  selected_exercise: string | null;
+  strength_progression: ProgressionPoint[];
+}
+
+export function fetchDashboardTrainingTrends(params: {
+  days: number;
+  limit?: number;
+  exercise?: string;
+}) {
+  const qs = new URLSearchParams();
+  qs.set("days", String(params.days));
+  qs.set("limit", String(params.limit ?? 200));
+  if (params.exercise) qs.set("exercise", params.exercise);
+  return fetchJson<DashboardTrainingTrendsBundle>(
+    `/dashboard/training-trends?${qs}`,
+  );
 }

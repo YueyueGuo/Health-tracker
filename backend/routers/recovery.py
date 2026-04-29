@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date as _date
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,15 +17,19 @@ router = APIRouter()
 @router.get("")
 async def list_recovery(
     days: int = Query(30, ge=1, le=365),
+    as_of: _date | None = Query(
+        None, description="Anchor end of the window to this date (YYYY-MM-DD)"
+    ),
     db: AsyncSession = Depends(get_db),
 ):
-    """List recovery records."""
+    """List recovery records ending on/before ``as_of`` (default: today)."""
     from datetime import timedelta
 
-    cutoff = local_today() - timedelta(days=days)
+    anchor = as_of or local_today()
+    cutoff = anchor - timedelta(days=days)
     result = await db.execute(
         select(Recovery)
-        .where(Recovery.date >= cutoff)
+        .where(Recovery.date >= cutoff, Recovery.date <= anchor)
         .order_by(Recovery.date.desc())
     )
     records = result.scalars().all()

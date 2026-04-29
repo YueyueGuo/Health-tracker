@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +22,9 @@ _RIDE_SPORTS = {"Ride", "VirtualRide", "GravelRide", "MountainBikeRide", "EBikeR
 
 
 async def _get_latest_completed_activity(
-    db: AsyncSession, activity_id: int | None = None
+    db: AsyncSession,
+    activity_id: int | None = None,
+    on_date: date | None = None,
 ) -> Activity | None:
     if activity_id is not None:
         # Require enrichment_status == "complete" even for explicit IDs;
@@ -35,12 +37,30 @@ async def _get_latest_completed_activity(
         )
         return row.scalar_one_or_none()
 
-    row = await db.execute(
+    query = (
         select(Activity)
         .where(Activity.enrichment_status == "complete")
         .order_by(Activity.start_date.desc())
         .limit(1)
     )
+    if on_date is not None:
+        # Match activities whose local start day equals on_date. Fall back
+        # to start_date (UTC) when start_date_local is null.
+        day_start = datetime.combine(on_date, time.min)
+        day_end = datetime.combine(on_date, time.max)
+        query = query.where(
+            (
+                (Activity.start_date_local.is_not(None))
+                & (Activity.start_date_local >= day_start)
+                & (Activity.start_date_local <= day_end)
+            )
+            | (
+                (Activity.start_date_local.is_(None))
+                & (Activity.start_date >= day_start)
+                & (Activity.start_date <= day_end)
+            )
+        )
+    row = await db.execute(query)
     return row.scalar_one_or_none()
 
 
@@ -54,9 +74,11 @@ def _pace_str(avg_speed: float | None) -> str | None:
 
 
 async def get_latest_workout_snapshot(
-    db: AsyncSession, activity_id: int | None = None
+    db: AsyncSession,
+    activity_id: int | None = None,
+    on_date: date | None = None,
 ) -> dict | None:
-    activity = await _get_latest_completed_activity(db, activity_id)
+    activity = await _get_latest_completed_activity(db, activity_id, on_date)
     if not activity:
         return None
 

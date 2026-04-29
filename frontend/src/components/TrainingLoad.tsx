@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Activity,
   Bike,
@@ -20,14 +20,11 @@ import {
   YAxis,
 } from "recharts";
 import { Card } from "./ui/Card";
-import { fetchActivities, type ActivitySummary } from "../api/activities";
-import { fetchRecoveryTrends } from "../api/recovery";
+import type { ActivitySummary } from "../api/activities";
 import type { RecoveryTrend } from "../api/dashboard";
-import { fetchSleepTrends, type SleepSession } from "../api/sleep";
+import { fetchDashboardTrainingTrends } from "../api/dashboard";
+import type { SleepSession } from "../api/sleep";
 import {
-  fetchStrengthExercises,
-  fetchStrengthProgression,
-  fetchStrengthSessions,
   type ProgressionPoint,
   type StrengthSession,
 } from "../api/strength";
@@ -96,39 +93,21 @@ export default function TrainingLoad() {
   const [selectedExercise, setSelectedExercise] = useState("");
 
   const days = useMemo(() => daysForRange(timeRange), [timeRange]);
-  const activities = useApi(
-    ["activities", "list", { days, limit: 200 }],
-    () => fetchActivities({ days, limit: 200 }),
-  );
-  const recovery = useApi(["recovery", "trends", days], () =>
-    fetchRecoveryTrends(days),
-  );
-  const sleep = useApi(["sleep", "trends", days], () => fetchSleepTrends(days));
-  const strengthSessions = useApi(["strength", "sessions", 200], () =>
-    fetchStrengthSessions(200),
-  );
-  const strengthExercises = useApi(["strength", "exercises"], () =>
-    fetchStrengthExercises(),
-  );
-
-  useEffect(() => {
-    if (!selectedExercise && strengthExercises.data?.length) {
-      setSelectedExercise(strengthExercises.data[0]);
-    }
-  }, [selectedExercise, strengthExercises.data]);
-
-  const strengthProgression = useApi(
-    ["strength", "progression", selectedExercise, days],
+  const trends = useApi(
+    ["dashboard", "training-trends", days, selectedExercise || null],
     () =>
-      selectedExercise
-        ? fetchStrengthProgression(selectedExercise, days)
-        : Promise.resolve([]),
-    { enabled: Boolean(selectedExercise) },
+      fetchDashboardTrainingTrends({
+        days,
+        limit: 200,
+        exercise: selectedExercise || undefined,
+      }),
   );
+  const currentExercise =
+    selectedExercise || trends.data?.selected_exercise || "";
 
   const cardioData = useMemo(
-    () => buildCardioData(activities.data ?? [], units),
-    [activities.data, units]
+    () => buildCardioData(trends.data?.activities ?? [], units),
+    [trends.data?.activities, units]
   );
   const filteredCardioData = useMemo(
     () =>
@@ -142,21 +121,21 @@ export default function TrainingLoad() {
   const latestCardio =
     filteredCardioData[filteredCardioData.length - 1] ?? null;
   const strengthData = useMemo(
-    () => buildStrengthData(strengthProgression.data ?? [], units),
-    [strengthProgression.data, units]
+    () => buildStrengthData(trends.data?.strength_progression ?? [], units),
+    [trends.data?.strength_progression, units]
   );
   const weeklyVolume = useMemo(
-    () => buildStrengthWeeklyVolume(strengthSessions.data ?? [], units),
-    [strengthSessions.data, units]
+    () => buildStrengthWeeklyVolume(trends.data?.strength_sessions ?? [], units),
+    [trends.data?.strength_sessions, units]
   );
   const weeklyRecovery = useMemo(
     () =>
       buildWeeklyRecovery(
-        activities.data ?? [],
-        recovery.data ?? [],
-        sleep.data ?? []
+        trends.data?.activities ?? [],
+        trends.data?.recovery ?? [],
+        trends.data?.sleep ?? []
       ),
-    [activities.data, recovery.data, sleep.data]
+    [trends.data]
   );
   const macroSummary = useMemo(
     () =>
@@ -170,20 +149,8 @@ export default function TrainingLoad() {
     [cardioData, strengthData, timeRange, units, weeklyRecovery]
   );
 
-  const loading =
-    activities.loading ||
-    recovery.loading ||
-    sleep.loading ||
-    strengthSessions.loading ||
-    strengthExercises.loading ||
-    strengthProgression.loading;
-  const error =
-    activities.error ||
-    recovery.error ||
-    sleep.error ||
-    strengthSessions.error ||
-    strengthExercises.error ||
-    strengthProgression.error;
+  const loading = trends.loading;
+  const error = trends.error;
 
   return (
     <div className="pb-24 pt-4 animate-in fade-in duration-300">
@@ -439,13 +406,13 @@ export default function TrainingLoad() {
               </div>
               <div className="relative">
                 <select
-                  value={selectedExercise}
+                  value={currentExercise}
                   onChange={(e) => setSelectedExercise(e.target.value)}
                   aria-label="Strength exercise"
                   className="appearance-none max-w-[170px] bg-cardBorder/50 py-1.5 pl-3 pr-8 rounded-md text-xs font-medium text-slate-300 hover:bg-cardBorder transition-colors focus:outline-none focus:ring-1 focus:ring-brand-green"
                 >
-                  {strengthExercises.data?.length ? (
-                    strengthExercises.data.map((exercise) => (
+                  {trends.data?.strength_exercises.length ? (
+                    trends.data.strength_exercises.map((exercise) => (
                       <option key={exercise} value={exercise}>
                         {exercise}
                       </option>

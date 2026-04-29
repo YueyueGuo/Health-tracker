@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { renderWithQuery } from "../test/renderWithQuery";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UnitsProvider } from "../hooks/useUnits";
@@ -32,41 +32,21 @@ vi.mock("recharts", () => {
   };
 });
 
-vi.mock("../api/activities", () => ({
-  fetchActivities: vi.fn(),
-}));
-vi.mock("../api/recovery", () => ({
-  fetchRecoveryTrends: vi.fn(),
-}));
-vi.mock("../api/sleep", () => ({
-  fetchSleepTrends: vi.fn(),
-}));
-vi.mock("../api/strength", () => ({
-  fetchStrengthExercises: vi.fn(),
-  fetchStrengthProgression: vi.fn(),
-  fetchStrengthSessions: vi.fn(),
+vi.mock("../api/dashboard", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/dashboard")>()),
+  fetchDashboardTrainingTrends: vi.fn(),
 }));
 
 import type { ActivitySummary } from "../api/activities";
-import { fetchActivities } from "../api/activities";
 import type { RecoveryTrend } from "../api/dashboard";
-import { fetchRecoveryTrends } from "../api/recovery";
+import { fetchDashboardTrainingTrends } from "../api/dashboard";
 import type { SleepSession } from "../api/sleep";
-import { fetchSleepTrends } from "../api/sleep";
 import type { ProgressionPoint, StrengthSession } from "../api/strength";
-import {
-  fetchStrengthExercises,
-  fetchStrengthProgression,
-  fetchStrengthSessions,
-} from "../api/strength";
 import TrainingLoad from "./TrainingLoad";
 
-const mockedFetchActivities = vi.mocked(fetchActivities);
-const mockedFetchRecoveryTrends = vi.mocked(fetchRecoveryTrends);
-const mockedFetchSleepTrends = vi.mocked(fetchSleepTrends);
-const mockedFetchStrengthExercises = vi.mocked(fetchStrengthExercises);
-const mockedFetchStrengthProgression = vi.mocked(fetchStrengthProgression);
-const mockedFetchStrengthSessions = vi.mocked(fetchStrengthSessions);
+const mockedFetchDashboardTrainingTrends = vi.mocked(
+  fetchDashboardTrainingTrends,
+);
 
 const activities: ActivitySummary[] = [
   activity({
@@ -172,12 +152,7 @@ const strengthSessions: StrengthSession[] = [
 
 describe("TrainingLoad", () => {
   beforeEach(() => {
-    mockedFetchActivities.mockResolvedValue(activities);
-    mockedFetchRecoveryTrends.mockResolvedValue(recovery);
-    mockedFetchSleepTrends.mockResolvedValue(sleep);
-    mockedFetchStrengthExercises.mockResolvedValue(["Back Squat"]);
-    mockedFetchStrengthProgression.mockResolvedValue(progression);
-    mockedFetchStrengthSessions.mockResolvedValue(strengthSessions);
+    mockedFetchDashboardTrainingTrends.mockResolvedValue(bundle());
   });
 
   afterEach(() => {
@@ -189,21 +164,17 @@ describe("TrainingLoad", () => {
 
     await screen.findByRole("heading", { name: "Trends" });
 
-    expect(mockedFetchActivities).toHaveBeenCalledWith({ days: 90, limit: 200 });
-    expect(mockedFetchRecoveryTrends).toHaveBeenCalledWith(90);
-    expect(mockedFetchSleepTrends).toHaveBeenCalledWith(90);
-    await waitFor(() =>
-      expect(mockedFetchStrengthProgression).toHaveBeenCalledWith(
-        "Back Squat",
-        90
-      )
-    );
+    expect(mockedFetchDashboardTrainingTrends).toHaveBeenCalledWith({
+      days: 90,
+      limit: 200,
+      exercise: undefined,
+    });
 
     expect(screen.getByRole("heading", { name: "Macro Analysis" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Cardio" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Strength" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Recovery" })).toBeInTheDocument();
-    expect(screen.getByText(/HRV is up 6\.5 ms/)).toBeInTheDocument();
+    expect(await screen.findByText(/HRV is up 6\.5 ms/)).toBeInTheDocument();
     expect(screen.getByText(/10\.0/)).toBeInTheDocument();
     expect(screen.getByText(/243/)).toBeInTheDocument();
 
@@ -239,12 +210,17 @@ describe("TrainingLoad", () => {
   });
 
   it("shows empty states when live trend data is sparse", async () => {
-    mockedFetchActivities.mockResolvedValue([]);
-    mockedFetchRecoveryTrends.mockResolvedValue([]);
-    mockedFetchSleepTrends.mockResolvedValue([]);
-    mockedFetchStrengthExercises.mockResolvedValue([]);
-    mockedFetchStrengthProgression.mockResolvedValue([]);
-    mockedFetchStrengthSessions.mockResolvedValue([]);
+    mockedFetchDashboardTrainingTrends.mockResolvedValue(
+      bundle({
+        activities: [],
+        recovery: [],
+        sleep: [],
+        strength_sessions: [],
+        strength_exercises: [],
+        selected_exercise: null,
+        strength_progression: [],
+      }),
+    );
 
     renderTrends();
 
@@ -254,6 +230,21 @@ describe("TrainingLoad", () => {
     expect(screen.getByText("No recovery trend data in this range.")).toBeInTheDocument();
   });
 });
+
+function bundle(
+  patch: Partial<Awaited<ReturnType<typeof fetchDashboardTrainingTrends>>> = {},
+): Awaited<ReturnType<typeof fetchDashboardTrainingTrends>> {
+  return {
+    activities,
+    recovery,
+    sleep,
+    strength_sessions: strengthSessions,
+    strength_exercises: ["Back Squat"],
+    selected_exercise: "Back Squat",
+    strength_progression: progression,
+    ...patch,
+  };
+}
 
 function renderTrends() {
   return renderWithQuery(
