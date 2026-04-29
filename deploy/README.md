@@ -1,110 +1,134 @@
-# Always-On Deployment (Mac + Tailscale)
+# Deployment
 
-This guide sets up Health Tracker to run 24/7 on your Mac with a single `launchd` agent, accessible from your phone and laptop anywhere via Tailscale.
+You can run the app in either of these ways:
 
-## Overview
+| Approach | Best for |
+|----------|----------|
+| **[Railway](../README.md#deploy-on-railway)** (Docker, public URL) | HTTPS for your phone, sharing links, no home server. Full variable list and OAuth steps are in the **root [README.md](../README.md)** — this file does not duplicate that. |
+| **Mac + Tailscale + `launchd`** (below) | **Private** access: data stays on your Mac, no exposure to the public internet, no Railway account. Still relevant if you want a personal VPN mesh instead of a cloud deploy. |
 
-- **Process manager**: macOS `launchd` — auto-starts on boot, restarts on crash.
-- **Remote access**: Tailscale — private network between your Mac and phone; no port forwarding or public internet exposure.
-- **All-in-one**: The FastAPI process runs the web server and the APScheduler in its lifespan.
+Both setups run the **same** process: FastAPI serves `/api`, the scheduler, and the built React app from `frontend/dist`.
 
-## Prerequisites
+---
 
-1. A Mac you're willing to leave powered on (MacBook in clamshell, Mac mini, etc.). Sleep is fine — it will resume.
-2. Repo cloned locally with a working `.venv`:
+## Mac + Tailscale + launchd (always-on)
+
+This guide runs Health Tracker 24/7 on your Mac with a `launchd` agent and reaches it from your phone over **Tailscale** (no port forwarding).
+
+### Overview
+
+- **Process manager:** macOS `launchd` — starts at login, restarts on crash.
+- **Remote access:** Tailscale — devices share a private network.
+- **Database:** SQLite at `~/.health-tracker/health_tracker.db` (same as local dev default).
+
+### Prerequisites
+
+1. A Mac you can leave on (sleep is OK; it resumes when the machine wakes).
+2. Repo cloned; virtualenv at repo root (required by `install.sh`):
    ```bash
    cd Health-tracker
-   python -m venv .venv
+   python3 -m venv .venv
    .venv/bin/pip install -e .
    ```
-3. Node.js for the frontend build (`brew install node`).
-4. `.env` populated with your credentials (Strava tokens, API keys).
+3. Node.js (`brew install node`) for the frontend build.
+4. `.env` filled out (Strava, Eight Sleep, Whoop, keys — same as [README](../README.md) setup guides).
 
-## Step 1 — Install Tailscale
+### Step 1 — Tailscale
 
-On the Mac:
+**On the Mac**
+
 ```bash
 brew install --cask tailscale
 open -a Tailscale
 ```
-Sign in with your Google/Microsoft/email account.
 
-On your phone:
-- iOS: install **Tailscale** from the App Store.
-- Android: install **Tailscale** from the Play Store.
-- Sign in with the same account as the Mac.
+Sign in. MagicDNS name is under [machines](https://login.tailscale.com/admin/machines) (e.g. `my-mac.tailXXXXX.ts.net`), or run:
 
-Find your Mac's Tailscale name:
 ```bash
 tailscale status | head -1
-# e.g. 100.64.1.2    my-mac    your-name@   macOS   -
 ```
-Or find the MagicDNS name at https://login.tailscale.com/admin/machines — looks like `my-mac.tailXXXXX.ts.net`.
 
-Add it to `.env`:
-```
+**On your phone** — Install the Tailscale app and sign in with the **same** account.
+
+**In `.env`** set (so browser calls from your phone match CORS allow-list):
+
+```bash
 TAILSCALE_HOSTNAME=my-mac.tailXXXXX.ts.net
 ```
 
-## Step 2 — Install the launchd agent
+Use the hostname you actually type in the browser (MagicDNS name is the usual choice).
+
+### Step 2 — OAuth and `PUBLIC_BASE_URL`
+
+- If you only use **`http://localhost:8000`** on the Mac, you do **not** need `PUBLIC_BASE_URL` for OAuth.
+- If you open the app as **`http://<tailscale-host>:8000`** or **`https://<tailscale-host>.ts.net`** (Tailscale Serve), set **exactly that origin** so redirect URIs match:
+
+```bash
+PUBLIC_BASE_URL=https://my-mac.tailXXXXX.ts.net
+```
+
+No trailing slash. Register the same host in **Strava** and **Whoop** app settings (`…/api/auth/strava/callback` and `…/api/auth/whoop/callback`). After editing `.env`, restart the agent (see [Useful commands](#useful-commands)).
+
+### Step 3 — Install the launchd agent
+
+From the repo root:
 
 ```bash
 ./deploy/install.sh
 ```
 
 This will:
-1. `npm install` and `npm run build` in `frontend/` (produces `frontend/dist`)
-2. Render `deploy/com.healthtracker.plist.template` into `~/Library/LaunchAgents/com.healthtracker.plist`
-3. `launchctl bootstrap` the agent (starts it now and on every login)
+
+1. `npm install` and `npm run build` in `frontend/`
+2. Install `~/Library/LaunchAgents/com.healthtracker.plist` from `deploy/com.healthtracker.plist.template`
+3. `launchctl bootstrap` the agent
 4. Create `~/.health-tracker/logs/` for stdout/stderr
 
-The SQLite DB lives at `~/.health-tracker/health_tracker.db`.
+### Step 4 — Verify
 
-## Step 3 — Verify
+**On the Mac**
 
-From the Mac:
 ```bash
-curl http://localhost:8000/api/health
+curl -s http://localhost:8000/api/health
 # {"status":"ok","version":"0.1.0"}
 
 tail -f ~/.health-tracker/logs/stdout.log
 # Expect: "Scheduler started"
 ```
 
-From your phone (on cellular, not home Wi-Fi):
-- Open `http://<tailscale-name>:8000` in Safari/Chrome
-- Dashboard should load
+**On your phone** (Tailscale on, e.g. cellular): open `http://<TAILSCALE_HOSTNAME>:8000` — the dashboard should load.
 
-## Step 4 — (Optional) HTTPS via Tailscale Serve
+### Step 5 — (Optional) HTTPS with Tailscale Serve
 
-If you want clean `https://...ts.net` without the `:8000`:
+For `https://…ts.net` without `:8000`:
+
 ```bash
 tailscale serve --bg http://localhost:8000
 ```
-Now `https://<tailscale-name>.ts.net` works (cert is auto-provisioned).
 
-Disable later with `tailscale serve reset`.
+Then use that `https` URL everywhere (bookmarks, `PUBLIC_BASE_URL`, provider OAuth redirect URIs). Reset with `tailscale serve reset`.
 
-## Updating after a `git pull`
+### Updating after `git pull`
 
 ```bash
 ./deploy/update.sh
 ```
-This pulls, reinstalls Python deps, rebuilds the frontend, and restarts the agent.
 
-## Useful commands
+Pulls, reinstalls Python deps, rebuilds the frontend, restarts the agent.
+
+### Useful commands
 
 ```bash
 # Status
 launchctl print gui/$(id -u)/com.healthtracker | head -30
 
-# Restart
+# Restart (pick up .env / code changes after a pull)
 launchctl kickstart -k gui/$(id -u)/com.healthtracker
 
-# Stop (until next login or manual bootstrap)
+# Stop until next login or re-install
 launchctl bootout gui/$(id -u)/com.healthtracker
 
-# Re-install / re-enable
+# Re-install
 ./deploy/install.sh
 
 # Logs
@@ -112,44 +136,12 @@ tail -f ~/.health-tracker/logs/stdout.log
 tail -f ~/.health-tracker/logs/stderr.log
 ```
 
-## Troubleshooting
+### Troubleshooting
 
-**Agent shows up but status code is non-zero** — read `stderr.log`. Usually a missing dep or bad `.env` value.
+**Agent non-zero exit** — Read `~/.health-tracker/logs/stderr.log` (missing dep, bad `.env`, etc.).
 
-**Port 8000 already in use** — kill any stray `uvicorn` process: `pkill -f 'uvicorn backend.main'`.
+**Port 8000 in use** — `pkill -f 'uvicorn backend.main'` or change the port in the plist template / process (advanced).
 
-**Dashboard loads but sync fails on phone** — CORS. Confirm `TAILSCALE_HOSTNAME` in `.env` matches the hostname you're opening, then restart: `launchctl kickstart -k gui/$(id -u)/com.healthtracker`.
+**API or sync errors from the phone only** — **CORS:** `TAILSCALE_HOSTNAME` in `.env` must match the host you open in the browser (no `http://` prefix in the variable). **OAuth:** if redirects go to `localhost`, set `PUBLIC_BASE_URL` to the URL you use on the phone and restart the agent.
 
-**Mac sleeps and the service stops responding** — `launchd` resumes the process when the Mac wakes. If you want strictly zero downtime, go to System Settings → Battery → Prevent your Mac from automatically sleeping when the display is off.
-
----
-
-## Railway (public HTTPS)
-
-One Docker service serves the API and the built SPA. Railway injects `PORT` (handled by the image CMD).
-
-### 1. New project → **Deploy from GitHub** (or the CLI) using this repo.
-
-### 2. Create a **volume** mounted at `/data` so SQLite survives redeploys.
-
-In the service → **Settings** → **Volumes**: mount path `/data`.
-
-### 3. Variables (Railway **Variables** tab)
-
-| Variable | Example | Notes |
-|----------|---------|-------|
-| `DATABASE_URL` | `sqlite+aiosqlite:////data/health_tracker.db` | Four slashes before `data` = absolute path in the container. |
-| `PUBLIC_BASE_URL` | `https://your-service.up.railway.app` | No trailing slash. Required for **Strava / Whoop OAuth** redirect URLs. Copy from Railway **Settings → Networking → Public URL**. |
-| `SYNC_ON_STARTUP` | `false` | Optional: avoids a long first boot while the healthcheck runs. Scheduler still runs on an interval. |
-| … | … | Copy the rest from your local `.env` (Strava, Eight Sleep, Whoop, LLM keys, etc.). |
-
-Register **OAuth redirect URIs** with providers:
-
-- Strava: `https://<your-public-host>/api/auth/strava/callback`
-- Whoop: `https://<your-public-host>/api/auth/whoop/callback`
-
-### 4. Deploy
-
-Push to the connected branch or trigger a deploy. Open the public URL; you should see the dashboard.
-
-**Eight Sleep / Whoop token persist**: the app normally writes refreshed tokens back to `.env`. In Docker that file is not your Railway variables. Prefer setting long‑lived tokens as Railway variables, or re-auth when the container is recreated.
+**Mac sleeps** — The process resumes when the Mac wakes. For no sleep on lid-close, change **System Settings → Battery** (behavior varies by Mac model).

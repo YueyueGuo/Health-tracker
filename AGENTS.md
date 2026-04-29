@@ -5,7 +5,7 @@ Canonical context for AI agents on this repo. Refresh stale claims with:
 
 ## What this is
 
-Personal health tracker: ingests **Strava**, **Eight Sleep**, **Whoop**, and **OpenWeatherMap** into a local **SQLite** database (WAL on), serves a **FastAPI** API, and a **React + Vite** dashboard with optional **LLM** insights (Anthropic / OpenAI / Google). Single-user, local-first.
+Personal health tracker: ingests **Strava**, **Eight Sleep**, **Whoop**, and **OpenWeatherMap** into local **SQLite** (WAL on) or Railway **Postgres**, serves a **FastAPI** API, and a **React + Vite** dashboard with optional **LLM** insights (Anthropic / OpenAI / Google). Single-user, local-first.
 
 ## Repo map
 
@@ -25,7 +25,7 @@ Personal health tracker: ingests **Strava**, **Eight Sleep**, **Whoop**, and **O
 
 ## Stack
 
-- **Backend**: Python **3.11+**, FastAPI, SQLAlchemy async, Alembic, APScheduler. Deps: [`pyproject.toml`](pyproject.toml).
+- **Backend**: Python **3.11+**, FastAPI, SQLAlchemy async, Alembic, APScheduler. SQLite uses `aiosqlite`; Railway Postgres uses `asyncpg`. Deps: [`pyproject.toml`](pyproject.toml).
 - **Frontend**: React **19**, Vite, TypeScript, Recharts, Tailwind (see `globals.css` `@tailwind` layers) plus **CSS variables** for tokens (`--bg`, `--accent`, etc.). Deps: [`frontend/package.json`](frontend/package.json).
 - **CI**: [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — Ruff, pytest, `npm run typecheck`, `npm run build` (Node 22).
 

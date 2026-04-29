@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import pathlib
 
 from sqlalchemy import event
@@ -9,6 +10,22 @@ from sqlalchemy.orm import DeclarativeBase
 from backend.config import settings
 
 
+def _database_url() -> str:
+    """Return an async SQLAlchemy URL for local SQLite or Railway Postgres."""
+    url = (
+        os.environ.get("DATABASE_URL")
+        or os.environ.get("DATABASE_PUBLIC_URL")
+        or settings.database_url
+    )
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    return url
+
+
+db_url = _database_url()
+
 def _ensure_sqlite_dir(url: str) -> None:
     prefix = "sqlite+aiosqlite:///"
     if url.startswith(prefix):
@@ -16,22 +33,25 @@ def _ensure_sqlite_dir(url: str) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
 
-_ensure_sqlite_dir(settings.database_url)
+_ensure_sqlite_dir(db_url)
+
+connect_args = {"timeout": 30} if db_url.startswith("sqlite") else {}
 
 engine = create_async_engine(
-    settings.database_url,
+    db_url,
     echo=False,
-    connect_args={"timeout": 30},
+    connect_args=connect_args,
 )
 
+if db_url.startswith("sqlite"):
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.close()
 
-# Enable WAL mode for concurrent reads during writes
-@event.listens_for(engine.sync_engine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA busy_timeout=5000")
-    cursor.close()
+
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
