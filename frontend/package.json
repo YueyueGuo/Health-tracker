@@ -14,7 +14,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@tanstack/query-sync-storage-persister": "^5.100.6",
     "@tanstack/react-query": "^5.100.6",
+    "@tanstack/react-query-persist-client": "^5.100.6",
     "framer-motion": "^11.5.4",
     "lucide-react": "^0.522.0",
     "react": "^19.2.5",
