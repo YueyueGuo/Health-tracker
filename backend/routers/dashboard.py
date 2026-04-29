@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import date, datetime, timedelta
 from importlib.util import find_spec
 
@@ -179,23 +180,52 @@ async def dashboard_today(
     Defaults to today. Past dates re-anchor sleep/recovery/training but skip
     environment (no historical forecast). Future dates return 400.
     """
+    started_at = time.perf_counter()
     target = _parse_dashboard_date(date)
+    parse_ms = (time.perf_counter() - started_at) * 1000
+
+    stage_started = time.perf_counter()
     sleep = await sleep_recovery_snapshot.get_sleep_snapshot(db, days=14, today=target)
+    sleep_ms = (time.perf_counter() - stage_started) * 1000
+
+    stage_started = time.perf_counter()
     recovery = await sleep_recovery_snapshot.get_recovery_snapshot(
         db, days=7, today=target
     )
+    recovery_ms = (time.perf_counter() - stage_started) * 1000
+
+    stage_started = time.perf_counter()
     training = await training_load_snapshot.get_training_load_snapshot(
         db, days=42, today=target
     )
+    training_ms = (time.perf_counter() - stage_started) * 1000
 
+    environment_ms = 0.0
     if target == local_today():
         try:
+            stage_started = time.perf_counter()
             environment = await fetch_environment_today(db)
+            environment_ms = (time.perf_counter() - stage_started) * 1000
         except Exception:
+            environment_ms = (time.perf_counter() - stage_started) * 1000
             logger.exception("Failed to fetch dashboard environment snapshot")
             environment = None
     else:
         environment = None
+
+    total_ms = (time.perf_counter() - started_at) * 1000
+    logger.info(
+        "dashboard.today target=%s total_ms=%.1f parse_ms=%.1f sleep_ms=%.1f "
+        "recovery_ms=%.1f training_ms=%.1f environment_ms=%.1f environment_hit=%s",
+        target.isoformat(),
+        total_ms,
+        parse_ms,
+        sleep_ms,
+        recovery_ms,
+        training_ms,
+        environment_ms,
+        environment is not None,
+    )
 
     return {
         "as_of": datetime.now().astimezone().isoformat(),

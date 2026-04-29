@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -223,15 +224,35 @@ async def get_daily_recommendation(
     model: str | None = None,
     refresh: bool = False,
 ) -> DailyRecommendationResult:
+    started_at = time.perf_counter()
+    stage_started = time.perf_counter()
     snapshot = await training_metrics.get_full_snapshot(db)
+    snapshot_ms = (time.perf_counter() - stage_started) * 1000
+
+    stage_started = time.perf_counter()
     signal = daily_recommendation_cache_signal(snapshot)
     inputs_hash = _hash_inputs(signal)
     requested_model = model or settings.llm.dashboard_model
     cache_key = f"daily_rec:{snapshot['today']}:{requested_model}:{inputs_hash}"
+    cache_key_ms = (time.perf_counter() - stage_started) * 1000
 
+    cache_ms = 0.0
     if not refresh:
+        stage_started = time.perf_counter()
         hit = await _cache_get(db, cache_key)
+        cache_ms = (time.perf_counter() - stage_started) * 1000
         if hit:
+            total_ms = (time.perf_counter() - started_at) * 1000
+            logger.info(
+                "insights.daily_recommendation total_ms=%.1f snapshot_ms=%.1f "
+                "cache_key_ms=%.1f cache_ms=%.1f cache_hit=true refresh=%s model=%s",
+                total_ms,
+                snapshot_ms,
+                cache_key_ms,
+                cache_ms,
+                refresh,
+                requested_model,
+            )
             return DailyRecommendationResult(
                 recommendation=DailyRecommendation.model_validate(hit["recommendation"]),
                 inputs=hit["inputs"],
@@ -249,6 +270,7 @@ async def get_daily_recommendation(
         "Based on this, recommend what they should do today."
     )
 
+    stage_started = time.perf_counter()
     parsed, model_used = await _call_llm_structured(
         system_prompt=DAILY_REC_SYSTEM_PROMPT,
         user_message=user_message,
@@ -256,6 +278,7 @@ async def get_daily_recommendation(
         model_chain=_build_model_chain(model),
         schema_name="daily_recommendation",
     )
+    llm_ms = (time.perf_counter() - stage_started) * 1000
 
     generated_at = utc_now().isoformat()
     payload = {
@@ -264,6 +287,7 @@ async def get_daily_recommendation(
         "model": model_used,
         "generated_at": generated_at,
     }
+    stage_started = time.perf_counter()
     await _cache_put(
         db,
         cache_key,
@@ -271,6 +295,23 @@ async def get_daily_recommendation(
         payload=payload,
         model=model_used,
         ttl=timedelta(hours=24),
+    )
+    cache_put_ms = (time.perf_counter() - stage_started) * 1000
+
+    total_ms = (time.perf_counter() - started_at) * 1000
+    logger.info(
+        "insights.daily_recommendation total_ms=%.1f snapshot_ms=%.1f "
+        "cache_key_ms=%.1f cache_ms=%.1f llm_ms=%.1f cache_put_ms=%.1f "
+        "cache_hit=false refresh=%s requested_model=%s model_used=%s",
+        total_ms,
+        snapshot_ms,
+        cache_key_ms,
+        cache_ms,
+        llm_ms,
+        cache_put_ms,
+        refresh,
+        requested_model,
+        model_used,
     )
 
     return DailyRecommendationResult(
@@ -291,18 +332,46 @@ async def get_latest_workout_insight(
     refresh: bool = False,
     on_date: date | None = None,
 ) -> WorkoutInsightResult | None:
+    started_at = time.perf_counter()
+    stage_started = time.perf_counter()
     snapshot = await training_metrics.get_latest_workout_snapshot(
         db, activity_id, on_date=on_date
     )
+    snapshot_ms = (time.perf_counter() - stage_started) * 1000
     if not snapshot:
+        logger.info(
+            "insights.latest_workout total_ms=%.1f snapshot_ms=%.1f "
+            "cache_hit=false empty=true refresh=%s activity_id=%s on_date=%s",
+            (time.perf_counter() - started_at) * 1000,
+            snapshot_ms,
+            refresh,
+            activity_id,
+            on_date.isoformat() if on_date else None,
+        )
         return None
 
     requested_model = model or settings.llm.dashboard_model
     cache_key = f"workout_insight:{snapshot['id']}:{requested_model}"
 
+    cache_ms = 0.0
     if not refresh:
+        stage_started = time.perf_counter()
         hit = await _cache_get(db, cache_key)
+        cache_ms = (time.perf_counter() - stage_started) * 1000
         if hit:
+            logger.info(
+                "insights.latest_workout total_ms=%.1f snapshot_ms=%.1f "
+                "cache_ms=%.1f cache_hit=true refresh=%s activity_id=%s "
+                "workout_id=%s model=%s on_date=%s",
+                (time.perf_counter() - started_at) * 1000,
+                snapshot_ms,
+                cache_ms,
+                refresh,
+                activity_id,
+                snapshot["id"],
+                requested_model,
+                on_date.isoformat() if on_date else None,
+            )
             return WorkoutInsightResult(
                 activity_id=snapshot["id"],
                 workout=hit["workout"],
@@ -319,6 +388,7 @@ async def get_latest_workout_insight(
         "Give a data-driven insight."
     )
 
+    stage_started = time.perf_counter()
     parsed, model_used = await _call_llm_structured(
         system_prompt=WORKOUT_INSIGHT_SYSTEM_PROMPT,
         user_message=user_message,
@@ -326,6 +396,7 @@ async def get_latest_workout_insight(
         model_chain=_build_model_chain(model),
         schema_name="workout_insight",
     )
+    llm_ms = (time.perf_counter() - stage_started) * 1000
 
     generated_at = utc_now().isoformat()
     payload = {
@@ -334,6 +405,7 @@ async def get_latest_workout_insight(
         "model": model_used,
         "generated_at": generated_at,
     }
+    stage_started = time.perf_counter()
     await _cache_put(
         db,
         cache_key,
@@ -341,6 +413,24 @@ async def get_latest_workout_insight(
         payload=payload,
         model=model_used,
         ttl=None,
+    )
+    cache_put_ms = (time.perf_counter() - stage_started) * 1000
+
+    logger.info(
+        "insights.latest_workout total_ms=%.1f snapshot_ms=%.1f cache_ms=%.1f "
+        "llm_ms=%.1f cache_put_ms=%.1f cache_hit=false refresh=%s "
+        "activity_id=%s workout_id=%s requested_model=%s model_used=%s on_date=%s",
+        (time.perf_counter() - started_at) * 1000,
+        snapshot_ms,
+        cache_ms,
+        llm_ms,
+        cache_put_ms,
+        refresh,
+        activity_id,
+        snapshot["id"],
+        requested_model,
+        model_used,
+        on_date.isoformat() if on_date else None,
     )
 
     return WorkoutInsightResult(

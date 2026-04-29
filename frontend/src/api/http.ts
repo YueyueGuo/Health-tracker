@@ -18,30 +18,43 @@ export async function fetchJson<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
+  const startedAt = nowMs();
+  const method = options.method ?? "GET";
+  let resp: Response | null = null;
   const headers = new Headers(options.headers);
   headers.set("Accept", headers.get("Accept") ?? "application/json");
   if (options.body != null && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
-  const resp = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers,
-  });
+  try {
+    resp = await fetch(`${BASE_URL}${path}`, {
+      ...options,
+      headers,
+    });
 
-  if (!resp.ok) {
-    throw new ApiError(resp, await parseBody(resp));
-  }
+    if (!resp.ok) {
+      throw new ApiError(resp, await parseBody(resp));
+    }
 
-  if (resp.status === 204 || resp.status === 205) {
-    return undefined as T;
-  }
+    if (resp.status === 204 || resp.status === 205) {
+      return undefined as T;
+    }
 
-  const text = await resp.text();
-  if (!text) {
-    return undefined as T;
+    const text = await resp.text();
+    if (!text) {
+      return undefined as T;
+    }
+    return JSON.parse(text) as T;
+  } finally {
+    logApiTiming({
+      path,
+      method,
+      status: resp?.status ?? null,
+      clientMs: nowMs() - startedAt,
+      serverMs: resp?.headers.get("X-Process-Time-Ms") ?? null,
+    });
   }
-  return JSON.parse(text) as T;
 }
 
 export async function fetchOptionalJson<T>(
@@ -83,4 +96,39 @@ function extractDetail(body: unknown): string {
     if (detail != null) return JSON.stringify(detail);
   }
   return "";
+}
+
+function nowMs(): number {
+  return typeof performance !== "undefined" ? performance.now() : Date.now();
+}
+
+function logApiTiming({
+  path,
+  method,
+  status,
+  clientMs,
+  serverMs,
+}: {
+  path: string;
+  method: string;
+  status: number | null;
+  clientMs: number;
+  serverMs: string | null;
+}) {
+  if (!shouldLogApiTiming()) return;
+  const server = serverMs == null ? "n/a" : `${serverMs}ms`;
+  console.info(
+    `[api] ${method.toUpperCase()} ${path} status=${status ?? "ERR"} ` +
+      `client=${clientMs.toFixed(1)}ms server=${server}`,
+  );
+}
+
+function shouldLogApiTiming(): boolean {
+  if (import.meta.env.MODE === "test") return false;
+  if (import.meta.env.DEV) return true;
+  try {
+    return window.localStorage.getItem("health-tracker:api-timing") === "1";
+  } catch {
+    return false;
+  }
 }

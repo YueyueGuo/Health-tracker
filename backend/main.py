@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import pathlib
+import time
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
@@ -74,6 +75,39 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def log_api_request_timing(request: Request, call_next):
+        """Log API request latency and expose server time to the browser."""
+        if not request.url.path.startswith("/api"):
+            return await call_next(request)
+
+        started_at = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            duration_ms = (time.perf_counter() - started_at) * 1000
+            logger.exception(
+                "api.request method=%s path=%s status=500 duration_ms=%.1f failed=true",
+                request.method,
+                request.url.path,
+                duration_ms,
+            )
+            raise
+
+        duration_ms = (time.perf_counter() - started_at) * 1000
+        response.headers["X-Process-Time-Ms"] = f"{duration_ms:.1f}"
+        response.headers["Server-Timing"] = f"app;dur={duration_ms:.1f}"
+        message = (
+            "api.request method=%s path=%s status=%s duration_ms=%.1f "
+            "server_timing=true"
+        )
+        args = (request.method, request.url.path, response.status_code, duration_ms)
+        if response.status_code >= 500 or duration_ms >= 1000:
+            logger.warning(message, *args)
+        else:
+            logger.info(message, *args)
+        return response
 
     # Import and register routers
     from backend.routers import (
