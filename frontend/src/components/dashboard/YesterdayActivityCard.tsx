@@ -13,10 +13,8 @@ import {
 
 export function YesterdayActivityCard() {
   const { units } = useUnits();
-  const insight = useApi(
-    ["insights", "latest-workout-snapshot"],
-    () => fetchLatestWorkoutInsight(),
-    { staleTime: 3 * 60_000 },
+  const insight = useApi(["insights", "latest-workout-snapshot"], () =>
+    fetchLatestWorkoutInsight(),
   );
 
   const workout = insight.data?.workout ?? null;
@@ -28,10 +26,12 @@ export function YesterdayActivityCard() {
       workoutDate
         ? fetchStrengthSessionOptional(workoutDate)
         : Promise.resolve(null),
-    { enabled: Boolean(workoutDate), staleTime: 5 * 60_000 },
+    { enabled: Boolean(workoutDate) },
   );
 
-  if (insight.loading) {
+  // Wait for the first fetch to settle — avoids a one-frame "empty" flash and
+  // matches cold-start behavior better than `loading` alone.
+  if (!insight.isFetched) {
     return (
       <Card className="p-4">
         <div className="text-xs text-slate-500">Loading recent activity…</div>

@@ -1,6 +1,11 @@
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Card } from "../ui/Card";
 import { useApi } from "../../hooks/useApi";
+import {
+  invalidateAppDataQueries,
+  SYNC_DEBUG_STALE_TIME_MS,
+} from "../../lib/queryCache";
 import {
   fetchDebugDb,
   fetchSyncStatus,
@@ -16,6 +21,7 @@ function formatMaybeIso(iso: unknown): string {
 }
 
 export default function SyncSection() {
+  const queryClient = useQueryClient();
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [triggering, setTriggering] = useState<SyncSource | null>(null);
   const [triggerResult, setTriggerResult] = useState<string | null>(null);
@@ -25,7 +31,7 @@ export default function SyncSection() {
     loading: dbLoading,
     error: dbError,
   } = useApi(["sync", "debug-db", refreshNonce], () => fetchDebugDb(), {
-    staleTime: 0,
+    staleTime: SYNC_DEBUG_STALE_TIME_MS,
   });
 
   const {
@@ -33,7 +39,7 @@ export default function SyncSection() {
     loading: statusLoading,
     error: statusError,
   } = useApi(["sync", "status", refreshNonce], () => fetchSyncStatus(), {
-    staleTime: 0,
+    staleTime: SYNC_DEBUG_STALE_TIME_MS,
   });
 
   const lastSyncSummary = useMemo(() => {
@@ -63,6 +69,7 @@ export default function SyncSection() {
           ? ` (unconfigured: ${res.unconfigured.join(", ")})`
           : "";
         setTriggerResult(`Triggered ${source}${unconfigured}`);
+        void invalidateAppDataQueries(queryClient);
       }
       // Re-fetch status + DB info shortly after.
       setTimeout(() => setRefreshNonce((n) => n + 1), 800);

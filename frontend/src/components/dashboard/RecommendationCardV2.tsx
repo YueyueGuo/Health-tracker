@@ -12,7 +12,6 @@ export function RecommendationCardV2() {
   const { data, loading, error, setData } = useApi(
     ["insights", "daily-recommendation", false],
     () => fetchDailyRecommendation(false),
-    { staleTime: 10 * 60_000 },
   );
   const [refreshing, setRefreshing] = useState(false);
   const [vote, setVote] = useState<VoteValue | null>(null);

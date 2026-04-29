@@ -29,7 +29,6 @@ export default function ActivityDetailPage() {
   const { data: weather } = useApi(
     ["activities", "weather", activityId, "raw"],
     () => getActivityWeather(activityId, { raw: true }),
-    { staleTime: 10 * 60_000 },
   );
 
   const [insight, setInsight] = useState<WorkoutInsight | null>(null);

@@ -15,11 +15,7 @@ export default function ChatPanel() {
   const [loading, setLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const { data: modelsData } = useApi(
-    ["chat", "models"],
-    fetchAvailableModels,
-    { staleTime: 60 * 60_000 },
-  );
+  const { data: modelsData } = useApi(["chat", "models"], fetchAvailableModels);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });

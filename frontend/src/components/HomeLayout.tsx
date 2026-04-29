@@ -17,7 +17,6 @@ export default function HomeLayout() {
   const { data, loading, error, reload } = useApi(
     ["dashboard", "today"],
     fetchDashboardToday,
-    { staleTime: 5 * 60_000 },
   );
 
   const ctx: HomeOutletContext = {

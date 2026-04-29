@@ -3,6 +3,7 @@ import { Link as LinkIcon, Plus } from "lucide-react";
 import { Card } from "../ui/Card";
 import { fetchSyncStatus, type SyncStatusResponse } from "../../api/sync";
 import { useApi } from "../../hooks/useApi";
+import { SYNC_STATUS_CARD_STALE_TIME_MS } from "../../lib/queryCache";
 
 type SourceKey = "eight_sleep" | "whoop" | "strava" | "weather";
 
@@ -36,7 +37,9 @@ const SOURCES: SourceDefinition[] = [
 ];
 
 export default function DataSourcesCard() {
-  const { data, loading, error } = useApi(["sync", "status"], fetchSyncStatus);
+  const { data, loading, error } = useApi(["sync", "status"], fetchSyncStatus, {
+    staleTime: SYNC_STATUS_CARD_STALE_TIME_MS,
+  });
 
   return (
     <Card className="p-4">

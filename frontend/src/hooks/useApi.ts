@@ -27,7 +27,9 @@ export function useApi<T>(
     gcTime,
     enabled,
     refetchOnWindowFocus: false,
-    retry: 1,
+    // Cold starts / transient deploy errors: a bit more resilient than a single try.
+    retry: 2,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 8000),
   });
 
   const setData = useCallback(
@@ -41,9 +43,19 @@ export function useApi<T>(
     await query.refetch();
   }, [query]);
 
+  // `isLoading` alone can be false for one frame before `fetchStatus` flips to
+  // `fetching`, which made some UIs flash an empty state. Treat "enabled but
+  // not yet fetched" (`pending` + `idle`) as loading. Disabled queries stay
+  // idle per TanStack docs; do not mark those as loading here.
+  const loading =
+    query.isLoading ||
+    (enabled &&
+      query.status === "pending" &&
+      query.fetchStatus === "idle");
+
   return {
     data: (query.data ?? null) as T | null,
-    loading: query.isLoading,
+    loading,
     error: query.error
       ? query.error instanceof Error
         ? query.error.message
@@ -51,5 +63,8 @@ export function useApi<T>(
       : null,
     reload,
     setData,
+    /** True once the query has completed at least one attempt (success or error). */
+    isFetched: query.isFetched,
+    isFetching: query.isFetching,
   };
 }
