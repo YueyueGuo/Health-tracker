@@ -24,13 +24,17 @@ export default function SyncSection() {
     data: dbInfo,
     loading: dbLoading,
     error: dbError,
-  } = useApi(() => fetchDebugDb(), [refreshNonce]);
+  } = useApi(["sync", "debug-db", refreshNonce], () => fetchDebugDb(), {
+    staleTime: 0,
+  });
 
   const {
     data: status,
     loading: statusLoading,
     error: statusError,
-  } = useApi(() => fetchSyncStatus(), [refreshNonce]);
+  } = useApi(["sync", "status", refreshNonce], () => fetchSyncStatus(), {
+    staleTime: 0,
+  });
 
   const lastSyncSummary = useMemo(() => {
     if (!status || typeof status !== "object") return null;

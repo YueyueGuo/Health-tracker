@@ -46,27 +46,27 @@ export default function Sleep() {
   const [days, setDays] = useState(30);
 
   const { data: trends, loading: trendsLoading, error: trendsError } = useApi(
+    ["sleep", "trends", days],
     () => fetchSleepTrends(days),
-    [days]
   );
   const { data: sessions, loading: sessionsLoading } = useApi(
+    ["sleep", "sessions", 30],
     () => fetchSleepSessions(30),
-    []
   );
   // Fetch the latest row for each source independently so the card binds
   // each column to its own provider (Eight Sleep usually leads Whoop by a
   // calendar day, so a global /sleep/latest hides Whoop most days).
   const { data: latestWhoop, loading: latestWhoopLoading } = useApi(
+    ["sleep", "latest-by-source", "whoop"],
     () => fetchLatestSleepBySource("whoop"),
-    []
   );
   const { data: latestEight, loading: latestEightLoading } = useApi(
+    ["sleep", "latest-by-source", "eight_sleep"],
     () => fetchLatestSleepBySource("eight_sleep"),
-    []
   );
   const { data: recoveryRows, loading: recoveryLoading } = useApi(
+    ["recovery", "recent", 14],
     () => fetchRecovery(14),
-    []
   );
 
   if (

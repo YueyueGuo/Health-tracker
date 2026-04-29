@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { renderWithQuery } from "../test/renderWithQuery";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
@@ -26,7 +27,7 @@ vi.mock("../api/strength", () => ({
 import Record from "./Record";
 
 function renderWithRouter() {
-  return render(
+  return renderWithQuery(
     <MemoryRouter initialEntries={["/record"]}>
       <Routes>
         <Route path="/record" element={<Record />} />

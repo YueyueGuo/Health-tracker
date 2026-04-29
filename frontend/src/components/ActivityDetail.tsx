@@ -23,12 +23,13 @@ export default function ActivityDetailPage() {
   const { id } = useParams<{ id: string }>();
   const activityId = Number(id);
   const { data: activity, loading, error, reload } = useApi(
+    ["activities", "detail", activityId],
     () => fetchActivity(activityId),
-    [activityId]
   );
   const { data: weather } = useApi(
+    ["activities", "weather", activityId, "raw"],
     () => getActivityWeather(activityId, { raw: true }),
-    [activityId]
+    { staleTime: 10 * 60_000 },
   );
 
   const [insight, setInsight] = useState<WorkoutInsight | null>(null);

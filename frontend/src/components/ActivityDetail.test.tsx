@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderWithQuery } from "../test/renderWithQuery";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("react-router-dom", () => ({
@@ -203,7 +204,7 @@ describe("ActivityDetailPage", () => {
       velocity_smooth: [3.2, 3.3, 3.4],
     });
 
-    render(<ActivityDetailPage />);
+    renderWithQuery(<ActivityDetailPage />);
 
     await screen.findByText("Evening Run");
 
@@ -232,7 +233,7 @@ describe("ActivityDetailPage", () => {
       new Error("Streams unavailable")
     );
 
-    render(<ActivityDetailPage />);
+    renderWithQuery(<ActivityDetailPage />);
     await screen.findByText("Evening Run");
 
     fireEvent.click(
@@ -255,7 +256,7 @@ describe("ActivityDetailPage", () => {
       })
     );
 
-    render(<ActivityDetailPage />);
+    renderWithQuery(<ActivityDetailPage />);
     await screen.findByText("Morning Tempo Ride");
     expect(screen.getByText("Power (Avg/NP)")).toBeInTheDocument();
     expect(screen.getByText("Avg Speed")).toBeInTheDocument();
@@ -278,7 +279,7 @@ describe("ActivityDetailPage", () => {
       })
     );
 
-    render(<ActivityDetailPage />);
+    renderWithQuery(<ActivityDetailPage />);
     await screen.findByText("Power Zone Ride");
     expect(screen.getByText("Time in Power Zones")).toBeInTheDocument();
   });
@@ -311,7 +312,7 @@ describe("ActivityDetailPage", () => {
       })
     );
 
-    render(<ActivityDetailPage />);
+    renderWithQuery(<ActivityDetailPage />);
     await screen.findByText("Evening Run");
     expect(screen.getByText("400 m")).toBeInTheDocument();
   });
@@ -325,7 +326,7 @@ describe("ActivityDetailPage", () => {
       })
     );
 
-    render(<ActivityDetailPage />);
+    renderWithQuery(<ActivityDetailPage />);
     await screen.findByText("Lower Body Power");
     // Strength variant never shows Avg Pace or Avg Speed.
     expect(screen.queryByText("Avg Pace")).not.toBeInTheDocument();
@@ -339,7 +340,7 @@ describe("ActivityDetailPage", () => {
       makeActivity({ name: "Sunrise Hike", sport_type: "Hike" })
     );
 
-    render(<ActivityDetailPage />);
+    renderWithQuery(<ActivityDetailPage />);
     await screen.findByText("Sunrise Hike");
     // Run layout shows Avg Pace; Ride/Strength do not.
     expect(screen.getByText("Avg Pace")).toBeInTheDocument();

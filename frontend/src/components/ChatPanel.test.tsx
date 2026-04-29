@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderWithQuery } from "../test/renderWithQuery";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../api/chat", () => ({
@@ -27,7 +28,7 @@ describe("ChatPanel", () => {
   it("shows a fallback error message when chat fails with a non-Error value", async () => {
     mockedAskQuestion.mockRejectedValue("network down");
 
-    render(<ChatPanel />);
+    renderWithQuery(<ChatPanel />);
 
     fireEvent.change(screen.getByPlaceholderText(/ask about your workouts/i), {
       target: { value: "How am I doing?" },

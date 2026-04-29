@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderWithQuery } from "../test/renderWithQuery";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../components/GoalsSection", () => ({
@@ -19,6 +20,12 @@ vi.mock("../hooks/useUnits", () => ({
     meters == null ? "—" : `${Math.round(meters)} m`,
 }));
 
+vi.mock("../api/sync", () => ({
+  fetchDebugDb: vi.fn(),
+  fetchSyncStatus: vi.fn(),
+  triggerSync: vi.fn(),
+}));
+
 import Settings from "./Settings";
 import {
   createLocation,
@@ -27,12 +34,15 @@ import {
   patchLocation,
   setDefaultLocation,
 } from "../api/locations";
+import { fetchDebugDb, fetchSyncStatus } from "../api/sync";
 
 const mockedCreateLocation = vi.mocked(createLocation);
 const mockedDeleteLocation = vi.mocked(deleteLocation);
 const mockedListLocations = vi.mocked(listLocations);
 const mockedPatchLocation = vi.mocked(patchLocation);
 const mockedSetDefaultLocation = vi.mocked(setDefaultLocation);
+const mockedFetchDebugDb = vi.mocked(fetchDebugDb);
+const mockedFetchSyncStatus = vi.mocked(fetchSyncStatus);
 
 const locations = [
   {
@@ -56,6 +66,13 @@ const locations = [
 describe("Settings", () => {
   beforeEach(() => {
     mockedListLocations.mockResolvedValue(locations);
+    mockedFetchDebugDb.mockResolvedValue({
+      database_url: "sqlite://test",
+      sqlite_main_file: ":memory:",
+      database_list: [],
+      row_counts: {},
+    } as never);
+    mockedFetchSyncStatus.mockResolvedValue({} as never);
     vi.stubGlobal("confirm", vi.fn(() => true));
   });
 
@@ -72,7 +89,7 @@ describe("Settings", () => {
     });
     mockedDeleteLocation.mockResolvedValue(undefined);
 
-    render(<Settings />);
+    renderWithQuery(<Settings />);
 
     await screen.findByText("Saved locations");
     expect(screen.getByText("Goals stub")).toBeInTheDocument();
@@ -103,7 +120,7 @@ describe("Settings", () => {
       is_default: false,
     });
 
-    render(<Settings />);
+    renderWithQuery(<Settings />);
 
     await screen.findByText("Saved locations");
     fireEvent.click(screen.getByRole("button", { name: "Enter coords manually" }));

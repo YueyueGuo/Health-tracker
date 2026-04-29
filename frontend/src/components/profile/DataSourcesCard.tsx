@@ -36,7 +36,7 @@ const SOURCES: SourceDefinition[] = [
 ];
 
 export default function DataSourcesCard() {
-  const { data, loading, error } = useApi(fetchSyncStatus);
+  const { data, loading, error } = useApi(["sync", "status"], fetchSyncStatus);
 
   return (
     <Card className="p-4">

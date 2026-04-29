@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderWithQuery } from "../test/renderWithQuery";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 
@@ -24,7 +25,7 @@ const mockedFetchProfile = vi.mocked(fetchProfile);
 const mockedPatchProfile = vi.mocked(patchProfile);
 
 function renderProfile() {
-  return render(
+  return renderWithQuery(
     <MemoryRouter initialEntries={["/profile"]}>
       <Profile />
     </MemoryRouter>

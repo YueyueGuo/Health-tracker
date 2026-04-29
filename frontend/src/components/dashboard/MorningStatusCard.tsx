@@ -16,8 +16,8 @@ const SOURCE_LABEL: Record<string, string> = {
 
 export function MorningStatusCard() {
   const { units } = useUnits();
-  const sleep = useApi(fetchLatestSleep);
-  const recovery = useApi(() => fetchRecovery(2));
+  const sleep = useApi(["sleep", "latest"], fetchLatestSleep);
+  const recovery = useApi(["recovery", "recent", 2], () => fetchRecovery(2));
 
   const latestSleep = sleep.data;
   const latestRecovery = recovery.data?.[0] ?? null;

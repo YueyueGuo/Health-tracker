@@ -14,7 +14,10 @@ import { fetchRecoveryTrends } from "../api/recovery";
 
 export default function RecoveryPanel() {
   const [days, setDays] = useState(30);
-  const { data, loading, error } = useApi(() => fetchRecoveryTrends(days), [days]);
+  const { data, loading, error } = useApi(
+    ["recovery", "trends", days],
+    () => fetchRecoveryTrends(days),
+  );
 
   if (loading) return <div className="loading">Loading recovery data...</div>;
   if (error) return <div className="error">{error}</div>;

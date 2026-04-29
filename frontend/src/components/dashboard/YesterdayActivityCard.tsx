@@ -13,17 +13,22 @@ import {
 
 export function YesterdayActivityCard() {
   const { units } = useUnits();
-  const insight = useApi(() => fetchLatestWorkoutInsight());
+  const insight = useApi(
+    ["insights", "latest-workout-snapshot"],
+    () => fetchLatestWorkoutInsight(),
+    { staleTime: 3 * 60_000 },
+  );
 
   const workout = insight.data?.workout ?? null;
   const workoutDate = workoutDateOnly(workout);
 
   const strength = useApi(
+    ["strength", "session-optional", workoutDate ?? ""],
     () =>
       workoutDate
         ? fetchStrengthSessionOptional(workoutDate)
         : Promise.resolve(null),
-    [workoutDate]
+    { enabled: Boolean(workoutDate), staleTime: 5 * 60_000 },
   );
 
   if (insight.loading) {

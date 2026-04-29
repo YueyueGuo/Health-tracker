@@ -97,13 +97,19 @@ export default function TrainingLoad() {
 
   const days = useMemo(() => daysForRange(timeRange), [timeRange]);
   const activities = useApi(
+    ["activities", "list", { days, limit: 200 }],
     () => fetchActivities({ days, limit: 200 }),
-    [days]
   );
-  const recovery = useApi(() => fetchRecoveryTrends(days), [days]);
-  const sleep = useApi(() => fetchSleepTrends(days), [days]);
-  const strengthSessions = useApi(() => fetchStrengthSessions(200), []);
-  const strengthExercises = useApi(() => fetchStrengthExercises(), []);
+  const recovery = useApi(["recovery", "trends", days], () =>
+    fetchRecoveryTrends(days),
+  );
+  const sleep = useApi(["sleep", "trends", days], () => fetchSleepTrends(days));
+  const strengthSessions = useApi(["strength", "sessions", 200], () =>
+    fetchStrengthSessions(200),
+  );
+  const strengthExercises = useApi(["strength", "exercises"], () =>
+    fetchStrengthExercises(),
+  );
 
   useEffect(() => {
     if (!selectedExercise && strengthExercises.data?.length) {
@@ -112,11 +118,12 @@ export default function TrainingLoad() {
   }, [selectedExercise, strengthExercises.data]);
 
   const strengthProgression = useApi(
+    ["strength", "progression", selectedExercise, days],
     () =>
       selectedExercise
         ? fetchStrengthProgression(selectedExercise, days)
         : Promise.resolve([]),
-    [selectedExercise, days]
+    { enabled: Boolean(selectedExercise) },
   );
 
   const cardioData = useMemo(

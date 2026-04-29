@@ -1,30 +1,55 @@
-import { useState, useEffect, useCallback } from "react";
+import { useCallback } from "react";
+import { useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
 
-export function useApi<T>(fetcher: () => Promise<T>, deps: readonly unknown[] = []) {
-  const [data, setData] = useState<T | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+export type UseApiOptions = {
+  staleTime?: number;
+  gcTime?: number;
+  enabled?: boolean;
+};
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await fetcher();
-      setData(result);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unknown error");
-    } finally {
-      setLoading(false);
-    }
-  }, deps);
+/**
+ * Cached data fetch keyed by `queryKey`. Uses TanStack Query so revisiting a
+ * route shows cached data immediately while refreshing in the background
+ * once data is stale.
+ */
+export function useApi<T>(
+  queryKey: QueryKey,
+  queryFn: () => Promise<T>,
+  options?: UseApiOptions,
+) {
+  const queryClient = useQueryClient();
+  const { staleTime, gcTime, enabled = true } = options ?? {};
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  const query = useQuery({
+    queryKey,
+    queryFn,
+    staleTime,
+    gcTime,
+    enabled,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
 
-  // `setData` is exposed so callers doing an out-of-band fetch (e.g. a
-  // refresh button that calls the API with different params) can assign
-  // the result directly without triggering a second round trip via
-  // `reload()`.
-  return { data, loading, error, reload: load, setData };
+  const setData = useCallback(
+    (value: T) => {
+      queryClient.setQueryData(queryKey, value);
+    },
+    [queryClient, queryKey],
+  );
+
+  const reload = useCallback(async () => {
+    await query.refetch();
+  }, [query]);
+
+  return {
+    data: (query.data ?? null) as T | null,
+    loading: query.isLoading,
+    error: query.error
+      ? query.error instanceof Error
+        ? query.error.message
+        : String(query.error)
+      : null,
+    reload,
+    setData,
+  };
 }

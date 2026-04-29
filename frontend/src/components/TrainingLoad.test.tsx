@@ -1,11 +1,6 @@
 import type { ReactNode } from "react";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { renderWithQuery } from "../test/renderWithQuery";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UnitsProvider } from "../hooks/useUnits";
 
@@ -261,7 +256,7 @@ describe("TrainingLoad", () => {
 });
 
 function renderTrends() {
-  return render(
+  return renderWithQuery(
     <UnitsProvider>
       <TrainingLoad />
     </UnitsProvider>

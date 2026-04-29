@@ -25,11 +25,15 @@ export default function History() {
   const [days, setDays] = useState(30);
 
   const activities = useApi(
+    ["activities", "history", { days, limit: 200 }],
     () => fetchActivities({ days, limit: 200 }),
-    [days]
   );
-  const sleep = useApi(() => fetchSleepSessions(days), [days]);
-  const strength = useApi(() => fetchStrengthSessions(60), []);
+  const sleep = useApi(["sleep", "sessions", days], () =>
+    fetchSleepSessions(days),
+  );
+  const strength = useApi(["strength", "sessions", 60], () =>
+    fetchStrengthSessions(60),
+  );
 
   const loading = activities.loading || sleep.loading || strength.loading;
   const error = activities.error || sleep.error || strength.error;

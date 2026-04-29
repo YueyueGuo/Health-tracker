@@ -54,7 +54,9 @@ export default function Record() {
   const [error, setError] = useState<string | null>(null);
 
   // Background data: known exercise names for the <datalist> autocomplete.
-  const { data: knownExercises } = useApi(() => fetchStrengthExercises(), []);
+  const { data: knownExercises } = useApi(["strength", "exercises"], () =>
+    fetchStrengthExercises(),
+  );
 
   // Workout timer (1 Hz) — runs only while the session is active.
   useEffect(() => {
