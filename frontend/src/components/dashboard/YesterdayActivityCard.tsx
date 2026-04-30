@@ -21,7 +21,10 @@ export function YesterdayActivityCard() {
   const insight = useApi(
     ["insights", "latest-workout-snapshot", dateStr, isToday],
     () =>
-      fetchLatestWorkoutInsight(isToday ? undefined : { date: dateStr }),
+      fetchLatestWorkoutInsight({
+        summaryOnly: true,
+        date: isToday ? undefined : dateStr,
+      }),
     { staleTime: 3 * 60_000 },
   );
 

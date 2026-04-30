@@ -51,6 +51,10 @@ async def dashboard_models():
 @router.get("/daily-recommendation")
 async def daily_recommendation(
     refresh: bool = Query(False, description="Force regen (ignore cache)."),
+    cache_only: bool = Query(
+        False,
+        description="Only return an existing cached recommendation; never call the LLM.",
+    ),
     model: str | None = Query(None, description="Override the LLM model."),
     target_date: date | None = Query(
         None,
@@ -70,6 +74,10 @@ async def daily_recommendation(
     target = target_date or today
     if target > today:
         raise HTTPException(status_code=400, detail="Future dates are not supported")
+
+    if cache_only:
+        cached = await insights.get_cached_recommendation_for_date(db, target)
+        return cached.to_dict() if cached else None
 
     if target != today:
         cached = await insights.get_cached_recommendation_for_date(db, target)
@@ -158,6 +166,14 @@ async def feedback_stats(
 async def latest_workout_insight(
     activity_id: int | None = Query(None, description="Optional activity id; defaults to latest."),
     refresh: bool = Query(False, description="Force regen (ignore cache)."),
+    cache_only: bool = Query(
+        False,
+        description="Only return an existing cached insight; never call the LLM.",
+    ),
+    summary_only: bool = Query(
+        False,
+        description="Return the workout snapshot without generating an LLM insight.",
+    ),
     model: str | None = Query(None, description="Override the LLM model."),
     target_date: date | None = Query(
         None,
@@ -169,6 +185,25 @@ async def latest_workout_insight(
     """LLM-driven insight on a workout (latest by default). Cached per activity."""
     if target_date and target_date > local_today():
         raise HTTPException(status_code=400, detail="Future dates are not supported")
+    if summary_only:
+        result = await insights.get_latest_workout_summary(
+            db,
+            activity_id=activity_id,
+            on_date=target_date,
+        )
+        if not result:
+            raise HTTPException(status_code=404, detail="No completed activities yet")
+        return result.to_dict()
+    if cache_only:
+        result = await insights.get_cached_latest_workout_insight(
+            db,
+            activity_id=activity_id,
+            model=model,
+            on_date=target_date,
+        )
+        if not result:
+            raise HTTPException(status_code=404, detail="No cached insight yet")
+        return result.to_dict()
     try:
         result = await insights.get_latest_workout_insight(
             db,

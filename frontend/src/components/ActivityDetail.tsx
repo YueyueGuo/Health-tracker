@@ -47,7 +47,7 @@ export default function ActivityDetailPage() {
     setInsightError(null);
     try {
       const result = await fetchLatestWorkoutInsight({ activityId });
-      if (!result) {
+      if (!result?.insight) {
         setInsightError("No insight available for this activity yet.");
         return;
       }

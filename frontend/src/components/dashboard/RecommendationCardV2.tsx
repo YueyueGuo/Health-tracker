@@ -14,7 +14,11 @@ export function RecommendationCardV2() {
   const { dateStr, isToday } = useOutletContext<HomeOutletContext>();
   const { data, loading, error, setData } = useApi(
     ["insights", "daily-recommendation", dateStr],
-    () => fetchDailyRecommendation(false, undefined, isToday ? undefined : dateStr),
+    () =>
+      fetchDailyRecommendation({
+        cacheOnly: true,
+        date: isToday ? undefined : dateStr,
+      }),
     { staleTime: 10 * 60_000 },
   );
   const [refreshing, setRefreshing] = useState(false);
@@ -25,7 +29,7 @@ export function RecommendationCardV2() {
     if (!isToday) return;
     setRefreshing(true);
     try {
-      const fresh = await fetchDailyRecommendation(true);
+      const fresh = await fetchDailyRecommendation({ refresh: true });
       setData(fresh);
       setVote(null);
     } finally {
@@ -66,7 +70,7 @@ export function RecommendationCardV2() {
         <div className="flex flex-col gap-4">
           <div>
             {loading && !data ? (
-              <p className="text-sm text-slate-400">Thinking…</p>
+              <p className="text-sm text-slate-400">Loading coach note…</p>
             ) : error && !data ? (
               <p className="text-xs text-slate-400 leading-relaxed">
                 Couldn't generate a recommendation. {error}
@@ -91,7 +95,11 @@ export function RecommendationCardV2() {
               <p className="text-xs text-slate-400 leading-relaxed">
                 No AI recommendation saved for this date.
               </p>
-            ) : null}
+            ) : (
+              <p className="text-xs text-slate-400 leading-relaxed">
+                No cached recommendation yet.
+              </p>
+            )}
           </div>
 
           {isToday && (
@@ -132,7 +140,11 @@ export function RecommendationCardV2() {
                   size={14}
                   className={refreshing ? "animate-spin" : ""}
                 />
-                {refreshing ? "Generating…" : "Try something else"}
+                {refreshing
+                  ? "Generating…"
+                  : data
+                    ? "Try something else"
+                    : "Generate recommendation"}
               </button>
             </div>
           )}

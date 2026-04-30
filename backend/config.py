@@ -89,6 +89,8 @@ class LLMSettings(BaseSettings):
         "gemini-2.5-pro",
         "gpt-4o",
     ]
+    # Keep dashboard-triggered LLM calls from tying up the app process.
+    request_timeout_seconds: float = 12.0
 
     @classmethod
     def available_dashboard_models(cls) -> list[str]:

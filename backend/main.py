@@ -78,9 +78,14 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def log_api_request_timing(request: Request, call_next):
-        """Log API request latency and expose server time to the browser."""
+        """Log API latency and set cache headers for immutable Vite assets."""
         if not request.url.path.startswith("/api"):
-            return await call_next(request)
+            response = await call_next(request)
+            if request.url.path.startswith("/assets/"):
+                response.headers["Cache-Control"] = (
+                    "public, max-age=31536000, immutable"
+                )
+            return response
 
         started_at = time.perf_counter()
         try:

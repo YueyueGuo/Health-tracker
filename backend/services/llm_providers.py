@@ -158,7 +158,15 @@ class OpenAIProvider(LLMProvider):
 
         self.name = model_key
         self._model_id = self.MODELS.get(model_key, model_key)
-        self._client = openai.AsyncOpenAI(api_key=settings.llm.openai_api_key)
+        self._client = openai.AsyncOpenAI(
+            api_key=settings.llm.openai_api_key,
+            timeout=settings.llm.request_timeout_seconds,
+        )
+
+    def _token_limit_arg(self, max_tokens: int) -> dict[str, int]:
+        if self._model_id.startswith("gpt-5"):
+            return {"max_completion_tokens": max_tokens}
+        return {"max_tokens": max_tokens}
 
     async def query(
         self,
@@ -173,7 +181,7 @@ class OpenAIProvider(LLMProvider):
         kwargs: dict = {
             "model": self._model_id,
             "messages": messages,
-            "max_tokens": 4096,
+            **self._token_limit_arg(4096),
         }
         if tools:
             # Convert Anthropic tool format to OpenAI function format
@@ -234,7 +242,7 @@ class OpenAIProvider(LLMProvider):
             response = await self._client.chat.completions.create(
                 model=self._model_id,
                 messages=messages,
-                max_tokens=max_tokens,
+                **self._token_limit_arg(max_tokens),
                 response_format=strict_schema,
             )
         except Exception as e:
@@ -248,7 +256,7 @@ class OpenAIProvider(LLMProvider):
             response = await self._client.chat.completions.create(
                 model=self._model_id,
                 messages=messages,
-                max_tokens=max_tokens,
+                **self._token_limit_arg(max_tokens),
                 response_format={"type": "json_object"},
             )
         text = response.choices[0].message.content or ""
@@ -426,6 +434,18 @@ def get_provider(model_key: str | None = None) -> LLMProvider:
             f"Unknown model: {key}. Available: {', '.join(sorted(PROVIDER_MAP.keys()))}"
         )
     return provider_class(model_key=key)
+
+
+def is_model_configured(model_key: str) -> bool:
+    """Return whether the provider for ``model_key`` has required credentials."""
+    provider_class = PROVIDER_MAP.get(model_key)
+    if provider_class is OpenAIProvider:
+        return bool(settings.llm.openai_api_key)
+    if provider_class is AnthropicProvider:
+        return bool(settings.llm.anthropic_api_key)
+    if provider_class is GoogleProvider:
+        return bool(settings.llm.google_ai_api_key)
+    return provider_class is not None
 
 
 def list_available_models() -> list[str]:

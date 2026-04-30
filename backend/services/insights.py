@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import asyncio
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -30,7 +31,7 @@ from backend.services.insight_schemas import (
     WorkoutInsight,
     _pydantic_schema,
 )
-from backend.services.llm_providers import LLMProvider, get_provider
+from backend.services.llm_providers import LLMProvider, get_provider, is_model_configured
 from backend.services.snapshot_models import daily_recommendation_cache_signal
 from backend.services.time_utils import utc_now
 
@@ -77,6 +78,9 @@ async def _call_llm_structured(
     last_exc: Exception | None = None
 
     for model_key in model_chain:
+        if not is_model_configured(model_key):
+            logger.info("LLM provider not configured for %s; skipping", model_key)
+            continue
         provider: LLMProvider | None = None
         try:
             provider = get_provider(model_key)
@@ -86,11 +90,14 @@ async def _call_llm_structured(
             continue
 
         try:
-            raw = await provider.query_structured(
-                system_prompt=system_prompt,
-                user_message=user_message,
-                schema=schema,
-                schema_name=schema_name,
+            raw = await asyncio.wait_for(
+                provider.query_structured(
+                    system_prompt=system_prompt,
+                    user_message=user_message,
+                    schema=schema,
+                    schema_name=schema_name,
+                ),
+                timeout=settings.llm.request_timeout_seconds,
             )
             logger.debug("LLM raw response from %s: %s", model_key, json.dumps(raw)[:500])
             raw = _maybe_unwrap(raw, expected_keys)
@@ -106,11 +113,14 @@ async def _call_llm_structured(
                     f"MUST have exactly these keys: {sorted(expected_keys)}. "
                     "Return ONLY valid JSON matching the schema."
                 )
-                raw2 = await provider.query_structured(
-                    system_prompt=system_prompt,
-                    user_message=correction,
-                    schema=schema,
-                    schema_name=schema_name,
+                raw2 = await asyncio.wait_for(
+                    provider.query_structured(
+                        system_prompt=system_prompt,
+                        user_message=correction,
+                        schema=schema,
+                        schema_name=schema_name,
+                    ),
+                    timeout=settings.llm.request_timeout_seconds,
                 )
                 raw2 = _maybe_unwrap(raw2, expected_keys)
                 parsed = response_model.model_validate(raw2)
@@ -163,7 +173,7 @@ class DailyRecommendationResult:
 class WorkoutInsightResult:
     activity_id: int
     workout: dict
-    insight: WorkoutInsight
+    insight: WorkoutInsight | None
     model: str
     generated_at: str
     cached: bool
@@ -172,7 +182,7 @@ class WorkoutInsightResult:
         return {
             "activity_id": self.activity_id,
             "workout": self.workout,
-            "insight": self.insight.model_dump(),
+            "insight": self.insight.model_dump() if self.insight else None,
             "model": self.model,
             "generated_at": self.generated_at,
             "cached": self.cached,
@@ -217,6 +227,56 @@ async def get_cached_recommendation_for_date(
             recommendation_date=target_date.isoformat(),
         )
     return None
+
+
+async def get_latest_workout_summary(
+    db: AsyncSession,
+    activity_id: int | None = None,
+    on_date: date | None = None,
+) -> WorkoutInsightResult | None:
+    """Return the latest-workout snapshot without generating an LLM insight."""
+    snapshot = await training_metrics.get_latest_workout_snapshot(
+        db, activity_id, on_date=on_date
+    )
+    if not snapshot:
+        return None
+    return WorkoutInsightResult(
+        activity_id=snapshot["id"],
+        workout=snapshot,
+        insight=None,
+        model="summary-only",
+        generated_at="",
+        cached=False,
+    )
+
+
+async def get_cached_latest_workout_insight(
+    db: AsyncSession,
+    activity_id: int | None = None,
+    model: str | None = None,
+    on_date: date | None = None,
+) -> WorkoutInsightResult | None:
+    """Return a cached latest-workout insight without generating a new one."""
+    activity = await training_metrics._get_latest_completed_activity(
+        db, activity_id, on_date
+    )
+    if activity is None:
+        return None
+
+    requested_model = model or settings.llm.dashboard_model
+    cache_key = f"workout_insight:{activity.id}:{requested_model}"
+    hit = await _cache_get(db, cache_key)
+    if not hit:
+        return None
+
+    return WorkoutInsightResult(
+        activity_id=activity.id,
+        workout=hit["workout"],
+        insight=WorkoutInsight.model_validate(hit["insight"]),
+        model=hit["model"],
+        generated_at=hit["generated_at"],
+        cached=True,
+    )
 
 
 async def get_daily_recommendation(
@@ -458,7 +518,9 @@ __all__ = [
     "_hash_inputs",
     "_maybe_unwrap",
     "_pydantic_schema",
+    "get_cached_latest_workout_insight",
     "get_daily_recommendation",
     "get_latest_workout_insight",
+    "get_latest_workout_summary",
     "get_provider",
 ]

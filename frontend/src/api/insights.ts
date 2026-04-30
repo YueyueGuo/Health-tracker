@@ -297,7 +297,7 @@ export interface WorkoutInsight {
 export interface WorkoutInsightResponse {
   activity_id: number;
   workout: LatestWorkoutSnapshot;
-  insight: WorkoutInsight;
+  insight: WorkoutInsight | null;
   model: string;
   generated_at: string;
   cached: boolean;
@@ -309,15 +309,17 @@ export function fetchTrainingMetrics() {
   return fetchJson<FullSnapshot>("/insights/training-metrics");
 }
 
-export function fetchDailyRecommendation(
-  refresh = false,
-  model?: string,
-  date?: string,
-) {
+export function fetchDailyRecommendation(opts: {
+  refresh?: boolean;
+  model?: string;
+  date?: string;
+  cacheOnly?: boolean;
+} = {}) {
   const qs = new URLSearchParams();
-  if (refresh) qs.set("refresh", "true");
-  if (model) qs.set("model", model);
-  if (date) qs.set("date", date);
+  if (opts.refresh) qs.set("refresh", "true");
+  if (opts.cacheOnly) qs.set("cache_only", "true");
+  if (opts.model) qs.set("model", opts.model);
+  if (opts.date) qs.set("date", opts.date);
   const query = qs.toString();
   return fetchJson<DailyRecommendationResponse | null>(
     `/insights/daily-recommendation${query ? `?${query}` : ""}`
@@ -329,10 +331,14 @@ export function fetchLatestWorkoutInsight(opts?: {
   refresh?: boolean;
   model?: string;
   date?: string;
+  cacheOnly?: boolean;
+  summaryOnly?: boolean;
 }) {
   const qs = new URLSearchParams();
   if (opts?.activityId) qs.set("activity_id", String(opts.activityId));
   if (opts?.refresh) qs.set("refresh", "true");
+  if (opts?.cacheOnly) qs.set("cache_only", "true");
+  if (opts?.summaryOnly) qs.set("summary_only", "true");
   if (opts?.model) qs.set("model", opts.model);
   if (opts?.date) qs.set("date", opts.date);
   const query = qs.toString();
