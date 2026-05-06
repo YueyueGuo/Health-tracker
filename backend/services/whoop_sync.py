@@ -70,7 +70,10 @@ async def sync_whoop(
     are counted as ``failed``. Does raise on auth/rate-limit failures so
     the caller can stop cleanly.
     """
-    if not client.is_enabled:
+    # ``ensure_ready`` triggers the lazy DB token load before checking the
+    # enabled flag, so we don't skip Whoop just because WHOOP_ENABLED env
+    # var lags the oauth_tokens table after a Railway redeploy.
+    if not await client.ensure_ready():
         logger.info("Whoop client not enabled; skipping sync.")
         return {
             "recovery_new": 0, "recovery_updated": 0,

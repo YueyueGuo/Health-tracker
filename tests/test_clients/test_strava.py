@@ -192,6 +192,7 @@ async def test_get_raises_on_429_and_parses_retry_after(monkeypatch):
     client._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     client._access_token = "token"
     client._token_expires_at = 9_999_999_999  # skip refresh
+    client._tokens_loaded = True  # skip DB token load (oauth_tokens table not provisioned in this test)
     try:
         with pytest.raises(StravaRateLimitError) as exc:
             await client._get("/activities/123")

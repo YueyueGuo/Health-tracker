@@ -30,6 +30,11 @@ class StubWhoopClient:
     def __init__(self) -> None:
         self.windows: list[tuple[datetime, datetime]] = []
 
+    async def ensure_ready(self) -> bool:
+        # whoop_sync now gates on the async readiness check rather than the
+        # sync `is_enabled` property; mirror the stub's enabled flag here.
+        return self.is_enabled
+
     async def get_cycles(self, start: datetime, end: datetime) -> list[dict]:
         self.windows.append((start, end))
         return []

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import datetime
@@ -7,6 +8,11 @@ from urllib.parse import quote
 
 import httpx
 
+from backend.clients.eight_sleep import (
+    _default_env_path,
+    _persist_env_var,
+    _read_env_var,
+)
 from backend.config import settings
 
 logger = logging.getLogger(__name__)
@@ -60,12 +66,28 @@ class StravaClient:
     TOKEN_URL = "https://www.strava.com/oauth/token"
 
     def __init__(self):
-        self._access_token = settings.strava.access_token
-        self._refresh_token = settings.strava.refresh_token
+        # Tokens persist in the ``oauth_tokens`` DB table (durable across
+        # container restarts on Railway). Token I/O uses an independent
+        # session opened on demand so it never commits a caller's
+        # SyncEngine transaction mid-flight.
+        self._tokens_loaded: bool = False
+        self._env_path = _default_env_path()
+        self._access_token = (
+            _read_env_var(self._env_path, "STRAVA_ACCESS_TOKEN")
+            or settings.strava.access_token
+        )
+        self._refresh_token = (
+            _read_env_var(self._env_path, "STRAVA_REFRESH_TOKEN")
+            or settings.strava.refresh_token
+        )
         self._client_id = settings.strava.client_id
         self._client_secret = settings.strava.client_secret
         self._token_expires_at: int = 0
         self._http = httpx.AsyncClient(timeout=30)
+        # Serialise concurrent refreshes against the same client instance.
+        # Strava's refresh tokens are single-use; without this, two coroutines
+        # past the expiry check would both POST and one would get a 400.
+        self._refresh_lock: asyncio.Lock = asyncio.Lock()
 
     async def close(self):
         await self._http.aclose()
@@ -204,28 +226,86 @@ class StravaClient:
         self._access_token = data["access_token"]
         self._refresh_token = data["refresh_token"]
         self._token_expires_at = data["expires_at"]
+        await self._persist_tokens()
+        self._tokens_loaded = True
         return data
 
+    async def _load_tokens_if_needed(self) -> None:
+        """Hydrate tokens from the DB on first call. Bootstrap if absent."""
+        if self._tokens_loaded:
+            return
+        from backend.database import async_session
+        from backend.services.oauth_tokens import get_tokens, save_tokens
+        async with async_session() as token_db:
+            row = await get_tokens(token_db, "strava")
+            if row is not None:
+                if row.access_token:
+                    self._access_token = row.access_token
+                if row.refresh_token:
+                    self._refresh_token = row.refresh_token
+                if row.expires_at is not None:
+                    self._token_expires_at = int(row.expires_at.timestamp())
+            elif self._access_token or self._refresh_token:
+                await save_tokens(
+                    token_db,
+                    "strava",
+                    access_token=self._access_token,
+                    refresh_token=self._refresh_token,
+                    expires_at=None,
+                )
+                logger.info("Bootstrapped Strava tokens into oauth_tokens from env")
+        self._tokens_loaded = True
+
+    async def _persist_tokens(self) -> None:
+        """Write current tokens to the DB and (best-effort) to .env."""
+        from datetime import datetime, timezone as _tz
+        from backend.database import async_session
+        from backend.services.oauth_tokens import save_tokens
+        expires_dt = (
+            datetime.fromtimestamp(self._token_expires_at, tz=_tz.utc)
+            if self._token_expires_at
+            else None
+        )
+        async with async_session() as token_db:
+            await save_tokens(
+                token_db,
+                "strava",
+                access_token=self._access_token,
+                refresh_token=self._refresh_token,
+                expires_at=expires_dt,
+            )
+        if self._access_token:
+            _persist_env_var(self._env_path, "STRAVA_ACCESS_TOKEN", self._access_token)
+        if self._refresh_token:
+            _persist_env_var(self._env_path, "STRAVA_REFRESH_TOKEN", self._refresh_token)
+
     async def _ensure_token(self):
+        await self._load_tokens_if_needed()
         if not self._refresh_token:
             return
         # Always refresh if we don't know the expiry, or if token is about to expire
         if self._token_expires_at and time.time() < self._token_expires_at - 60:
             return
-        resp = await self._http.post(
-            self.TOKEN_URL,
-            data={
-                "client_id": self._client_id,
-                "client_secret": self._client_secret,
-                "refresh_token": self._refresh_token,
-                "grant_type": "refresh_token",
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        self._access_token = data["access_token"]
-        self._refresh_token = data["refresh_token"]
-        self._token_expires_at = data["expires_at"]
+        async with self._refresh_lock:
+            # Another coroutine may have refreshed while we were queued on the
+            # lock; re-check expiry before spending the single-use refresh token.
+            if self._token_expires_at and time.time() < self._token_expires_at - 60:
+                return
+            resp = await self._http.post(
+                self.TOKEN_URL,
+                data={
+                    "client_id": self._client_id,
+                    "client_secret": self._client_secret,
+                    "refresh_token": self._refresh_token,
+                    "grant_type": "refresh_token",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            self._access_token = data["access_token"]
+            self._refresh_token = data["refresh_token"]
+            self._token_expires_at = data["expires_at"]
+            await self._persist_tokens()
 
     async def _get(self, path: str, params: dict | None = None) -> dict | list:
         await self._ensure_token()

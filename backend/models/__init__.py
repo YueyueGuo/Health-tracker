@@ -1,5 +1,6 @@
 from backend.models.activity import Activity, ActivityLap, ActivityStream
 from backend.models.goal import Goal
+from backend.models.oauth_token import OAuthToken
 from backend.models.recommendation_feedback import RecommendationFeedback
 from backend.models.recovery import Recovery
 from backend.models.sleep import SleepSession
@@ -16,6 +17,7 @@ __all__ = [
     "ActivityStream",
     "AnalysisCache",
     "Goal",
+    "OAuthToken",
     "RecommendationFeedback",
     "Recovery",
     "SleepSession",

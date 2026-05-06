@@ -306,6 +306,32 @@ def _default_env_path() -> Path:
     return Path(__file__).resolve().parent.parent.parent / ".env"
 
 
+def _read_env_var(env_path: Path, key: str) -> str | None:
+    """Return the current value of ``key`` in ``.env``, or None if absent.
+
+    Used by clients with rotating refresh tokens (Whoop, Strava) to pick up
+    the latest persisted token on each new client instance, avoiding the
+    cached-Pydantic-settings race where a freshly rotated token in .env
+    isn't visible until process restart.
+    """
+    try:
+        if not env_path.exists():
+            return None
+        pattern = re.compile(rf"^{re.escape(key)}\s*=\s*(.*)$", re.MULTILINE)
+        match = pattern.search(env_path.read_text())
+        if not match:
+            return None
+        value = match.group(1).strip()
+        if (value.startswith('"') and value.endswith('"')) or (
+            value.startswith("'") and value.endswith("'")
+        ):
+            value = value[1:-1]
+        return value or None
+    except Exception as e:
+        logger.warning("Failed to read %s from .env: %s", key, e)
+        return None
+
+
 def _persist_env_var(env_path: Path, key: str, value: str) -> None:
     """Rewrite a single KEY=value line in .env, preserving the rest.
 

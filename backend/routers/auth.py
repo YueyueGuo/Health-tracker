@@ -49,16 +49,19 @@ async def strava_auth(request: Request):
 
 @router.get("/strava/callback")
 async def strava_callback(code: str = Query(...)):
-    """Handle Strava OAuth2 callback."""
+    """Handle Strava OAuth2 callback.
+
+    Tokens are persisted directly to the ``oauth_tokens`` table by
+    ``exchange_code``; we do not echo them in the response body to avoid
+    leaking credentials into browser history or proxy access logs.
+    """
     client = StravaClient()
     try:
         tokens = await client.exchange_code(code)
         return {
             "status": "success",
-            "message": "Strava connected! Add these to your .env file:",
-            "access_token": tokens["access_token"],
-            "refresh_token": tokens["refresh_token"],
-            "expires_at": tokens["expires_at"],
+            "message": "Strava connected. Tokens persisted to oauth_tokens.",
+            "expires_at": tokens.get("expires_at"),
         }
     finally:
         await client.close()

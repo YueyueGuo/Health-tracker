@@ -346,7 +346,11 @@ class SyncEngine:
         doesn't collide with Strava edits here. Logs a single SyncLog row
         capturing total records synced across recovery + sleep + workouts.
         """
-        if not self.whoop.is_enabled:
+        # Use the async readiness check so the lazy DB token load runs before
+        # we gate on enablement — the sync ``is_enabled`` reflects only the
+        # construct-time env state and would skip Whoop on Railway when the
+        # WHOOP_ENABLED env var lags behind the oauth_tokens table.
+        if not await self.whoop.ensure_ready():
             return {"recovery_new": 0, "sleep_new": 0, "workouts_new": 0}
 
         from backend.services.whoop_sync import sync_whoop as _whoop_sync
