@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useApi } from "../hooks/useApi";
+import { invalidateAppDataQueries } from "../lib/queryCache";
 import {
   createStrengthSession,
   fetchStrengthExercises,
@@ -16,6 +18,7 @@ import type { ExerciseDraft, SetDraft } from "../components/record/types";
 
 let nextKey = 1;
 const newKey = () => nextKey++;
+const DRAFT_STORAGE_KEY = "health-tracker:record-draft:v1";
 
 const emptySet = (): SetDraft => ({
   key: newKey(),
@@ -39,16 +42,222 @@ const containerVariants = {
   show: { opacity: 1, transition: { staggerChildren: 0.05 } },
 };
 
+type RecordDraft = {
+  version: 1;
+  date: string;
+  exercises: ExerciseDraft[];
+  isRunning: boolean;
+  elapsed: number;
+  savedAt: number;
+};
+
+type InitialRecordDraft = Omit<RecordDraft, "version" | "savedAt">;
+
+function loadRecordDraft(today: string): InitialRecordDraft {
+  const fallback = {
+    date: today,
+    exercises: [emptyExercise()],
+    isRunning: false,
+    elapsed: 0,
+  };
+  try {
+    const raw = window.localStorage.getItem(DRAFT_STORAGE_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Partial<RecordDraft>;
+    if (parsed.version !== 1 || !Array.isArray(parsed.exercises)) {
+      return fallback;
+    }
+    const exercises = normalizeExercises(parsed.exercises);
+    const savedAt = readNonNegativeNumber(parsed.savedAt) ?? Date.now();
+    const wasRunning = parsed.isRunning === true;
+    const storedElapsed = readNonNegativeNumber(parsed.elapsed) ?? 0;
+    const elapsed = wasRunning
+      ? storedElapsed + Math.max(0, Math.floor((Date.now() - savedAt) / 1000))
+      : storedElapsed;
+    return {
+      date: typeof parsed.date === "string" && parsed.date ? parsed.date : today,
+      exercises,
+      isRunning: wasRunning,
+      elapsed,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveRecordDraft(draft: InitialRecordDraft) {
+  try {
+    const snapshot: RecordDraft = {
+      version: 1,
+      ...draft,
+      savedAt: Date.now(),
+    };
+    window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch {
+    // localStorage can be unavailable in private/locked-down contexts.
+  }
+}
+
+function clearRecordDraft() {
+  try {
+    window.localStorage.removeItem(DRAFT_STORAGE_KEY);
+  } catch {
+    // Best effort only.
+  }
+}
+
+function isDraftDirty(draft: InitialRecordDraft): boolean {
+  if (draft.isRunning) return true;
+  if (draft.elapsed > 0) return true;
+  return draft.exercises.some(
+    (ex) =>
+      ex.name.trim() !== "" ||
+      ex.notes.trim() !== "" ||
+      ex.sets.some(
+        (s) =>
+          s.weight !== "" ||
+          s.reps !== "" ||
+          s.rpe !== "" ||
+          s.performed_at != null,
+      ),
+  );
+}
+
+function normalizeExercises(value: unknown[]): ExerciseDraft[] {
+  const exercises = value
+    .map((item) => normalizeExercise(item))
+    .filter((item): item is ExerciseDraft => item != null);
+  if (exercises.length === 0) return [emptyExercise()];
+
+  const maxKey = exercises.reduce((max, ex) => {
+    const setMax = ex.sets.reduce((innerMax, s) => Math.max(innerMax, s.key), 0);
+    return Math.max(max, ex.key, setMax);
+  }, 0);
+  if (maxKey >= nextKey) nextKey = maxKey + 1;
+  return exercises;
+}
+
+function normalizeExercise(value: unknown): ExerciseDraft | null {
+  if (value == null || typeof value !== "object") return null;
+  const raw = value as Partial<ExerciseDraft>;
+  const sets = Array.isArray(raw.sets)
+    ? raw.sets
+        .map((item) => normalizeSet(item))
+        .filter((item): item is SetDraft => item != null)
+    : [];
+  return {
+    key: readPositiveInteger(raw.key) ?? newKey(),
+    name: typeof raw.name === "string" ? raw.name : "",
+    notes: typeof raw.notes === "string" ? raw.notes : "",
+    showNotes: raw.showNotes === true,
+    linkedToNext: raw.linkedToNext === true,
+    sets: sets.length > 0 ? sets : [emptySet(), emptySet(), emptySet()],
+  };
+}
+
+function normalizeSet(value: unknown): SetDraft | null {
+  if (value == null || typeof value !== "object") return null;
+  const raw = value as Partial<SetDraft>;
+  return {
+    key: readPositiveInteger(raw.key) ?? newKey(),
+    weight: typeof raw.weight === "string" ? raw.weight : "",
+    reps: typeof raw.reps === "string" ? raw.reps : "",
+    rpe: typeof raw.rpe === "string" ? raw.rpe : "",
+    performed_at:
+      typeof raw.performed_at === "string" && raw.performed_at
+        ? raw.performed_at
+        : null,
+  };
+}
+
+function readPositiveInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0
+    ? value
+    : null;
+}
+
+function readNonNegativeNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : null;
+}
+
+function parseRequiredReps(value: string): number | null {
+  const reps = Number(value);
+  if (!Number.isInteger(reps) || reps < 1) return null;
+  return reps;
+}
+
+function parseOptionalNonNegative(value: string): number | null | undefined {
+  if (value === "") return null;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return undefined;
+  return number;
+}
+
+function parseOptionalRpe(value: string): number | null | undefined {
+  const rpe = parseOptionalNonNegative(value);
+  if (rpe == null) return rpe;
+  if (rpe > 10) return undefined;
+  return rpe;
+}
+
+function validateSetForLogging(set: SetDraft): string | null {
+  if (parseRequiredReps(set.reps) == null) {
+    return "Fill in whole-number reps before logging this set.";
+  }
+  if (parseOptionalNonNegative(set.weight) === undefined) {
+    return "Weight must be a non-negative number.";
+  }
+  if (parseOptionalRpe(set.rpe) === undefined) {
+    return "RPE must be between 0 and 10.";
+  }
+  return null;
+}
+
+function buildPayload(exercises: ExerciseDraft[]): StrengthSetInput[] | string {
+  const payload: StrengthSetInput[] = [];
+  for (const ex of exercises) {
+    const name = ex.name.trim();
+    if (!name) continue;
+    const logged = ex.sets.filter((s) => s.performed_at != null);
+    for (const [idx, set] of logged.entries()) {
+      const reps = parseRequiredReps(set.reps);
+      const weight = parseOptionalNonNegative(set.weight);
+      const rpe = parseOptionalRpe(set.rpe);
+      if (reps == null) return `${name} set ${idx + 1} needs whole-number reps.`;
+      if (weight === undefined) {
+        return `${name} set ${idx + 1} has an invalid weight.`;
+      }
+      if (rpe === undefined) {
+        return `${name} set ${idx + 1} has an invalid RPE.`;
+      }
+      payload.push({
+        exercise_name: name,
+        set_number: idx + 1,
+        reps,
+        weight_kg: weight,
+        rpe,
+        notes: ex.notes.trim() === "" ? null : ex.notes.trim(),
+        performed_at: set.performed_at,
+      });
+    }
+  }
+  return payload;
+}
+
 export default function Record() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const today = new Date().toISOString().slice(0, 10);
+  const [initialDraft] = useState(() => loadRecordDraft(today));
 
-  const [date, setDate] = useState(today);
-  const [exercises, setExercises] = useState<ExerciseDraft[]>(() => [
-    emptyExercise(),
-  ]);
-  const [isRunning, setIsRunning] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
+  const [date, setDate] = useState(initialDraft.date);
+  const [exercises, setExercises] = useState<ExerciseDraft[]>(
+    initialDraft.exercises,
+  );
+  const [isRunning, setIsRunning] = useState(initialDraft.isRunning);
+  const [elapsed, setElapsed] = useState(initialDraft.elapsed);
   const [now, setNow] = useState(() => Date.now());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +266,20 @@ export default function Record() {
   const { data: knownExercises } = useApi(["strength", "exercises"], () =>
     fetchStrengthExercises(),
   );
+
+  // Persist only on user-driven transitions, not on the 1Hz `elapsed` tick.
+  // While running, the loader reconstructs `elapsed` from `savedAt` wallclock,
+  // so a stale snapshot is fine; on pause, `isRunning` flips and we re-save
+  // with the freshly-captured `elapsed`. The dirty check skips skeleton drafts
+  // (and clears any prior save) so empty visits don't litter localStorage.
+  useEffect(() => {
+    const draft = { date, exercises, isRunning, elapsed };
+    if (!isDraftDirty(draft)) {
+      clearRecordDraft();
+      return;
+    }
+    saveRecordDraft(draft);
+  }, [date, exercises, isRunning]);
 
   // Workout timer (1 Hz) — runs only while the session is active.
   useEffect(() => {
@@ -169,9 +392,10 @@ export default function Record() {
           return { ...ex, sets };
         }
 
-        // Stamp: must have at least reps filled in (matches today's Live).
-        if (set.reps === "" || Number(set.reps) < 1) {
-          setError("Fill in reps before logging this set.");
+        // Stamp: validate client-side so malformed number inputs never reach the API.
+        const validationError = validateSetForLogging(set);
+        if (validationError) {
+          setError(validationError);
           return ex;
         }
         if (!ex.name.trim()) {
@@ -211,27 +435,20 @@ export default function Record() {
     setSaving(true);
     setError(null);
     try {
-      const payload: StrengthSetInput[] = exercises.flatMap((ex) => {
-        const name = ex.name.trim();
-        if (!name) return [];
-        const logged = ex.sets.filter((s) => s.performed_at != null);
-        return logged.map((s, idx) => ({
-          exercise_name: name,
-          set_number: idx + 1,
-          reps: Number(s.reps),
-          weight_kg: s.weight === "" ? null : Number(s.weight),
-          rpe: s.rpe === "" ? null : Number(s.rpe),
-          notes: ex.notes.trim() === "" ? null : ex.notes.trim(),
-          performed_at: s.performed_at,
-        }));
-      });
+      const payload = buildPayload(exercises);
+      if (typeof payload === "string") {
+        setError(payload);
+        setSaving(false);
+        return;
+      }
       if (payload.length === 0) {
         setError("Log at least one set before finishing.");
         setSaving(false);
         return;
       }
       await createStrengthSession({ date, activity_id: null, sets: payload });
-      setIsRunning(false);
+      clearRecordDraft();
+      void invalidateAppDataQueries(queryClient);
       navigate("/history");
     } catch (e) {
       setError(getErrorMessage(e, "Failed to save session"));

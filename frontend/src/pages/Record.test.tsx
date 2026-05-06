@@ -40,6 +40,7 @@ describe("Record page", () => {
   beforeEach(() => {
     navigateMock.mockReset();
     createStrengthSession.mockClear();
+    window.localStorage.clear();
   });
 
   it("renders the timer header and one empty exercise card", () => {
@@ -88,10 +89,56 @@ describe("Record page", () => {
     await waitFor(() =>
       expect(navigateMock).toHaveBeenCalledWith("/history")
     );
+    expect(
+      window.localStorage.getItem("health-tracker:record-draft:v1")
+    ).toBeNull();
   });
 
   it("blocks Finish when no sets are logged", () => {
     renderWithRouter();
+    expect(screen.getByRole("button", { name: "Finish" })).toBeDisabled();
+  });
+
+  it("restores an in-progress draft after leaving and returning", async () => {
+    const { unmount } = renderWithRouter();
+    fireEvent.change(screen.getByPlaceholderText("Exercise Name"), {
+      target: { value: "Bench Press" },
+    });
+    fireEvent.change(screen.getAllByLabelText(/Set 1 reps/i)[0], {
+      target: { value: "5" },
+    });
+    fireEvent.change(screen.getAllByLabelText(/Set 1 weight/i)[0], {
+      target: { value: "60" },
+    });
+
+    await waitFor(() =>
+      expect(
+        window.localStorage.getItem("health-tracker:record-draft:v1")
+      ).toContain("Bench Press")
+    );
+
+    unmount();
+    renderWithRouter();
+
+    expect(screen.getByDisplayValue("Bench Press")).toBeInTheDocument();
+    expect(screen.getAllByLabelText(/Set 1 reps/i)[0]).toHaveValue(5);
+    expect(screen.getAllByLabelText(/Set 1 weight/i)[0]).toHaveValue(60);
+  });
+
+  it("blocks logging a set with malformed numeric values", () => {
+    renderWithRouter();
+    fireEvent.change(screen.getByPlaceholderText("Exercise Name"), {
+      target: { value: "Bench Press" },
+    });
+    fireEvent.change(screen.getAllByLabelText(/Set 1 reps/i)[0], {
+      target: { value: "5.5" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Log set 1" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "whole-number reps"
+    );
     expect(screen.getByRole("button", { name: "Finish" })).toBeDisabled();
   });
 });
