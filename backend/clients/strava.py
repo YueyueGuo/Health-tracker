@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import datetime
@@ -83,6 +84,10 @@ class StravaClient:
         self._client_secret = settings.strava.client_secret
         self._token_expires_at: int = 0
         self._http = httpx.AsyncClient(timeout=30)
+        # Serialise concurrent refreshes against the same client instance.
+        # Strava's refresh tokens are single-use; without this, two coroutines
+        # past the expiry check would both POST and one would get a 400.
+        self._refresh_lock: asyncio.Lock = asyncio.Lock()
 
     async def close(self):
         await self._http.aclose()
@@ -281,21 +286,26 @@ class StravaClient:
         # Always refresh if we don't know the expiry, or if token is about to expire
         if self._token_expires_at and time.time() < self._token_expires_at - 60:
             return
-        resp = await self._http.post(
-            self.TOKEN_URL,
-            data={
-                "client_id": self._client_id,
-                "client_secret": self._client_secret,
-                "refresh_token": self._refresh_token,
-                "grant_type": "refresh_token",
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        self._access_token = data["access_token"]
-        self._refresh_token = data["refresh_token"]
-        self._token_expires_at = data["expires_at"]
-        await self._persist_tokens()
+        async with self._refresh_lock:
+            # Another coroutine may have refreshed while we were queued on the
+            # lock; re-check expiry before spending the single-use refresh token.
+            if self._token_expires_at and time.time() < self._token_expires_at - 60:
+                return
+            resp = await self._http.post(
+                self.TOKEN_URL,
+                data={
+                    "client_id": self._client_id,
+                    "client_secret": self._client_secret,
+                    "refresh_token": self._refresh_token,
+                    "grant_type": "refresh_token",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            self._access_token = data["access_token"]
+            self._refresh_token = data["refresh_token"]
+            self._token_expires_at = data["expires_at"]
+            await self._persist_tokens()
 
     async def _get(self, path: str, params: dict | None = None) -> dict | list:
         await self._ensure_token()

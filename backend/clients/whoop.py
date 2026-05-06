@@ -19,6 +19,7 @@ so the app doesn't need the user to re-authenticate every hour.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import date, datetime, timezone
@@ -85,6 +86,10 @@ class WhoopClient:
         self._enabled = settings.whoop.enabled
         self._http = httpx.AsyncClient(timeout=30)
         self._last_request_ts: float = 0.0
+        # Serialise concurrent refreshes against the same client instance.
+        # Whoop's refresh tokens are single-use; without this, two coroutines
+        # past the expiry check would both POST and one would get a 400.
+        self._refresh_lock: asyncio.Lock = asyncio.Lock()
 
     async def close(self):
         await self._http.aclose()
@@ -246,12 +251,16 @@ class WhoopClient:
             return
         if not self._refresh_token:
             return
-        await self._refresh_access_token()
+        async with self._refresh_lock:
+            # Another coroutine may have refreshed while we were queued on the
+            # lock; re-check expiry before spending the single-use refresh token.
+            if self._token_expires_at and time.time() < self._token_expires_at - 60:
+                return
+            await self._refresh_access_token()
 
     # ── Request plumbing ────────────────────────────────────────────
 
     async def _throttle(self) -> None:
-        import asyncio
         elapsed = time.time() - self._last_request_ts
         if elapsed < self._MIN_REQUEST_INTERVAL_SEC:
             await asyncio.sleep(self._MIN_REQUEST_INTERVAL_SEC - elapsed)
