@@ -148,6 +148,7 @@ class OpenAIProvider(LLMProvider):
     MODELS = {
         "gpt-5.5": "gpt-5.5-2026-04-23",
         "gpt-5.5-pro": "gpt-5.5-pro-2026-04-23",
+        "gpt-5.4-mini": "gpt-5.4-mini",
         "gpt-4o": "gpt-4o",
         "gpt-4o-mini": "gpt-4o-mini",
         "gpt-4-turbo": "gpt-4-turbo",

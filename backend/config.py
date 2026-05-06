@@ -78,7 +78,7 @@ class LLMSettings(BaseSettings):
     anthropic_api_key: str = ""
     openai_api_key: str = ""
     google_ai_api_key: str = ""
-    default_llm_provider: str = "claude-sonnet"
+    default_llm_provider: str = "gpt-5.4-mini"
     # Model used for the dashboard insights (daily recommendation +
     # latest-workout takeaway). Keep this on the strongest general model;
     # card-level overrides can still pick a different registered model.

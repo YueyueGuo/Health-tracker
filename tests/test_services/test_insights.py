@@ -121,11 +121,11 @@ VALID_WORKOUT_INSIGHT = {
 async def test_daily_recommendation_happy_path(db, monkeypatch):
     await _seed_basic(db)
     stub = _StubProvider(VALID_REC)
-    _install_provider(monkeypatch, {"claude-haiku": stub})
+    _install_provider(monkeypatch, {"gpt-5.4-mini": stub})
 
-    result = await insights.get_daily_recommendation(db, model="claude-haiku")
+    result = await insights.get_daily_recommendation(db, model="gpt-5.4-mini")
     assert result.cached is False
-    assert result.model == "claude-haiku"
+    assert result.model == "gpt-5.4-mini"
     assert result.recommendation.intensity == "easy"
     assert len(result.recommendation.rationale) == 2
 
@@ -133,13 +133,13 @@ async def test_daily_recommendation_happy_path(db, monkeypatch):
 async def test_daily_recommendation_cache_hit(db, monkeypatch):
     await _seed_basic(db)
     stub = _StubProvider(VALID_REC)
-    _install_provider(monkeypatch, {"claude-haiku": stub})
+    _install_provider(monkeypatch, {"gpt-5.4-mini": stub})
 
-    first = await insights.get_daily_recommendation(db, model="claude-haiku")
+    first = await insights.get_daily_recommendation(db, model="gpt-5.4-mini")
     assert first.cached is False
 
     # Second call should hit cache, not call the provider again.
-    second = await insights.get_daily_recommendation(db, model="claude-haiku")
+    second = await insights.get_daily_recommendation(db, model="gpt-5.4-mini")
     assert second.cached is True
     assert len(stub._calls) == 1  # only one LLM call total
 
@@ -147,10 +147,10 @@ async def test_daily_recommendation_cache_hit(db, monkeypatch):
 async def test_daily_recommendation_refresh_bypasses_cache(db, monkeypatch):
     await _seed_basic(db)
     stub = _StubProvider(VALID_REC)
-    _install_provider(monkeypatch, {"claude-haiku": stub})
+    _install_provider(monkeypatch, {"gpt-5.4-mini": stub})
 
-    await insights.get_daily_recommendation(db, model="claude-haiku")
-    result = await insights.get_daily_recommendation(db, model="claude-haiku", refresh=True)
+    await insights.get_daily_recommendation(db, model="gpt-5.4-mini")
+    result = await insights.get_daily_recommendation(db, model="gpt-5.4-mini", refresh=True)
     assert result.cached is False
     assert len(stub._calls) == 2
 
@@ -164,14 +164,14 @@ async def test_daily_recommendation_fallback_chain(db, monkeypatch):
     _install_provider(
         monkeypatch,
         {
-            "claude-haiku": stub_primary,
+            "gpt-5.4-mini": stub_primary,
             "claude-opus-4-7": stub_fallback,
             "gemini-2.5-pro": None,
             "gpt-4o": None,
         },
     )
 
-    result = await insights.get_daily_recommendation(db, model="claude-haiku")
+    result = await insights.get_daily_recommendation(db, model="gpt-5.4-mini")
     assert result.model == "claude-opus-4-7"
     assert result.recommendation.intensity == "easy"
 
@@ -182,14 +182,14 @@ async def test_daily_recommendation_all_fail_raises(db, monkeypatch):
     _install_provider(
         monkeypatch,
         {
-            "claude-haiku": _StubProvider(err),
+            "gpt-5.4-mini": _StubProvider(err),
             "claude-opus-4-7": _StubProvider(err),
             "gemini-2.5-pro": _StubProvider(err),
             "gpt-4o": _StubProvider(err),
         },
     )
     with pytest.raises(Exception):
-        await insights.get_daily_recommendation(db, model="claude-haiku")
+        await insights.get_daily_recommendation(db, model="gpt-5.4-mini")
 
 
 async def test_daily_recommendation_invalid_json_triggers_retry(db, monkeypatch):
@@ -197,9 +197,9 @@ async def test_daily_recommendation_invalid_json_triggers_retry(db, monkeypatch)
     # First call returns incomplete data (missing required fields); retry returns valid.
     bad = {"intensity": "easy"}  # missing suggestion/rationale/etc
     stub = _StubProvider([bad, VALID_REC])
-    _install_provider(monkeypatch, {"claude-haiku": stub})
+    _install_provider(monkeypatch, {"gpt-5.4-mini": stub})
 
-    result = await insights.get_daily_recommendation(db, model="claude-haiku")
+    result = await insights.get_daily_recommendation(db, model="gpt-5.4-mini")
     assert result.recommendation.intensity == "easy"
     assert len(stub._calls) == 2  # original + self-correcting retry
 
@@ -225,9 +225,9 @@ async def test_workout_insight_none_when_no_activities(db, monkeypatch):
 async def test_workout_insight_happy_path(db, monkeypatch):
     await _seed_basic(db)
     stub = _StubProvider(VALID_WORKOUT_INSIGHT)
-    _install_provider(monkeypatch, {"claude-haiku": stub})
+    _install_provider(monkeypatch, {"gpt-5.4-mini": stub})
 
-    result = await insights.get_latest_workout_insight(db, model="claude-haiku")
+    result = await insights.get_latest_workout_insight(db, model="gpt-5.4-mini")
     assert result is not None
     assert result.insight.headline == VALID_WORKOUT_INSIGHT["headline"]
     assert result.cached is False
@@ -236,10 +236,10 @@ async def test_workout_insight_happy_path(db, monkeypatch):
 async def test_workout_insight_caches_per_activity_id(db, monkeypatch):
     await _seed_basic(db)
     stub = _StubProvider(VALID_WORKOUT_INSIGHT)
-    _install_provider(monkeypatch, {"claude-haiku": stub})
+    _install_provider(monkeypatch, {"gpt-5.4-mini": stub})
 
-    first = await insights.get_latest_workout_insight(db, model="claude-haiku")
-    second = await insights.get_latest_workout_insight(db, model="claude-haiku")
+    first = await insights.get_latest_workout_insight(db, model="gpt-5.4-mini")
+    second = await insights.get_latest_workout_insight(db, model="gpt-5.4-mini")
     assert first is not None and second is not None
     assert first.cached is False and second.cached is True
     assert len(stub._calls) == 1
@@ -296,7 +296,7 @@ async def test_workout_insight_skips_pending_activity_by_id(db, monkeypatch):
     monkeypatch.setattr(insights, "get_provider", _factory)
 
     result = await insights.get_latest_workout_insight(
-        db, activity_id=pending.id, model="claude-haiku"
+        db, activity_id=pending.id, model="gpt-5.4-mini"
     )
     assert result is None
     assert called["n"] == 0
@@ -308,9 +308,9 @@ async def test_workout_insight_skips_pending_activity_by_id(db, monkeypatch):
 async def test_daily_recommendation_returns_cache_key_and_date(db, monkeypatch):
     await _seed_basic(db)
     stub = _StubProvider(VALID_REC)
-    _install_provider(monkeypatch, {"claude-haiku": stub})
+    _install_provider(monkeypatch, {"gpt-5.4-mini": stub})
 
-    result = await insights.get_daily_recommendation(db, model="claude-haiku")
+    result = await insights.get_daily_recommendation(db, model="gpt-5.4-mini")
     assert result.cache_key.startswith("daily_rec:")
     assert result.recommendation_date == date.today().isoformat()
     # to_dict round-trips both fields so the frontend can pass them back.
@@ -322,9 +322,9 @@ async def test_daily_recommendation_returns_cache_key_and_date(db, monkeypatch):
 async def test_daily_recommendation_cache_invalidates_on_new_goal(db, monkeypatch):
     await _seed_basic(db)
     stub = _StubProvider(VALID_REC)
-    _install_provider(monkeypatch, {"claude-haiku": stub})
+    _install_provider(monkeypatch, {"gpt-5.4-mini": stub})
 
-    first = await insights.get_daily_recommendation(db, model="claude-haiku")
+    first = await insights.get_daily_recommendation(db, model="gpt-5.4-mini")
 
     # Add a primary goal — signal changes, so cache_key must change.
     db.add(
@@ -336,7 +336,7 @@ async def test_daily_recommendation_cache_invalidates_on_new_goal(db, monkeypatc
     )
     await db.commit()
 
-    second = await insights.get_daily_recommendation(db, model="claude-haiku")
+    second = await insights.get_daily_recommendation(db, model="gpt-5.4-mini")
     assert first.cache_key != second.cache_key
     # Fresh cache key means the LLM is called again (not a cache hit).
     assert second.cached is False
@@ -346,9 +346,9 @@ async def test_daily_recommendation_cache_invalidates_on_new_goal(db, monkeypatc
 async def test_daily_recommendation_cache_invalidates_on_new_rpe(db, monkeypatch):
     await _seed_basic(db)
     stub = _StubProvider(VALID_REC)
-    _install_provider(monkeypatch, {"claude-haiku": stub})
+    _install_provider(monkeypatch, {"gpt-5.4-mini": stub})
 
-    first = await insights.get_daily_recommendation(db, model="claude-haiku")
+    first = await insights.get_daily_recommendation(db, model="gpt-5.4-mini")
 
     # Attach RPE to the seeded activity.
     act = (await db.execute(
@@ -359,7 +359,7 @@ async def test_daily_recommendation_cache_invalidates_on_new_rpe(db, monkeypatch
     )
     await db.commit()
 
-    second = await insights.get_daily_recommendation(db, model="claude-haiku")
+    second = await insights.get_daily_recommendation(db, model="gpt-5.4-mini")
     assert first.cache_key != second.cache_key
     assert second.cached is False
 
@@ -367,9 +367,9 @@ async def test_daily_recommendation_cache_invalidates_on_new_rpe(db, monkeypatch
 async def test_daily_recommendation_cache_invalidates_on_new_feedback(db, monkeypatch):
     await _seed_basic(db)
     stub = _StubProvider(VALID_REC)
-    _install_provider(monkeypatch, {"claude-haiku": stub})
+    _install_provider(monkeypatch, {"gpt-5.4-mini": stub})
 
-    first = await insights.get_daily_recommendation(db, model="claude-haiku")
+    first = await insights.get_daily_recommendation(db, model="gpt-5.4-mini")
 
     db.add(
         RecommendationFeedback(
@@ -380,6 +380,6 @@ async def test_daily_recommendation_cache_invalidates_on_new_feedback(db, monkey
     )
     await db.commit()
 
-    second = await insights.get_daily_recommendation(db, model="claude-haiku")
+    second = await insights.get_daily_recommendation(db, model="gpt-5.4-mini")
     assert first.cache_key != second.cache_key
     assert second.cached is False
