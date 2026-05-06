@@ -106,6 +106,23 @@ function clearRecordDraft() {
   }
 }
 
+function isDraftDirty(draft: InitialRecordDraft): boolean {
+  if (draft.isRunning) return true;
+  if (draft.elapsed > 0) return true;
+  return draft.exercises.some(
+    (ex) =>
+      ex.name.trim() !== "" ||
+      ex.notes.trim() !== "" ||
+      ex.sets.some(
+        (s) =>
+          s.weight !== "" ||
+          s.reps !== "" ||
+          s.rpe !== "" ||
+          s.performed_at != null,
+      ),
+  );
+}
+
 function normalizeExercises(value: unknown[]): ExerciseDraft[] {
   const exercises = value
     .map((item) => normalizeExercise(item))
@@ -250,9 +267,19 @@ export default function Record() {
     fetchStrengthExercises(),
   );
 
+  // Persist only on user-driven transitions, not on the 1Hz `elapsed` tick.
+  // While running, the loader reconstructs `elapsed` from `savedAt` wallclock,
+  // so a stale snapshot is fine; on pause, `isRunning` flips and we re-save
+  // with the freshly-captured `elapsed`. The dirty check skips skeleton drafts
+  // (and clears any prior save) so empty visits don't litter localStorage.
   useEffect(() => {
-    saveRecordDraft({ date, exercises, isRunning, elapsed });
-  }, [date, elapsed, exercises, isRunning]);
+    const draft = { date, exercises, isRunning, elapsed };
+    if (!isDraftDirty(draft)) {
+      clearRecordDraft();
+      return;
+    }
+    saveRecordDraft(draft);
+  }, [date, exercises, isRunning]);
 
   // Workout timer (1 Hz) — runs only while the session is active.
   useEffect(() => {
