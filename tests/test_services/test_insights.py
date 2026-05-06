@@ -93,6 +93,13 @@ def _install_provider(monkeypatch, mapping: dict[str, Any]) -> None:
         return target
 
     monkeypatch.setattr(insights, "get_provider", _factory)
+    # `_call_llm_structured` gates each model on `is_model_configured(key)`
+    # before calling `get_provider`. CI doesn't set provider API keys, so
+    # without patching this the loop would skip every stubbed entry. Treat
+    # any model the test stubs as configured.
+    monkeypatch.setattr(
+        insights, "is_model_configured", lambda key: key in mapping
+    )
 
 
 VALID_REC = {
