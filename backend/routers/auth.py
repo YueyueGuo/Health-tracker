@@ -3,13 +3,15 @@ from __future__ import annotations
 import secrets
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.clients.eight_sleep import _default_env_path, _persist_env_var
 from backend.clients.strava import StravaClient
 from backend.clients.whoop import WhoopClient
 from backend.config import settings
+from backend.database import get_db
 
 router = APIRouter()
 
@@ -48,14 +50,17 @@ async def strava_auth(request: Request):
 
 
 @router.get("/strava/callback")
-async def strava_callback(code: str = Query(...)):
+async def strava_callback(
+    code: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
     """Handle Strava OAuth2 callback."""
-    client = StravaClient()
+    client = StravaClient(db=db)
     try:
         tokens = await client.exchange_code(code)
         return {
             "status": "success",
-            "message": "Strava connected! Add these to your .env file:",
+            "message": "Strava connected. Tokens persisted to oauth_tokens.",
             "access_token": tokens["access_token"],
             "refresh_token": tokens["refresh_token"],
             "expires_at": tokens["expires_at"],
@@ -86,6 +91,7 @@ async def whoop_callback(
     state: str | None = Query(None),
     error: str | None = Query(None),
     error_description: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
 ):
     """Handle Whoop OAuth2 callback.
 
@@ -108,7 +114,7 @@ async def whoop_callback(
     if not code:
         raise HTTPException(status_code=400, detail="Missing ?code parameter")
 
-    client = WhoopClient()
+    client = WhoopClient(db=db)
     try:
         # Must match the redirect_uri used in /whoop exactly, or Whoop's
         # token endpoint returns invalid_grant.

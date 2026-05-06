@@ -7,6 +7,13 @@ from urllib.parse import quote
 
 import httpx
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.clients.eight_sleep import (
+    _default_env_path,
+    _persist_env_var,
+    _read_env_var,
+)
 from backend.config import settings
 
 logger = logging.getLogger(__name__)
@@ -59,9 +66,22 @@ class StravaClient:
     AUTH_URL = "https://www.strava.com/oauth/authorize"
     TOKEN_URL = "https://www.strava.com/oauth/token"
 
-    def __init__(self):
-        self._access_token = settings.strava.access_token
-        self._refresh_token = settings.strava.refresh_token
+    def __init__(self, db: AsyncSession | None = None):
+        # Tokens persist in the database when ``db`` is provided. We seed
+        # in-memory values from .env / settings so the client is usable for
+        # synchronous operations (URL building); the first awaited call
+        # replaces them with DB values via ``_load_tokens_if_needed``.
+        self._db: AsyncSession | None = db
+        self._tokens_loaded: bool = False
+        self._env_path = _default_env_path()
+        self._access_token = (
+            _read_env_var(self._env_path, "STRAVA_ACCESS_TOKEN")
+            or settings.strava.access_token
+        )
+        self._refresh_token = (
+            _read_env_var(self._env_path, "STRAVA_REFRESH_TOKEN")
+            or settings.strava.refresh_token
+        )
         self._client_id = settings.strava.client_id
         self._client_secret = settings.strava.client_secret
         self._token_expires_at: int = 0
@@ -204,9 +224,61 @@ class StravaClient:
         self._access_token = data["access_token"]
         self._refresh_token = data["refresh_token"]
         self._token_expires_at = data["expires_at"]
+        await self._persist_tokens()
+        self._tokens_loaded = True
         return data
 
+    async def _load_tokens_if_needed(self) -> None:
+        """Hydrate tokens from the DB on first call. Bootstrap if absent."""
+        if self._tokens_loaded:
+            return
+        if self._db is None:
+            self._tokens_loaded = True
+            return
+        from backend.services.oauth_tokens import get_tokens, save_tokens
+        row = await get_tokens(self._db, "strava")
+        if row is not None:
+            if row.access_token:
+                self._access_token = row.access_token
+            if row.refresh_token:
+                self._refresh_token = row.refresh_token
+            if row.expires_at is not None:
+                self._token_expires_at = int(row.expires_at.timestamp())
+        elif self._access_token or self._refresh_token:
+            await save_tokens(
+                self._db,
+                "strava",
+                access_token=self._access_token,
+                refresh_token=self._refresh_token,
+                expires_at=None,
+            )
+            logger.info("Bootstrapped Strava tokens into oauth_tokens from env")
+        self._tokens_loaded = True
+
+    async def _persist_tokens(self) -> None:
+        """Write current tokens to the DB and (best-effort) to .env."""
+        if self._db is not None:
+            from datetime import datetime, timezone as _tz
+            from backend.services.oauth_tokens import save_tokens
+            expires_dt = (
+                datetime.fromtimestamp(self._token_expires_at, tz=_tz.utc)
+                if self._token_expires_at
+                else None
+            )
+            await save_tokens(
+                self._db,
+                "strava",
+                access_token=self._access_token,
+                refresh_token=self._refresh_token,
+                expires_at=expires_dt,
+            )
+        if self._access_token:
+            _persist_env_var(self._env_path, "STRAVA_ACCESS_TOKEN", self._access_token)
+        if self._refresh_token:
+            _persist_env_var(self._env_path, "STRAVA_REFRESH_TOKEN", self._refresh_token)
+
     async def _ensure_token(self):
+        await self._load_tokens_if_needed()
         if not self._refresh_token:
             return
         # Always refresh if we don't know the expiry, or if token is about to expire
@@ -226,6 +298,7 @@ class StravaClient:
         self._access_token = data["access_token"]
         self._refresh_token = data["refresh_token"]
         self._token_expires_at = data["expires_at"]
+        await self._persist_tokens()
 
     async def _get(self, path: str, params: dict | None = None) -> dict | list:
         await self._ensure_token()
