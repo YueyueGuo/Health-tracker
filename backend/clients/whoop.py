@@ -25,7 +25,6 @@ from datetime import date, datetime, timezone
 from urllib.parse import quote
 
 import httpx
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.clients.eight_sleep import (
     _default_env_path,
@@ -60,13 +59,14 @@ class WhoopClient:
     # tolerates ~4 req/sec sustained. Self-throttle just in case.
     _MIN_REQUEST_INTERVAL_SEC = 0.25
 
-    def __init__(self, db: AsyncSession | None = None):
-        # Tokens are persisted in the database (durable across restarts) when
-        # ``db`` is provided. We seed the in-memory values from .env / settings
-        # so ``is_enabled`` works synchronously; the first awaited operation
-        # (``_ensure_token``) replaces them with the latest DB values via
-        # ``_load_tokens_if_needed``.
-        self._db: AsyncSession | None = db
+    def __init__(self):
+        # Tokens persist in the ``oauth_tokens`` DB table (durable across
+        # container restarts on Railway). We seed in-memory values from
+        # .env / settings so ``is_enabled`` works synchronously at construct
+        # time; the first awaited operation calls ``_load_tokens_if_needed``
+        # which replaces them with the latest DB values. Token I/O uses an
+        # independent session opened on demand so it never commits the
+        # caller's SyncEngine transaction mid-flight.
         self._tokens_loaded: bool = False
         self._env_path = _default_env_path()
         self._access_token: str | None = (
@@ -134,51 +134,72 @@ class WhoopClient:
         return tokens
 
     async def _load_tokens_if_needed(self) -> None:
-        """On first call, hydrate tokens from the DB (preferred source of truth).
+        """On first call, hydrate tokens from the DB (source of truth).
 
         If the DB row is missing but we have tokens in memory (from
-        .env/settings), bootstrap by writing them to DB. After this method
-        returns, ``self._access_token``/``self._refresh_token`` reflect
-        whatever the DB believes — the durable, restart-safe value.
+        .env/settings), bootstrap by writing them to DB. Uses an
+        independent session so the read/write never disturbs an
+        outer SyncEngine transaction.
         """
         if self._tokens_loaded:
             return
-        if self._db is None:
-            self._tokens_loaded = True
-            return
+        from backend.database import async_session
         from backend.services.oauth_tokens import get_tokens, save_tokens
-        row = await get_tokens(self._db, "whoop")
-        if row is not None:
-            if row.access_token:
-                self._access_token = row.access_token
-            if row.refresh_token:
-                self._refresh_token = row.refresh_token
-            if row.expires_at is not None:
-                self._token_expires_at = row.expires_at.timestamp()
-            self._enabled = self._enabled and bool(self._access_token)
-        elif self._access_token or self._refresh_token:
-            # First-deploy bootstrap: seed DB from env so future loads are clean.
-            await save_tokens(
-                self._db,
-                "whoop",
-                access_token=self._access_token,
-                refresh_token=self._refresh_token,
-                expires_at=None,
-            )
-            logger.info("Bootstrapped Whoop tokens into oauth_tokens from env")
+        async with async_session() as token_db:
+            row = await get_tokens(token_db, "whoop")
+            if row is not None:
+                if row.access_token:
+                    self._access_token = row.access_token
+                if row.refresh_token:
+                    self._refresh_token = row.refresh_token
+                if row.expires_at is not None:
+                    self._token_expires_at = row.expires_at.timestamp()
+            elif self._access_token or self._refresh_token:
+                # First-deploy bootstrap: seed DB from env. Atomic upsert in
+                # save_tokens guards against the concurrent-bootstrap race
+                # (two clients on a fresh deploy both INSERTing the same row).
+                await save_tokens(
+                    token_db,
+                    "whoop",
+                    access_token=self._access_token,
+                    refresh_token=self._refresh_token,
+                    expires_at=None,
+                )
+                logger.info("Bootstrapped Whoop tokens into oauth_tokens from env")
+        # Treat the presence of any usable token as "configured". The
+        # WHOOP_ENABLED env var was the legacy gate; with DB-backed tokens
+        # it can lag (e.g. callback writes tokens to DB but Railway env var
+        # still says false), so trust the tokens when they exist.
+        self._enabled = self._enabled or bool(self._access_token) or bool(self._refresh_token)
         self._tokens_loaded = True
 
+    async def ensure_ready(self) -> bool:
+        """Async equivalent of ``is_enabled`` that performs the lazy DB load.
+
+        Callers that gate on token availability must use this rather than
+        the sync ``is_enabled`` property — the property reflects only the
+        construct-time env state and would skip a Whoop sync on Railway
+        when WHOOP_ENABLED env var is unset but valid tokens sit in DB.
+        """
+        await self._load_tokens_if_needed()
+        return self._enabled and bool(self._access_token)
+
     async def _persist_tokens(self) -> None:
-        """Write current tokens to the DB and (best-effort) to .env."""
-        if self._db is not None:
-            from backend.services.oauth_tokens import save_tokens
-            expires_dt = (
-                datetime.fromtimestamp(self._token_expires_at, tz=timezone.utc)
-                if self._token_expires_at
-                else None
-            )
+        """Write current tokens to the DB and (best-effort) to .env.
+
+        Uses an independent session so a token rotation mid-sync does not
+        commit the caller's SyncEngine work prematurely.
+        """
+        from backend.database import async_session
+        from backend.services.oauth_tokens import save_tokens
+        expires_dt = (
+            datetime.fromtimestamp(self._token_expires_at, tz=timezone.utc)
+            if self._token_expires_at
+            else None
+        )
+        async with async_session() as token_db:
             await save_tokens(
-                self._db,
+                token_db,
                 "whoop",
                 access_token=self._access_token,
                 refresh_token=self._refresh_token,
@@ -218,9 +239,9 @@ class WhoopClient:
         await self._persist_tokens()
 
     async def _ensure_token(self) -> None:
+        await self._load_tokens_if_needed()
         if not self._enabled:
             return
-        await self._load_tokens_if_needed()
         if self._token_expires_at and time.time() < self._token_expires_at - 60:
             return
         if not self._refresh_token:

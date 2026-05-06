@@ -263,7 +263,7 @@ async def get_activity_streams(
 
     # Fetch + cache
     from backend.clients.strava import StravaClient
-    client = StravaClient(db=db)
+    client = StravaClient()
     try:
         streams = await client.get_activity_streams(activity.strava_id)
     except Exception as e:

@@ -24,10 +24,10 @@ def upgrade() -> None:
         sa.Column("provider", sa.String(length=32), primary_key=True),
         sa.Column("access_token", sa.Text(), nullable=True),
         sa.Column("refresh_token", sa.Text(), nullable=True),
-        sa.Column("expires_at", sa.DateTime(), nullable=True),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "updated_at",
-            sa.DateTime(),
+            sa.DateTime(timezone=True),
             server_default=sa.text("CURRENT_TIMESTAMP"),
             nullable=False,
         ),

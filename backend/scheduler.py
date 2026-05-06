@@ -43,7 +43,7 @@ async def _run_strava_enrichment_drain(*, batch: int = 40):
             )
             return
 
-        strava = StravaClient(db=db)
+        strava = StravaClient()
         engine = SyncEngine(db, strava, None, None, None)  # type: ignore[arg-type]
         try:
             count = await engine.drain_strava_enrichment(limit=batch)
@@ -65,9 +65,9 @@ async def _run_sync(source: str = "all"):
     from backend.services.sync import SyncEngine
 
     async with async_session() as db:
-        strava = StravaClient(db=db)
+        strava = StravaClient()
         eight_sleep = EightSleepClient()
-        whoop = WhoopClient(db=db)
+        whoop = WhoopClient()
         weather = get_weather_client()
         engine = SyncEngine(db, strava, eight_sleep, whoop, weather)
 

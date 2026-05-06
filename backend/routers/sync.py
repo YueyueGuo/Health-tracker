@@ -24,9 +24,9 @@ async def trigger_sync(req: SyncRequest, db: AsyncSession = Depends(get_db)):
     from backend.clients.whoop import WhoopClient
     from backend.services.sync import SyncEngine
 
-    strava = StravaClient(db=db)
+    strava = StravaClient()
     eight_sleep = EightSleepClient()
-    whoop = WhoopClient(db=db)
+    whoop = WhoopClient()
     weather = get_weather_client()
 
     engine = SyncEngine(db, strava, eight_sleep, whoop, weather)
@@ -155,11 +155,11 @@ async def debug_db(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/debug/strava-raw")
-async def debug_strava_raw(db: AsyncSession = Depends(get_db)):
+async def debug_strava_raw():
     """Debug: fetch raw Strava data to see what's coming back."""
     from backend.clients.strava import StravaClient
 
-    client = StravaClient(db=db)
+    client = StravaClient()
     try:
         # Test 1: Can we authenticate?
         try:
