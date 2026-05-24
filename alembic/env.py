@@ -1,16 +1,24 @@
 import asyncio
+import os
 from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from backend.database import Base
+from backend.database import Base, _database_url
 from backend.models import *  # noqa: F401, F403 — ensure all models are registered
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+# Mirror runtime URL resolution (DATABASE_URL / DATABASE_PUBLIC_URL → asyncpg)
+# so `alembic upgrade head` works in the Railway container, where alembic.ini's
+# hardcoded sqlite URL is wrong. Gated on the env vars actually being set so
+# tests that pass a custom URL via `Config().set_main_option(...)` still win.
+if os.environ.get("DATABASE_URL") or os.environ.get("DATABASE_PUBLIC_URL"):
+    config.set_main_option("sqlalchemy.url", _database_url())
 
 target_metadata = Base.metadata
 
