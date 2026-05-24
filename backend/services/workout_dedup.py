@@ -126,6 +126,11 @@ async def match_strava_against_apple(
 
     # Join workouts to their backing health_data_points so we can
     # filter on start_time without lazy-loading each parent.
+    # Skip Apple workouts that already point at a Strava activity:
+    # an existing link wins. The alternative (let a new Strava row
+    # steal the orphan when the previous Strava row is gone) would
+    # silently rewrite history — keep the link, surface the orphan
+    # in tooling instead.
     candidates = (
         await db.execute(
             select(Workout, HealthDataPoint)
@@ -134,6 +139,7 @@ async def match_strava_against_apple(
                 HealthDataPoint.data_type == "workout",
                 HealthDataPoint.start_time >= low,
                 HealthDataPoint.start_time <= high,
+                Workout.activity_id.is_(None),
             )
         )
     ).all()

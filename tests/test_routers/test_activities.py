@@ -103,8 +103,14 @@ async def test_list_carries_source_and_external_id(client, db):
 # ── include_superseded filter ──────────────────────────────────────
 
 
-async def test_default_hides_superseded_strava_rows(client, db):
-    """An Apple workout that supersedes a Strava row hides the Strava row by default."""
+async def test_apple_wins_dedup_shows_canonical_apple_row(client, db):
+    """When Apple wins dedup, the canonical Apple row MUST be in the list.
+
+    Previously the Apple query filtered ``activity_id IS NULL`` so the
+    linked Apple workout was hidden while the Strava row was ALSO hidden
+    (``superseded_by_id IS NOT NULL``). The canonical workout vanished.
+    This test fails without the fix because no row is returned.
+    """
     strava = await _seed_strava(db, strava_id=1)
     _, dp = await _seed_apple(db, external_id="a-1", linked_activity_id=strava.id)
     strava.superseded_by_id = dp.id
@@ -113,19 +119,20 @@ async def test_default_hides_superseded_strava_rows(client, db):
     resp = await client.get("/api/activities")
     assert resp.status_code == 200
     body = resp.json()
-    # The Strava row is hidden; we only see (linked) Apple-side data if
-    # surfaced. Since the Apple workout has activity_id set, it's also
-    # hidden from the Apple-only path. So the list is empty here — which
-    # is the right behavior: we showed exactly one canonical row before
-    # dedup, and we show exactly one after (zero in this contrived case
-    # where the linked Apple workout has the back-link set).
-    sources = [r["source"] for r in body]
-    assert "strava" not in sources or all(
-        r["superseded_by_id"] is None for r in body if r["source"] == "strava"
-    )
+
+    # Exactly one canonical row — the Apple workout.
+    assert len(body) == 1
+    canonical = body[0]
+    assert canonical["source"] == "apple_health"
+    assert canonical["external_id"] == "a-1"
+    assert canonical["id"] == dp.id
+    # And the Strava loser is hidden.
+    assert all(r["source"] != "strava" for r in body)
 
 
-async def test_include_superseded_true_returns_them(client, db):
+async def test_include_superseded_returns_both_strava_and_apple(client, db):
+    """``include_superseded=true`` returns the Strava loser AND the
+    canonical Apple winner — two rows for one conceptual workout."""
     strava = await _seed_strava(db, strava_id=1)
     _, dp = await _seed_apple(db, external_id="a-1", linked_activity_id=strava.id)
     strava.superseded_by_id = dp.id
@@ -133,9 +140,35 @@ async def test_include_superseded_true_returns_them(client, db):
 
     resp = await client.get("/api/activities?include_superseded=true")
     body = resp.json()
+
     strava_rows = [r for r in body if r["source"] == "strava"]
+    apple_rows = [r for r in body if r["source"] == "apple_health"]
     assert len(strava_rows) == 1
     assert strava_rows[0]["superseded_by_id"] == dp.id
+    assert len(apple_rows) == 1
+    assert apple_rows[0]["external_id"] == "a-1"
+
+
+async def test_no_duplicate_when_apple_only_and_winner_paths_disjoint(client, db):
+    """Apple-only path (activity_id IS NULL) and Apple-winner path
+    (activity_id IS NOT NULL) are disjoint — no row appears twice."""
+    # Apple-only workout
+    await _seed_apple(
+        db, external_id="apple-only", activity_type="run", linked_activity_id=None
+    )
+    # Apple workout that won dedup
+    strava = await _seed_strava(db, strava_id=2)
+    _, dp = await _seed_apple(
+        db, external_id="apple-winner", linked_activity_id=strava.id
+    )
+    strava.superseded_by_id = dp.id
+    await db.commit()
+
+    resp = await client.get("/api/activities")
+    body = resp.json()
+    external_ids = [r["external_id"] for r in body if r["source"] == "apple_health"]
+    # Exactly two distinct Apple rows, no duplicates.
+    assert sorted(external_ids) == ["apple-only", "apple-winner"]
 
 
 # ── Apple-only workouts surface in the list ────────────────────────

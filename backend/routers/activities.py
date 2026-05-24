@@ -59,12 +59,23 @@ async def list_activities(
 ):
     """List activities with optional filtering.
 
-    Surfaces both Strava ``Activity`` rows and Apple-Health-only
-    ``Workout`` rows (workouts with no Strava back-link) in one list
-    sorted by start time. We do the Strava query + the Apple query
-    separately and merge in Python — the volumes are small and the
-    column shapes differ enough that a UNION would be more code than
-    sort-merge.
+    Surfaces both Strava ``Activity`` rows and Apple Health ``Workout``
+    rows in one merged list sorted by start time. We run two Apple
+    queries (Apple-only + Apple-wins-dedup) so the canonical Apple row
+    never disappears when it has a back-link to a Strava activity that
+    Apple superseded. Volumes are small and the column shapes differ
+    enough that a UNION would be more code than sort-merge.
+
+    Canonical row policy:
+    * Strava rows whose ``superseded_by_id`` is NULL → canonical Strava.
+    * Apple workouts with ``activity_id`` NULL → canonical Apple-only.
+    * Apple workouts with ``activity_id`` set AND the linked Strava
+      row's ``superseded_by_id`` is non-NULL → canonical Apple (Apple
+      won the dedup).
+    With ``include_superseded=True`` we also surface superseded Strava
+    rows (the "losers"); the linked Apple winners still appear, so
+    callers will see two rows for the same conceptual workout — that's
+    intentional for the debug-style view.
     """
     from datetime import timedelta
 
@@ -82,13 +93,14 @@ async def list_activities(
     activities = (await db.execute(query)).scalars().all()
     strava_rows = [_activity_summary(a) for a in activities]
 
-    # ── Apple-only workouts (workouts with no activity_id back-link) ─
+    # ── Apple workouts ──────────────────────────────────────────────
     # When the caller passes a ``sport_type`` filter we skip Apple rows
     # entirely — Apple's ``activity_type`` taxonomy is the normalized
     # one, not Strava's, so the filter wouldn't be meaningful here.
     apple_rows: list[dict] = []
     if not sport_type:
-        apple_q = (
+        # 1) Apple-only workouts (no Strava back-link). Always canonical.
+        apple_only_q = (
             select(Workout, HealthDataPoint)
             .join(HealthDataPoint, Workout.id == HealthDataPoint.id)
             .where(
@@ -100,7 +112,30 @@ async def list_activities(
             .order_by(HealthDataPoint.start_time.desc())
             .limit(limit + offset)
         )
-        for workout, dp in (await db.execute(apple_q)).all():
+        for workout, dp in (await db.execute(apple_only_q)).all():
+            apple_rows.append(_apple_workout_summary(workout, dp))
+
+        # 2) Apple workouts that WON dedup over a linked Strava activity.
+        # The linked Activity's superseded_by_id is non-NULL → Apple is
+        # canonical. These would otherwise be hidden by the
+        # ``activity_id IS NULL`` filter above AND by the Strava query's
+        # default ``superseded_by_id IS NULL`` filter — so the canonical
+        # workout would vanish entirely. This branch restores it.
+        apple_winner_q = (
+            select(Workout, HealthDataPoint)
+            .join(HealthDataPoint, Workout.id == HealthDataPoint.id)
+            .join(Activity, Workout.activity_id == Activity.id)
+            .where(
+                HealthDataPoint.data_type == "workout",
+                HealthDataPoint.source == "apple_health",
+                HealthDataPoint.start_time >= cutoff,
+                Workout.activity_id.is_not(None),
+                Activity.superseded_by_id.is_not(None),
+            )
+            .order_by(HealthDataPoint.start_time.desc())
+            .limit(limit + offset)
+        )
+        for workout, dp in (await db.execute(apple_winner_q)).all():
             apple_rows.append(_apple_workout_summary(workout, dp))
 
     # Merge + sort by start_date, then page in Python.
@@ -413,7 +448,16 @@ def _apple_workout_summary(workout: Workout, dp: HealthDataPoint) -> dict:
         "device_watts": None,
         "workout_type": None,
         "available_zones": None,
-        "enrichment_status": "complete",
+        # Apple-Health-sourced rows are never "enriched" through the
+        # Strava Phase-B path; surfacing ``"complete"`` here was
+        # misleading (the field implies Strava-side enrichment state).
+        # Frontend currently renders the value as a pill when it isn't
+        # ``"complete"`` — ``"apple_health"`` is a meaningful label and
+        # doesn't break the existing ``string`` typing in
+        # ``frontend/src/api/activities.ts``. If we ever turn that field
+        # into a strict enum, add ``"apple_health"`` as a documented
+        # variant alongside the existing Strava enrichment states.
+        "enrichment_status": "apple_health",
         "enriched_at": None,
         "classification_type": None,
         "classification_flags": None,

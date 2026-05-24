@@ -196,3 +196,205 @@ async def test_strava_dedup_ignores_non_workout_data_points(db):
     strava = await _seed_strava(db, sport_type="Run", start=start)
     matched = await workout_dedup.match_strava_against_apple(db, strava)
     assert matched is None
+
+
+async def test_strava_dedup_skips_already_linked_apple_workout(db):
+    """A new Strava row must NOT steal an Apple workout that is
+    already linked to a prior Strava activity. Even if the prior
+    Strava activity has since been deleted (orphan link), the existing
+    link wins — we don't silently re-point canonical mappings.
+    """
+    start = datetime(2026, 5, 24, 13, 14, 0)
+    # First Strava activity that the Apple workout was linked to.
+    strava_a = await _seed_strava(db, sport_type="Run", start=start, strava_id=1)
+    workout, dp = await _seed_apple(db, activity_type="run", start=start)
+    # Simulate the prior dedup: Apple is canonical, Strava-A lost.
+    workout.activity_id = strava_a.id
+    strava_a.superseded_by_id = dp.id
+    await db.commit()
+
+    # New Strava-B arrives in the same window.
+    strava_b = await _seed_strava(
+        db,
+        sport_type="Run",
+        start=start + timedelta(minutes=1),
+        strava_id=2,
+    )
+
+    matched = await workout_dedup.match_strava_against_apple(db, strava_b)
+    assert matched is None  # The already-linked Apple is not stolen.
+    await db.refresh(strava_b)
+    await db.refresh(workout)
+    assert strava_b.superseded_by_id is None
+    # Existing link is preserved.
+    assert workout.activity_id == strava_a.id
+
+
+async def test_strava_dedup_orphan_link_not_reclaimed(db):
+    """Variant of the above: even if the previously-linked Strava
+    activity is no longer in the DB (orphan ``activity_id``), the
+    existing link still wins. Document the safety choice.
+    """
+    start = datetime(2026, 5, 24, 13, 14, 0)
+    workout, _ = await _seed_apple(db, activity_type="run", start=start)
+    # Manually set an orphan activity_id (no matching Activity row).
+    workout.activity_id = 9999
+    await db.commit()
+
+    strava_b = await _seed_strava(
+        db, sport_type="Run", start=start, strava_id=42
+    )
+    matched = await workout_dedup.match_strava_against_apple(db, strava_b)
+    assert matched is None
+    await db.refresh(workout)
+    assert workout.activity_id == 9999  # orphan link preserved
+
+
+# ── ±10-min window boundary semantics ──────────────────────────────
+
+
+async def test_apple_dedup_matches_at_exactly_plus_10_minutes(db):
+    """Δ = +10:00 must match (inclusive boundary)."""
+    start = datetime(2026, 5, 24, 13, 14, 0)
+    strava = await _seed_strava(
+        db, sport_type="Run", start=start, strava_id=101
+    )
+    workout, _ = await _seed_apple(
+        db,
+        activity_type="run",
+        start=start + timedelta(minutes=10),
+        external_id="apple-plus-10",
+    )
+    matched = await workout_dedup.match_apple_against_strava(db, workout)
+    assert matched is not None
+    assert matched.id == strava.id
+
+
+async def test_apple_dedup_matches_at_exactly_minus_10_minutes(db):
+    """Δ = -10:00 must match (inclusive boundary)."""
+    start = datetime(2026, 5, 24, 13, 14, 0)
+    strava = await _seed_strava(
+        db, sport_type="Run", start=start, strava_id=102
+    )
+    workout, _ = await _seed_apple(
+        db,
+        activity_type="run",
+        start=start - timedelta(minutes=10),
+        external_id="apple-minus-10",
+    )
+    matched = await workout_dedup.match_apple_against_strava(db, workout)
+    assert matched is not None
+    assert matched.id == strava.id
+
+
+async def test_apple_dedup_skips_at_plus_10_minutes_and_one_second(db):
+    """Δ = +10:01 must NOT match (just outside boundary)."""
+    start = datetime(2026, 5, 24, 13, 14, 0)
+    strava = await _seed_strava(
+        db, sport_type="Run", start=start, strava_id=103
+    )
+    workout, _ = await _seed_apple(
+        db,
+        activity_type="run",
+        start=start + timedelta(minutes=10, seconds=1),
+        external_id="apple-plus-10-01",
+    )
+    matched = await workout_dedup.match_apple_against_strava(db, workout)
+    assert matched is None
+    await db.refresh(strava)
+    assert strava.superseded_by_id is None
+
+
+async def test_apple_dedup_skips_at_minus_10_minutes_and_one_second(db):
+    """Δ = -10:01 must NOT match (just outside boundary)."""
+    start = datetime(2026, 5, 24, 13, 14, 0)
+    strava = await _seed_strava(
+        db, sport_type="Run", start=start, strava_id=104
+    )
+    workout, _ = await _seed_apple(
+        db,
+        activity_type="run",
+        start=start - timedelta(minutes=10, seconds=1),
+        external_id="apple-minus-10-01",
+    )
+    matched = await workout_dedup.match_apple_against_strava(db, workout)
+    assert matched is None
+    await db.refresh(strava)
+    assert strava.superseded_by_id is None
+
+
+async def test_strava_dedup_matches_at_exactly_plus_10_minutes(db):
+    """Symmetric boundary check on the Strava → Apple direction."""
+    start = datetime(2026, 5, 24, 13, 14, 0)
+    workout, _ = await _seed_apple(
+        db,
+        activity_type="run",
+        start=start,
+        external_id="apple-sym-plus10",
+    )
+    strava = await _seed_strava(
+        db,
+        sport_type="Run",
+        start=start + timedelta(minutes=10),
+        strava_id=201,
+    )
+    matched = await workout_dedup.match_strava_against_apple(db, strava)
+    assert matched is not None
+    assert matched.id == workout.id
+
+
+async def test_strava_dedup_matches_at_exactly_minus_10_minutes(db):
+    start = datetime(2026, 5, 24, 13, 14, 0)
+    workout, _ = await _seed_apple(
+        db,
+        activity_type="run",
+        start=start,
+        external_id="apple-sym-minus10",
+    )
+    strava = await _seed_strava(
+        db,
+        sport_type="Run",
+        start=start - timedelta(minutes=10),
+        strava_id=202,
+    )
+    matched = await workout_dedup.match_strava_against_apple(db, strava)
+    assert matched is not None
+    assert matched.id == workout.id
+
+
+async def test_strava_dedup_skips_at_plus_10_minutes_and_one_second(db):
+    start = datetime(2026, 5, 24, 13, 14, 0)
+    await _seed_apple(
+        db,
+        activity_type="run",
+        start=start,
+        external_id="apple-sym-plus10-01",
+    )
+    strava = await _seed_strava(
+        db,
+        sport_type="Run",
+        start=start + timedelta(minutes=10, seconds=1),
+        strava_id=203,
+    )
+    matched = await workout_dedup.match_strava_against_apple(db, strava)
+    assert matched is None
+    assert strava.superseded_by_id is None
+
+
+async def test_strava_dedup_skips_at_minus_10_minutes_and_one_second(db):
+    start = datetime(2026, 5, 24, 13, 14, 0)
+    await _seed_apple(
+        db,
+        activity_type="run",
+        start=start,
+        external_id="apple-sym-minus10-01",
+    )
+    strava = await _seed_strava(
+        db,
+        sport_type="Run",
+        start=start - timedelta(minutes=10, seconds=1),
+        strava_id=204,
+    )
+    matched = await workout_dedup.match_strava_against_apple(db, strava)
+    assert matched is None
+    assert strava.superseded_by_id is None
