@@ -56,3 +56,7 @@ htmlcov/
 # Logs
 *.log
 .gstack/
+
+# QA agent temp files
+scripts/_qa_*
+/tmp/qa/
