@@ -25,7 +25,8 @@ something is genuinely ambiguous or a hard limit is hit (3 test loops,
 | `backend-engineer` | FastAPI / SQLAlchemy / services / clients + tests. | No | Phase 2 (parallel) |
 | `frontend-engineer` | React 19 / Vite / TS / Tailwind + typecheck/build. | No | Phase 2 (parallel) |
 | `test-runner` | Runs ruff + pytest + npm typecheck + npm build; routes failures. | Yes | Verify |
-| `code-reviewer` | Reviews branch diff against the plan. | Yes | Review |
+| `qa-verifier` | Boots backend + frontend, drives golden-path scenarios via Playwright, captures screenshots. Mocks external APIs at the client boundary. | Yes | Review (parallel with code-reviewer) |
+| `code-reviewer` | Reviews branch diff against the plan. | Yes | Review (parallel with qa-verifier) |
 | `architecture-auditor` | Standalone read-only repo audit (pre-existing). | Yes | Ad hoc |
 
 ## Parallelism
@@ -37,9 +38,11 @@ multiple `Agent` tool uses**. Real parallelism points:
   the plan calls for both).
 - **Phase 2**: `backend-engineer` ∥ `frontend-engineer` (whenever the
   plan touches both surfaces).
+- **Review**: `code-reviewer` ∥ `qa-verifier` (whenever the change
+  touches user-visible behavior — see `/feature` Step 5 for the rule).
 
-Sequential by design: planner → phase 1 → phase 2 → tests → review →
-PR → subscribe.
+Sequential by design: planner → phase 1 → phase 2 → tests →
+review+QA → PR → subscribe.
 
 ## Adding a new agent
 

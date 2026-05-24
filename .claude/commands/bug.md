@@ -39,12 +39,20 @@ Commit each agent's changes separately: `fix(backend): ...`,
 Spawn `test-runner`. Loop up to 3 times on failure (same rules as
 `/feature` Step 4).
 
-### Step 4 — Review
-Spawn `code-reviewer`. Pass the diagnosis. Reviewer should especially
-confirm the regression test exists and exercises the fixed path.
-On `REQUEST_CHANGES`: route by the `Owner:` tag on each finding,
-spawn owners **in parallel** in a single message, re-review. Loop up
-to 2 times.
+### Step 4 — Review and QA (parallel)
+Spawn both agents **in a single message** with two Agent tool uses:
+- `code-reviewer` — always. Pass the diagnosis. Reviewer should
+  confirm the regression test exists and exercises the fixed path.
+- `qa-verifier` — **only if** the bug had user-visible symptoms
+  (broken page, wrong data on dashboard, save flow failing, etc.).
+  Skip QA for non-user-visible bugs (a scheduler logging bug, an
+  internal data-migration drift). Pass the diagnosis so QA targets
+  the exact failing scenario the user reported.
+
+Merge findings, route by the `Owner:` tag. On `REQUEST_CHANGES` /
+`FAIL`: spawn owners **in parallel** in a single message, re-run
+both reviewer and (if applicable) QA. Loop up to 2 times across
+review+QA combined.
 
 ### Step 5 — Push and open PR
 - `git push -u origin <branch>`.

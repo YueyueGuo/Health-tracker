@@ -55,15 +55,24 @@ Spawn `test-runner`. If it reports failures:
 - Loop up to **3** times. If still failing after 3 rounds, stop and
   surface to the user with a clear summary of what's stuck.
 
-### Step 5 — Review
-Spawn `code-reviewer`. If verdict is:
-- `APPROVE` → continue.
-- `REQUEST_CHANGES` → route by the `Owner:` tag on each must-fix.
-  Group findings by owner. Spawn the owners **in parallel** in a
-  single message (e.g. backend-engineer + frontend-engineer concurrently
-  if both have findings). Pass each agent only its own findings.
-  Re-run `code-reviewer` after the fixes land. Loop up to **2** times.
-- `BLOCK` → stop and surface to the user.
+### Step 5 — Review and QA (parallel)
+Spawn both agents **in a single message** with two Agent tool uses:
+- `code-reviewer` — always.
+- `qa-verifier` — **only if** the plan touches user-visible behavior:
+  any change under `frontend/`, any new/changed router under
+  `backend/routers/`, any sync that updates dashboard data, or the
+  plan's "Affected surfaces" explicitly lists a user-facing surface.
+  Skip QA for pure refactors, infra-only changes, or migration-only
+  PRs.
+
+Merge findings from both into one list, deduplicate by `Files:`, then
+route by the `Owner:` tag:
+- `APPROVE` + `PASS` (or QA skipped) → continue to Step 6.
+- Any `REQUEST_CHANGES` / `FAIL` → group findings by owner, spawn
+  owners **in parallel** in a single message (each gets only its own
+  findings), then re-run **both** reviewer and (if applicable) QA.
+  Loop up to **2** times across review+QA combined.
+- `BLOCK` from either → stop and surface to the user.
 
 ### Step 6 — Push and open PR
 - Stage any final fixes, commit, push: `git push -u origin <branch>`.
