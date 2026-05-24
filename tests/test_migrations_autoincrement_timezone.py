@@ -153,6 +153,17 @@ async def _drop_all_objects(engine) -> None:
 
     Drops every table in the public schema. Safer than DROP SCHEMA
     because we don't need to re-grant privileges on the CI role.
+
+    .. warning::
+        This mutates shared Postgres state on ``TEST_POSTGRES_URL``.
+        Safe under default pytest execution because modules run
+        sequentially, but it MUST NOT run concurrently with other
+        Postgres-touching modules (notably
+        ``tests/test_database_postgres.py``'s ``pg_engine`` fixture,
+        which drops ``strength_sets`` against the same URL). If
+        ``pytest-xdist`` is ever introduced, this module needs its own
+        per-worker schema (``SET search_path TO test_migrations_<pid>``)
+        before any DROP.
     """
     async with engine.begin() as conn:
         await conn.execute(

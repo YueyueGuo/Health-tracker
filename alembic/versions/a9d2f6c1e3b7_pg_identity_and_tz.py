@@ -38,6 +38,7 @@ idempotent: re-running the upgrade is safe.
 """
 from __future__ import annotations
 
+import re
 from typing import Sequence, Union
 
 from alembic import op
@@ -47,6 +48,24 @@ revision: str = "a9d2f6c1e3b7"
 down_revision: Union[str, None] = "f9c2e1a45b80"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
+
+
+# Strict SQL-identifier shape. Names that don't match raise at import
+# time, which guards the f-string interpolation in the DO blocks below
+# against a name that contains a quote, semicolon, or other character
+# that would break out of the surrounding PL/pgSQL string literal.
+# The inner ``format('%I', ...)`` already quotes for identifier safety
+# at the actual DDL site; this is defence-in-depth for the outer
+# information_schema string-comparison interpolation.
+_SAFE_IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def _assert_safe_identifier(name: str) -> None:
+    if not _SAFE_IDENT.match(name):
+        raise ValueError(
+            f"unsafe identifier in migration constants: {name!r}; "
+            "must match [a-z_][a-z0-9_]*"
+        )
 
 
 # 14 tables that `scripts/fix_id_autoincrement.py --apply` patched on
@@ -99,6 +118,17 @@ TIMEZONE_COLUMNS: dict[str, tuple[str, ...]] = {
 }
 
 
+# Validate every identifier the DO blocks below splice into PL/pgSQL.
+# If a future edit adds a quote-containing name to either constant,
+# alembic will fail to import this module rather than emit broken SQL.
+for _tbl in IDENTITY_TABLES:
+    _assert_safe_identifier(_tbl)
+for _tbl, _cols in TIMEZONE_COLUMNS.items():
+    _assert_safe_identifier(_tbl)
+    for _col in _cols:
+        _assert_safe_identifier(_col)
+
+
 def _is_postgres() -> bool:
     bind = op.get_bind()
     return bind.dialect.name == "postgresql"
@@ -112,6 +142,19 @@ def _add_identity(table: str) -> None:
     starting value is computed at migration time from ``MAX(id)+1`` so
     existing rows aren't disturbed; for an empty table the sequence
     starts at 1.
+
+    .. warning::
+        The ``MAX(id)+1`` read and the ``ALTER COLUMN ... ADD GENERATED
+        ... START WITH ...`` happen in separate statements inside the
+        DO block. If the application is still serving traffic during
+        ``alembic upgrade`` and an INSERT lands between the two, the
+        sequence can start at or below the max id and subsequent
+        identity-driven INSERTs will collide. This migration therefore
+        **requires a brief deploy downtime** — drain in-flight writes,
+        then run ``alembic upgrade head``. The Railway single-instance
+        deploy model already serializes around restart so this is the
+        default; the note exists so a future multi-instance / blue-green
+        deploy doesn't silently regress.
     """
     op.execute(
         f"""
