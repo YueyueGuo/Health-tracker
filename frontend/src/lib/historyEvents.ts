@@ -52,20 +52,27 @@ export const FILTERS: { id: FilterId; label: string }[] = [
   { id: "Strength", label: "Strength" },
 ];
 
+// Strava arrives in CamelCase (`Run`, `TrailRun`, `Ride`, `WeightTraining`).
+// Apple Health-only workouts arrive normalized lowercase (`run`, `ride`,
+// `walk`, `hike`, `strength`, …) from the backend's `sport_mapping` layer.
+// We accept both casings so an Apple-only workout still renders with the
+// right icon + metric labels.
 const RIDE_SPORTS = new Set([
   "Ride",
   "VirtualRide",
   "EBikeRide",
   "MountainBikeRide",
   "GravelRide",
+  "ride",
 ]);
-const RUN_SPORTS = new Set(["Run", "VirtualRun", "TrailRun"]);
-const HIKE_SPORTS = new Set(["Hike"]);
-const WALK_SPORTS = new Set(["Walk"]);
+const RUN_SPORTS = new Set(["Run", "VirtualRun", "TrailRun", "run"]);
+const HIKE_SPORTS = new Set(["Hike", "hike"]);
+const WALK_SPORTS = new Set(["Walk", "walk"]);
+const STRENGTH_SPORTS = new Set(["WeightTraining", "strength"]);
 
 export function classifyActivity(sport_type: string | null): EventType {
   if (!sport_type) return "Other";
-  if (sport_type === "WeightTraining") return "Strength";
+  if (STRENGTH_SPORTS.has(sport_type)) return "Strength";
   if (RIDE_SPORTS.has(sport_type)) return "Ride";
   if (RUN_SPORTS.has(sport_type)) return "Run";
   if (HIKE_SPORTS.has(sport_type)) return "Hike";
@@ -147,6 +154,12 @@ function activityToEvent(a: ActivitySummary): HistoryEvent {
       metrics.push({ label: "RE", value: Math.round(a.suffer_score).toString() });
     }
   }
+  // v1: Apple-only workouts have no backend detail endpoint — they use
+  // `health_data_points.id` and the `/activities/:id` route queries the
+  // Strava `activities` table, which would 404. Skip the click target
+  // entirely for these rows. A dedicated Apple-workout detail page is a
+  // planned follow-up.
+  const isAppleOnly = a.source === "apple_health";
   return {
     id: `activity-${a.id}`,
     category: "Workout",
@@ -154,7 +167,7 @@ function activityToEvent(a: ActivitySummary): HistoryEvent {
     title: a.name,
     timestamp: ts,
     metrics,
-    navigateTo: `/activities/${a.id}`,
+    navigateTo: isAppleOnly ? null : `/activities/${a.id}`,
     sourceBadge: activitySourceToBadge(a.source),
   };
 }

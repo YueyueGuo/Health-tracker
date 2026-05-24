@@ -49,4 +49,33 @@ describe("HistoryEventCard", () => {
     expect(screen.getByRole("heading", { name: "Trail Run" })).toBeInTheDocument();
     expect(screen.getByTestId("source-badge-strava")).toBeInTheDocument();
   });
+
+  it("renders a clickable button when an onClick is provided", () => {
+    render(
+      <HistoryEventCard
+        event={makeEvent({ title: "Strava Run", navigateTo: "/activities/1" })}
+        onClick={() => {}}
+      />
+    );
+    expect(
+      screen.getByRole("button", { name: "Open Strava Run" })
+    ).toBeInTheDocument();
+  });
+
+  it("renders no clickable container for Apple-only workouts (no onClick)", () => {
+    // Mirrors the wiring in History.tsx: when `navigateTo` is null, the
+    // page does not pass an `onClick`. The card must then render as a
+    // non-interactive container — no button role.
+    render(
+      <HistoryEventCard
+        event={makeEvent({
+          title: "Apple Run",
+          sourceBadge: "apple",
+          navigateTo: null,
+        })}
+      />
+    );
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Apple Run" })).toBeInTheDocument();
+  });
 });

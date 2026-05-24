@@ -19,6 +19,7 @@ export interface ActivitySummary {
   sport_type: string;
   source?: ActivitySource | null;
   external_id?: string | null;
+  superseded_by_id?: number | null;
   start_date: string | null;
   start_date_local: string | null;
   elapsed_time: number | null;

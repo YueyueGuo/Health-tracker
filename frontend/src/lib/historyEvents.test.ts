@@ -91,14 +91,140 @@ function makeStrength(over: Partial<StrengthSession> = {}): StrengthSession {
 }
 
 describe("classifyActivity", () => {
-  it("maps known sport types", () => {
+  it("maps known Strava CamelCase sport types", () => {
     expect(classifyActivity("Ride")).toBe("Ride");
     expect(classifyActivity("EBikeRide")).toBe("Ride");
     expect(classifyActivity("Run")).toBe("Run");
+    expect(classifyActivity("TrailRun")).toBe("Run");
     expect(classifyActivity("WeightTraining")).toBe("Strength");
     expect(classifyActivity("Hike")).toBe("Hike");
+    expect(classifyActivity("Walk")).toBe("Walk");
     expect(classifyActivity("Yoga")).toBe("Other");
     expect(classifyActivity(null)).toBe("Other");
+  });
+
+  it("maps Apple Health normalized lowercase sport types", () => {
+    // These are the normalized values emitted by the backend's
+    // sport_mapping layer for Apple-only workouts.
+    expect(classifyActivity("run")).toBe("Run");
+    expect(classifyActivity("ride")).toBe("Ride");
+    expect(classifyActivity("walk")).toBe("Walk");
+    expect(classifyActivity("hike")).toBe("Hike");
+    expect(classifyActivity("strength")).toBe("Strength");
+  });
+
+  it("falls back to Other for normalized types without a dedicated icon", () => {
+    expect(classifyActivity("swim")).toBe("Other");
+    expect(classifyActivity("yoga")).toBe("Other");
+    expect(classifyActivity("hiit")).toBe("Other");
+    expect(classifyActivity("elliptical")).toBe("Other");
+    expect(classifyActivity("row")).toBe("Other");
+  });
+});
+
+describe("activityToEvent (via buildHistoryEvents)", () => {
+  it("renders Apple-only run with Distance/Pace metrics", () => {
+    const events = buildHistoryEvents(
+      [
+        makeActivity({
+          id: 7,
+          sport_type: "run",
+          source: "apple_health",
+          name: "Morning Run",
+        }),
+      ],
+      [],
+      []
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("Run");
+    const labels = events[0].metrics.map((m) => m.label);
+    expect(labels).toContain("Distance");
+    expect(labels).toContain("Pace");
+    expect(labels).toContain("Time");
+  });
+
+  it("renders Apple-only ride with Distance/TSS metrics", () => {
+    const events = buildHistoryEvents(
+      [
+        makeActivity({
+          id: 8,
+          sport_type: "ride",
+          source: "apple_health",
+          name: "Bike Commute",
+        }),
+      ],
+      [],
+      []
+    );
+    expect(events[0].type).toBe("Ride");
+    const labels = events[0].metrics.map((m) => m.label);
+    expect(labels).toContain("Distance");
+    expect(labels).toContain("TSS");
+  });
+
+  it("renders Apple-only strength as Strength type", () => {
+    const events = buildHistoryEvents(
+      [
+        makeActivity({
+          id: 9,
+          sport_type: "strength",
+          source: "apple_health",
+          name: "Strength",
+        }),
+      ],
+      [],
+      []
+    );
+    expect(events[0].type).toBe("Strength");
+  });
+
+  it("omits navigateTo for Apple-only workouts (v1: no detail endpoint)", () => {
+    const events = buildHistoryEvents(
+      [
+        makeActivity({
+          id: 5,
+          sport_type: "run",
+          source: "apple_health",
+          name: "Apple Run",
+        }),
+      ],
+      [],
+      []
+    );
+    expect(events[0].navigateTo).toBeNull();
+  });
+
+  it("keeps navigateTo for Strava-sourced workouts", () => {
+    const events = buildHistoryEvents(
+      [
+        makeActivity({
+          id: 11,
+          sport_type: "Run",
+          source: "strava",
+          name: "Strava Run",
+        }),
+      ],
+      [],
+      []
+    );
+    expect(events[0].navigateTo).toBe("/activities/11");
+  });
+
+  it("keeps navigateTo for legacy rows with no source set", () => {
+    const events = buildHistoryEvents(
+      [
+        makeActivity({
+          id: 12,
+          sport_type: "Run",
+          source: null,
+          name: "Legacy Run",
+        }),
+      ],
+      [],
+      []
+    );
+    expect(events[0].navigateTo).toBe("/activities/12");
   });
 });
 
