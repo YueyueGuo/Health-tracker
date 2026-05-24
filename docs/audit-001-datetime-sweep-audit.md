@@ -142,6 +142,20 @@ correctness pass (attaching the user's *real* local tz so Eight Sleep's
 DB-stored timestamps display correctly in tz-aware tooling) is a
 separate concern called out in **Follow-ups**.
 
+> **Scope honesty.** For Eight Sleep specifically, the values coming out
+> of `_extract_fields` represent naive *local* wall-clock — yet this PR
+> labels them as UTC. That preserves the on-disk numeric value
+> Postgres has been storing all along (because asyncpg has been
+> implicitly tagging naive-local writes as UTC for the entire history
+> of the `timestamptz` column), but it does **not** fix the semantic
+> contract — a downstream consumer that does tz math on `bed_time`
+> will read "23:00 UTC" when the user actually went to bed at "23:00
+> local", and will be off by the user's UTC offset. This PR chose
+> "preserve observed Postgres value" over "fix the semantic
+> contract"; the real correctness fix (attach the user's actual
+> resolved `ZoneInfo`) is deferred to **Follow-up #3** and gated on
+> `W1-eightsleep-tokens`.
+
 ---
 
 ### `StrengthSet.performed_at` — fixed at call sites

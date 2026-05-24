@@ -10,14 +10,18 @@ columns the sweep marked tz-aware:
 * ``backend.services.whoop_sync._parse_dt`` — now returns tz-aware UTC
   rather than naive-UTC so ``WhoopWorkout.start`` /``end`` and
   ``SleepSession.bed_time``/``wake_time`` writes carry tzinfo.
+* ``backend.services.eight_sleep_sync._attach_utc_to_sleep_times`` —
+  attaches UTC tzinfo to naive ``bed_time`` / ``wake_time`` fields
+  produced by ``_extract_fields``.
 
 See ``docs/audit-001-datetime-sweep-audit.md``.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from backend.routers.strength import _normalize_performed_at
+from backend.services.eight_sleep_sync import _attach_utc_to_sleep_times
 from backend.services.whoop_sync import _parse_dt
 
 
@@ -36,8 +40,58 @@ def test_normalize_performed_at_passes_through_tz_aware():
     assert out is aware
 
 
+def test_normalize_performed_at_passes_through_non_utc_offset():
+    """A frontend that ever sends offset-aware ISO (e.g. ``-07:00``) must
+    be passed through unchanged so the original instant is preserved."""
+    pacific = timezone(timedelta(hours=-7))
+    aware = datetime(2026, 5, 1, 18, 30, 0, tzinfo=pacific)
+    out = _normalize_performed_at(aware)
+    assert out is aware
+    assert out.tzinfo is pacific
+    # Same instant as 01:30 UTC the next day — the helper must not
+    # silently relabel it as UTC.
+    assert out.astimezone(timezone.utc) == datetime(
+        2026, 5, 2, 1, 30, 0, tzinfo=timezone.utc
+    )
+
+
 def test_normalize_performed_at_handles_none():
     assert _normalize_performed_at(None) is None
+
+
+def test_attach_utc_to_sleep_times_tags_naive_in_place():
+    naive_bed = datetime(2026, 5, 1, 23, 15)
+    naive_wake = datetime(2026, 5, 2, 7, 5)
+    fields = {"bed_time": naive_bed, "wake_time": naive_wake, "total_sleep_sec": 28200}
+
+    out = _attach_utc_to_sleep_times(fields)
+
+    assert out is fields  # In-place + return for convenience.
+    assert out["bed_time"].tzinfo is timezone.utc
+    assert out["wake_time"].tzinfo is timezone.utc
+    # Wall-clock value preserved.
+    assert out["bed_time"].replace(tzinfo=None) == naive_bed
+    assert out["wake_time"].replace(tzinfo=None) == naive_wake
+    # Other fields untouched.
+    assert out["total_sleep_sec"] == 28200
+
+
+def test_attach_utc_to_sleep_times_passes_through_already_aware():
+    aware = datetime(2026, 5, 1, 23, 15, tzinfo=timezone.utc)
+    fields = {"bed_time": aware, "wake_time": None}
+
+    out = _attach_utc_to_sleep_times(fields)
+
+    assert out["bed_time"] is aware
+    assert out["wake_time"] is None
+
+
+def test_attach_utc_to_sleep_times_handles_missing_keys():
+    """``_extract_fields`` may omit ``bed_time`` / ``wake_time`` on
+    nights with no interval payload — the helper must not raise."""
+    fields = {"total_sleep_sec": 0}
+    out = _attach_utc_to_sleep_times(fields)
+    assert out == {"total_sleep_sec": 0}
 
 
 def test_whoop_parse_dt_returns_tz_aware_utc():
