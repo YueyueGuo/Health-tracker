@@ -6,7 +6,7 @@ from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from backend.database import Base, _database_url
+from backend.database import Base, _database_url  # _database_url is intentionally imported here so migrations resolve the URL the same way the app does
 from backend.models import *  # noqa: F401, F403 — ensure all models are registered
 
 config = context.config

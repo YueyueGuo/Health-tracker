@@ -1,16 +1,22 @@
--- Offline alembic upgrade: d4f1a8b62c70 -> 37d57cfdb27d
+-- ARCHIVAL — NOT applied to production as written.
+--
+-- When this file was generated, the plan was to apply the full
+-- d4f1a8b62c70 -> 37d57cfdb27d upgrade against Railway. In practice,
+-- production was in a partial state: `Base.metadata.create_all()` had
+-- silently created the new tables on app boot (user_profile, oauth_tokens,
+-- health_data_points, workouts, workout_laps) while leaving the activities
+-- column adds missing. The full script below would have erred on every
+-- `CREATE TABLE` for an already-existing table.
+--
+-- The actual production patch was the hand-written delta in
+-- docs/bugs/apple-health-prod-migration.md (3 column adds on activities +
+-- index + 2 backfills + alembic_version stamp), applied 2026-05-24.
+--
+-- This file is kept as an archival reference of what the offline
+-- `alembic upgrade d4f1a8b62c70:37d57cfdb27d --sql` would have produced
+-- against a clean d4f1a8b62c70 schema. Do NOT re-run it as-is.
+--
 -- Generated 2026-05-24 from `alembic upgrade d4f1a8b62c70:37d57cfdb27d --sql`.
--- See docs/bugs/apple-health-prod-migration.md for context.
---
--- Apply with:
---   psql "$RAILWAY_URL" -f scripts/migrations/2026-05-24-apple-health-upgrade.sql
---
--- Before applying, verify prod is actually at d4f1a8b62c70:
---   psql "$RAILWAY_URL" -c "SELECT version_num FROM alembic_version;"
---   psql "$RAILWAY_URL" -c "\d activities"      -- should NOT contain `source`
---   psql "$RAILWAY_URL" -c "\dt user_profile"   -- should be empty / not exist
--- If columns or tables in this script already exist, do NOT run this file —
--- inspect the actual schema and apply only the missing pieces.
 
 BEGIN;
 
