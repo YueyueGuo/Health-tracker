@@ -130,11 +130,20 @@ export function SleepRecoveryDetailsCard({
 
   return (
     <div className="pb-2 pt-2">
-      <div className="mb-3 sticky top-0 z-20 bg-dashboard/95 backdrop-blur-md pt-1 pb-3 -mx-4 px-4 sm:mx-0 sm:px-0">
+      <div className="mb-3 sticky top-0 z-20 bg-dashboard/95 backdrop-blur-md pt-1 pb-3 -mx-4 px-4 sm:-mx-6 sm:px-6">
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => navigate(-1)}
+            onClick={() => {
+              // If the user landed on /sleep via a deep link / PWA shortcut,
+              // history is empty and navigate(-1) is a dead-end. Fall back to
+              // the dashboard so the back button always goes somewhere.
+              if (typeof window !== "undefined" && window.history.length <= 1) {
+                navigate("/");
+              } else {
+                navigate(-1);
+              }
+            }}
             className="p-1.5 -ml-1.5 text-slate-400 hover:text-white transition-colors bg-cardBorder/30 rounded-full"
             aria-label="Go back"
           >

@@ -1,6 +1,7 @@
 import { Heart, Moon } from "lucide-react";
-import { useOutletContext } from "react-router-dom";
+import { useNavigate, useOutletContext } from "react-router-dom";
 import { Card } from "../ui/Card";
+import type { KeyboardEvent } from "react";
 import { CircularProgress } from "../ui/CircularProgress";
 import { useApi } from "../../hooks/useApi";
 import { fetchLatestSleep } from "../../api/sleep";
@@ -18,6 +19,7 @@ const SOURCE_LABEL: Record<string, string> = {
 
 export function MorningStatusCard() {
   const { units } = useUnits();
+  const navigate = useNavigate();
   const { dateStr, isToday } = useOutletContext<HomeOutletContext>();
   const sleep = useApi(["sleep", "latest", dateStr], () =>
     fetchLatestSleep(isToday ? undefined : { onOrBefore: dateStr }),
@@ -25,6 +27,14 @@ export function MorningStatusCard() {
   const recovery = useApi(["recovery", "recent", 2, dateStr], () =>
     fetchRecovery(2, isToday ? undefined : dateStr),
   );
+
+  const handleOpenDetails = () => navigate("/sleep");
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      handleOpenDetails();
+    }
+  };
 
   const latestSleep = sleep.data;
   const latestRecovery = recovery.data?.[0] ?? null;
@@ -45,7 +55,15 @@ export function MorningStatusCard() {
   const showStages = stagesTotal > 0;
 
   return (
-    <Card className="p-4">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={handleOpenDetails}
+      onKeyDown={handleKeyDown}
+      aria-label="Open Sleep & Recovery details"
+      className="cursor-pointer rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-green focus-visible:ring-offset-2 focus-visible:ring-offset-dashboard"
+    >
+      <Card className="p-4">
       <div className="flex justify-around items-center mb-6">
         <div className="flex flex-col items-center">
           <div className="flex items-center gap-1.5 mb-2">
@@ -176,7 +194,8 @@ export function MorningStatusCard() {
           </div>
         </div>
       )}
-    </Card>
+      </Card>
+    </div>
   );
 }
 

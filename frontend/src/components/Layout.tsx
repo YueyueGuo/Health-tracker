@@ -5,8 +5,6 @@ const navItems = [
   { to: "/", label: "Dashboard" },
   { to: "/history", label: "History" },
   { to: "/record", label: "Record" },
-  { to: "/sleep", label: "Sleep" },
-  { to: "/recovery", label: "Recovery" },
   { to: "/training", label: "Trends" },
   { to: "/ask", label: "Ask AI" },
   { to: "/profile", label: "Profile" },
