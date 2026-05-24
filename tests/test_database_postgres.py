@@ -31,6 +31,17 @@ async def pg_engine():
 
     Drops the ``strength_sets`` table on entry AND exit so the test
     module is hermetic across re-runs.
+
+    .. warning::
+        This fixture mutates shared Postgres state on the
+        ``TEST_POSTGRES_URL`` database. It is safe under default pytest
+        execution (modules run sequentially), but it must not run
+        concurrently with other modules that touch ``strength_sets``
+        (e.g. ``tests/test_migrations_autoincrement_timezone.py``,
+        which drops/recreates the entire public schema). If
+        ``pytest-xdist`` is ever added, each test will need its own
+        schema (``SET search_path TO test_strength_<pid>``) to remain
+        hermetic.
     """
     engine = create_async_engine(TEST_POSTGRES_URL)
     async with engine.begin() as conn:
