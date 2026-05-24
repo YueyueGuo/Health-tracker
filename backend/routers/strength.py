@@ -6,7 +6,7 @@ implicit grouping by `date` (see `backend/services/strength.py`).
 from __future__ import annotations
 
 import logging
-from datetime import date as date_type, datetime
+from datetime import date as date_type, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
@@ -24,6 +24,26 @@ from backend.services.strength import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _normalize_performed_at(value: datetime | None) -> datetime | None:
+    """Ensure ``performed_at`` is tz-aware before persisting.
+
+    The frontend stamps sets with naive-local wall-clock ISO strings
+    (see ``frontend/src/components/record/datetime.ts:toNaiveLocalIso``).
+    The ``StrengthSet.performed_at`` column is now
+    ``DateTime(timezone=True)`` (commit 35d648f); attach UTC tzinfo to
+    naive inputs so the bind semantics are explicit. The numeric
+    wall-clock value is preserved — asyncpg has been implicitly treating
+    naive datetimes as UTC for this write for as long as the Postgres
+    column has been ``timestamp with time zone``. See
+    docs/audit-001-datetime-sweep-audit.md.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 # ── Pydantic schemas ────────────────────────────────────────────────
@@ -114,7 +134,7 @@ async def create_sets(
             weight_kg=s.weight_kg,
             rpe=s.rpe,
             notes=s.notes,
-            performed_at=s.performed_at,
+            performed_at=_normalize_performed_at(s.performed_at),
         )
         db.add(row)
         created.append(row)
@@ -146,6 +166,8 @@ async def update_set(
     for key, value in data.items():
         if key == "exercise_name" and value is not None:
             value = value.strip()
+        elif key == "performed_at":
+            value = _normalize_performed_at(value)
         setattr(row, key, value)
     await db.commit()
     await db.refresh(row)
