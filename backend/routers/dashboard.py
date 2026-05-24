@@ -11,10 +11,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.models import Activity, SleepSession
-from backend.routers.activities import _activity_summary
+from backend.models import SleepSession
 from backend.routers.sleep import _sleep_dict
 from backend.services import sleep_recovery_snapshot, training_load_snapshot
+from backend.services.activity_feed import list_activity_feed
 from backend.services.metrics import (
     get_recovery_trends,
     get_sleep_trends,
@@ -92,17 +92,23 @@ async def dashboard_overview(db: AsyncSession = Depends(get_db)):
 async def dashboard_history(
     days: int = Query(30, ge=1, le=365),
     limit: int = Query(200, ge=1, le=200),
+    include_superseded: bool = Query(
+        False,
+        description=(
+            "When False (default), hide Strava activities that an Apple "
+            "Health workout has superseded."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """Bundle the History page's cold-load data into one API request."""
     cutoff = utc_now_naive() - timedelta(days=days)
-    activities_result = await db.execute(
-        select(Activity)
-        .where(Activity.start_date >= cutoff)
-        .order_by(Activity.start_date.desc())
-        .limit(limit)
+    activities = await list_activity_feed(
+        db,
+        cutoff=cutoff,
+        limit=limit,
+        include_superseded=include_superseded,
     )
-    activities = activities_result.scalars().all()
     sleep_result = await db.execute(
         select(SleepSession)
         .where(SleepSession.date >= local_today() - timedelta(days=days))
@@ -111,7 +117,7 @@ async def dashboard_history(
     sleep = sleep_result.scalars().all()
 
     return {
-        "activities": [_activity_summary(a) for a in activities],
+        "activities": activities,
         "sleep": [_sleep_dict(s) for s in sleep],
         "strength": await list_sessions(db, limit=200),
     }
@@ -122,6 +128,13 @@ async def dashboard_training_trends(
     days: int = Query(90, ge=1, le=365),
     limit: int = Query(200, ge=1, le=200),
     exercise: str | None = Query(None),
+    include_superseded: bool = Query(
+        False,
+        description=(
+            "When False (default), hide Strava activities that an Apple "
+            "Health workout has superseded."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """Bundle the Trends page's cold-load data into one API request.
@@ -131,18 +144,17 @@ async def dashboard_training_trends(
     round trips.
     """
     cutoff = utc_now_naive() - timedelta(days=days)
-    activities_result = await db.execute(
-        select(Activity)
-        .where(Activity.start_date >= cutoff)
-        .order_by(Activity.start_date.desc())
-        .limit(limit)
+    activities = await list_activity_feed(
+        db,
+        cutoff=cutoff,
+        limit=limit,
+        include_superseded=include_superseded,
     )
-    activities = activities_result.scalars().all()
     exercises = await search_exercises(db, q=None, limit=20)
     selected_exercise = exercise or (exercises[0] if exercises else None)
 
     return {
-        "activities": [_activity_summary(a) for a in activities],
+        "activities": activities,
         "recovery": await get_recovery_trends(db, days=days, today=local_today()),
         "sleep": await get_sleep_trends(db, days=days, today=local_today()),
         "strength_sessions": await list_sessions(db, limit=200),
