@@ -9,6 +9,7 @@ import {
   Mountain,
 } from "lucide-react";
 import { Card } from "../ui/Card";
+import SourceBadge from "../activity/SourceBadge";
 import {
   formatRelativeDate,
   type EventType,
@@ -67,9 +68,12 @@ export function HistoryEventCard({ event, onClick }: Props) {
             <TypeIcon type={event.type} />
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-slate-200">
-              {event.title}
-            </h3>
+            <div className="flex items-center gap-1.5">
+              <h3 className="text-sm font-semibold text-slate-200">
+                {event.title}
+              </h3>
+              <SourceBadge source={event.sourceBadge} />
+            </div>
             <p className="text-[11px] text-slate-500">
               {formatRelativeDate(event.timestamp)}
             </p>

@@ -19,6 +19,8 @@ interface EventMetric {
   colorClass?: string;
 }
 
+export type SourceBadge = "apple" | "strava";
+
 export interface HistoryEvent {
   id: string;
   category: EventCategory;
@@ -33,6 +35,10 @@ export interface HistoryEvent {
   metrics: EventMetric[];
   /** When tapped: where to navigate. Null for events with no detail page yet. */
   navigateTo: string | null;
+  /** Origin of the underlying workout, surfaced as a small pill in the
+   *  event card. Undefined for non-workout events (sleep) or legacy rows
+   *  with no `source` value from the backend. */
+  sourceBadge?: SourceBadge;
 }
 
 export type FilterId = "All" | "Workout" | "Health" | "Ride" | "Run" | "Strength";
@@ -102,6 +108,14 @@ function sleepTimestamp(s: SleepSession): string {
   return s.wake_time || `${s.date}T07:00:00`;
 }
 
+export function activitySourceToBadge(
+  source: ActivitySummary["source"]
+): SourceBadge | undefined {
+  if (source === "apple_health") return "apple";
+  if (source === "strava") return "strava";
+  return undefined;
+}
+
 function activityToEvent(a: ActivitySummary): HistoryEvent {
   const type = classifyActivity(a.sport_type);
   const ts = activityTimestamp(a) || `${(a.start_date_local || "").slice(0, 10) || "1970-01-01"}T12:00:00`;
@@ -141,6 +155,7 @@ function activityToEvent(a: ActivitySummary): HistoryEvent {
     timestamp: ts,
     metrics,
     navigateTo: `/activities/${a.id}`,
+    sourceBadge: activitySourceToBadge(a.source),
   };
 }
 

@@ -1,7 +1,9 @@
 import { ChevronLeft } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import ClassificationBadge from "../ClassificationBadge";
+import SourceBadge from "./SourceBadge";
 import type { ActivityDetail } from "../../api/activities";
+import { activitySourceToBadge } from "../../lib/historyEvents";
 import { formatActivityDateTime } from "./utils";
 
 interface Props {
@@ -28,9 +30,12 @@ export default function ActivityHeader({
           <ChevronLeft size={18} />
         </button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-bold text-white tracking-tight truncate">
-            {activity.name}
-          </h1>
+          <div className="flex items-center gap-2 min-w-0">
+            <h1 className="text-lg font-bold text-white tracking-tight truncate">
+              {activity.name}
+            </h1>
+            <SourceBadge source={activitySourceToBadge(activity.source)} />
+          </div>
           <p className="text-[10px] text-slate-400">
             {formatActivityDateTime(activity.start_date_local)}
           </p>

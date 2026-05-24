@@ -10,11 +10,15 @@ export type ClassificationType =
   | "mixed"
   | null;
 
+export type ActivitySource = "apple_health" | "strava";
+
 export interface ActivitySummary {
   id: number;
   strava_id: number;
   name: string;
   sport_type: string;
+  source?: ActivitySource | null;
+  external_id?: string | null;
   start_date: string | null;
   start_date_local: string | null;
   elapsed_time: number | null;
