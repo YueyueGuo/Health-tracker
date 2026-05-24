@@ -42,7 +42,9 @@ Spawn `test-runner`. Loop up to 3 times on failure (same rules as
 ### Step 4 — Review
 Spawn `code-reviewer`. Pass the diagnosis. Reviewer should especially
 confirm the regression test exists and exercises the fixed path.
-Loop up to 2 times on `REQUEST_CHANGES`.
+On `REQUEST_CHANGES`: route by the `Owner:` tag on each finding,
+spawn owners **in parallel** in a single message, re-review. Loop up
+to 2 times.
 
 ### Step 5 — Push and open PR
 - `git push -u origin <branch>`.
@@ -51,7 +53,12 @@ Loop up to 2 times on `REQUEST_CHANGES`.
   link to `docs/bugs/<slug>.md`, test plan.
 
 ### Step 6 — Subscribe to PR activity
-`mcp__github__subscribe_pr_activity` with the PR number. End turn.
+`mcp__github__subscribe_pr_activity` with the PR number.
+
+### Step 7 — Hand off for merge approval
+Same hand-off pattern as `/feature` Step 8 — see that file for the
+exact message shape and the merge/changes/hold reply handling. End
+your turn after posting it. Do not poll.
 
 ## Rules
 - Smallest fix possible. Out-of-scope cleanups the investigator

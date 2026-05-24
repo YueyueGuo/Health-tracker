@@ -58,23 +58,59 @@ Spawn `test-runner`. If it reports failures:
 ### Step 5 — Review
 Spawn `code-reviewer`. If verdict is:
 - `APPROVE` → continue.
-- `REQUEST_CHANGES` → route must-fix items back to the right engineer,
-  then re-run `code-reviewer`. Loop up to **2** times.
+- `REQUEST_CHANGES` → route by the `Owner:` tag on each must-fix.
+  Group findings by owner. Spawn the owners **in parallel** in a
+  single message (e.g. backend-engineer + frontend-engineer concurrently
+  if both have findings). Pass each agent only its own findings.
+  Re-run `code-reviewer` after the fixes land. Loop up to **2** times.
 - `BLOCK` → stop and surface to the user.
 
 ### Step 6 — Push and open PR
 - Stage any final fixes, commit, push: `git push -u origin <branch>`.
 - Open a PR via `mcp__github__create_pull_request` against `main`.
   Title: short, imperative. Body: link to `docs/plans/<slug>.md` and
-  summarize what changed in 3-5 bullets. Test plan: a checklist of the
-  smoke tests a human would run.
+  summarize what changed in 3-5 bullets. Test plan: a checklist of
+  the smoke tests a human would run.
 
 ### Step 7 — Subscribe to PR activity
 Call `mcp__github__subscribe_pr_activity` with the new PR number so
 this session auto-responds to CI failures and review comments.
 
-End your turn after subscribing. Do not poll. Events will wake the
-session.
+### Step 8 — Hand off for merge approval
+End your turn with a single, action-oriented message containing
+**exactly** this shape so the web/mobile push tells the user what to do:
+
+```
+PR #<n> ready: <title>
+<URL>
+
+CI: <pending | green | red>
+Plan: docs/plans/<slug>.md
+
+Reply with one of:
+  • `merge`           — squash-merge and close the branch
+  • `changes: <text>` — route the changes back through the agents
+  • `hold`            — leave open, I'll come back to it
+```
+
+Then end the turn. Do not poll.
+
+**When the user replies in this session:**
+- `merge` (or `go ahead`, `ship it`, equivalent) → call
+  `mcp__github__merge_pull_request` with `merge_method: "squash"`,
+  then `unsubscribe_pr_activity`, then confirm in one line.
+- `changes: <text>` → treat `<text>` as a new mini-spec; route to the
+  relevant engineer agent(s) in parallel; on completion, push and
+  reply "updated — re-review or merge?"
+- `hold` → unsubscribe, acknowledge in one line, end.
+
+**When PR-activity events arrive while waiting:**
+- CI green and the user hasn't replied yet → post a one-line nudge:
+  `"CI green on PR #<n> — say `merge` to ship."` Then end turn again.
+- CI red → diagnose, route to the right engineer, push the fix, post
+  a one-line status. Do not require user input for CI fixes.
+- Reviewer comment → investigate and either fix (if unambiguous) or
+  ask the user via `AskUserQuestion` if ambiguous.
 
 ## Parallelism rules
 - Step 2 and Step 3 are the parallelism points. Always spawn the

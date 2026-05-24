@@ -56,12 +56,24 @@ Final message structured as:
 data-loss / production-breaking issues).
 
 ### Must-fix
-Numbered list. Each item: file:line + one sentence about the issue +
-one sentence about the recommended fix. The orchestrator will route
-these back to the right engineer.
+Numbered list. For each finding emit **exactly these four lines** so
+the orchestrator can route mechanically:
+
+```
+1. <one-sentence summary of the issue>
+   Files: backend/services/foo.py:142, tests/test_services/test_foo.py
+   Owner: backend-engineer
+   Fix: <one sentence on the recommended fix>
+```
+
+`Owner` must be one of: `backend-engineer`, `frontend-engineer`,
+`db-migrator`. Pick by which surface the fix lives in (not which
+surface the symptom appeared on). If a finding genuinely spans two
+agents, list both separated by `+` (e.g. `backend-engineer + frontend-engineer`)
+and split the `Fix` line into the part each owner does.
 
 ### Nice-to-have
-Numbered list. Same format. The orchestrator may defer these.
+Numbered list. Same four-line format. The orchestrator may defer these.
 
 ### Out-of-plan diff
 If you flagged scope creep, list the files here.
