@@ -27,5 +27,5 @@ class RecommendationFeedback(Base):
     vote: Mapped[str] = mapped_column(String(8), nullable=False)  # "up" | "down"
     reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), nullable=False
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )

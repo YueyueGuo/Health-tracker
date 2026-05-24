@@ -23,4 +23,4 @@ class Recovery(Base):
     strain_score: Mapped[float | None] = mapped_column(Float)
     calories: Mapped[float | None] = mapped_column(Float)
     raw_data: Mapped[dict | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
