@@ -16,6 +16,7 @@ from backend.models import (
     WeatherSnapshot,
     Workout,
 )
+from backend.services.activity_feed import list_activity_feed
 from backend.services.hr_zones import (
     compute_hr_drift,
     compute_pace_hr_decoupling,
@@ -38,6 +39,7 @@ class ActivityFeedbackPatch(BaseModel):
     rather than at the DB layer because SQLite lacks CHECK-constraint
     portability for Alembic downgrades.
     """
+
     rpe: int | None = Field(default=None, ge=1, le=10)
     user_notes: str | None = Field(default=None, max_length=2000)
 
@@ -80,68 +82,14 @@ async def list_activities(
     from datetime import timedelta
 
     cutoff = utc_now_naive() - timedelta(days=days)
-
-    # ── Strava (existing activities table) ──────────────────────────
-    query = select(Activity).order_by(Activity.start_date.desc())
-    query = query.where(Activity.start_date >= cutoff)
-    if not include_superseded:
-        query = query.where(Activity.superseded_by_id.is_(None))
-    if sport_type:
-        query = query.where(Activity.sport_type == sport_type)
-    # Over-fetch so a downstream Python merge can still respect ``limit``.
-    query = query.limit(limit + offset)
-    activities = (await db.execute(query)).scalars().all()
-    strava_rows = [_activity_summary(a) for a in activities]
-
-    # ── Apple workouts ──────────────────────────────────────────────
-    # When the caller passes a ``sport_type`` filter we skip Apple rows
-    # entirely — Apple's ``activity_type`` taxonomy is the normalized
-    # one, not Strava's, so the filter wouldn't be meaningful here.
-    apple_rows: list[dict] = []
-    if not sport_type:
-        # 1) Apple-only workouts (no Strava back-link). Always canonical.
-        apple_only_q = (
-            select(Workout, HealthDataPoint)
-            .join(HealthDataPoint, Workout.id == HealthDataPoint.id)
-            .where(
-                HealthDataPoint.data_type == "workout",
-                HealthDataPoint.source == "apple_health",
-                HealthDataPoint.start_time >= cutoff,
-                Workout.activity_id.is_(None),
-            )
-            .order_by(HealthDataPoint.start_time.desc())
-            .limit(limit + offset)
-        )
-        for workout, dp in (await db.execute(apple_only_q)).all():
-            apple_rows.append(_apple_workout_summary(workout, dp))
-
-        # 2) Apple workouts that WON dedup over a linked Strava activity.
-        # The linked Activity's superseded_by_id is non-NULL → Apple is
-        # canonical. These would otherwise be hidden by the
-        # ``activity_id IS NULL`` filter above AND by the Strava query's
-        # default ``superseded_by_id IS NULL`` filter — so the canonical
-        # workout would vanish entirely. This branch restores it.
-        apple_winner_q = (
-            select(Workout, HealthDataPoint)
-            .join(HealthDataPoint, Workout.id == HealthDataPoint.id)
-            .join(Activity, Workout.activity_id == Activity.id)
-            .where(
-                HealthDataPoint.data_type == "workout",
-                HealthDataPoint.source == "apple_health",
-                HealthDataPoint.start_time >= cutoff,
-                Workout.activity_id.is_not(None),
-                Activity.superseded_by_id.is_not(None),
-            )
-            .order_by(HealthDataPoint.start_time.desc())
-            .limit(limit + offset)
-        )
-        for workout, dp in (await db.execute(apple_winner_q)).all():
-            apple_rows.append(_apple_workout_summary(workout, dp))
-
-    # Merge + sort by start_date, then page in Python.
-    combined = strava_rows + apple_rows
-    combined.sort(key=lambda r: r.get("start_date") or "", reverse=True)
-    return combined[offset : offset + limit]
+    return await list_activity_feed(
+        db,
+        cutoff=cutoff,
+        limit=limit,
+        offset=offset,
+        sport_type=sport_type,
+        include_superseded=include_superseded,
+    )
 
 
 @router.get("/types")
@@ -172,9 +120,7 @@ async def get_activity(activity_id: int, db: AsyncSession = Depends(get_db)):
     `GET /{activity_id}/streams` (see below) so they can be fetched lazily
     and cached.
     """
-    result = await db.execute(
-        select(Activity).where(Activity.id == activity_id)
-    )
+    result = await db.execute(select(Activity).where(Activity.id == activity_id))
     activity = result.scalar_one_or_none()
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -194,9 +140,11 @@ async def get_activity(activity_id: int, db: AsyncSession = Depends(get_db)):
     weather = weather_result.scalar_one_or_none()
 
     # Does the activity have cached streams already? (metadata only)
-    streams_count = (await db.execute(
-        select(ActivityStream).where(ActivityStream.activity_id == activity_id)
-    )).scalars().first()
+    streams_count = (
+        (await db.execute(select(ActivityStream).where(ActivityStream.activity_id == activity_id)))
+        .scalars()
+        .first()
+    )
 
     # Drift / decoupling metrics — read-only against cached streams.
     # Returns None when streams aren't cached, never triggers a Strava fetch.
@@ -236,9 +184,9 @@ async def patch_activity_feedback(
     ``null`` clears a previously-stored value. ``rated_at`` is stamped
     whenever either field is updated.
     """
-    activity = (await db.execute(
-        select(Activity).where(Activity.id == activity_id)
-    )).scalar_one_or_none()
+    activity = (
+        await db.execute(select(Activity).where(Activity.id == activity_id))
+    ).scalar_one_or_none()
     if activity is None:
         raise HTTPException(status_code=404, detail="Activity not found")
 
@@ -263,26 +211,30 @@ async def patch_activity_feedback(
 
 
 @router.post("/{activity_id}/classify")
-async def classify_activity(
-    activity_id: int, db: AsyncSession = Depends(get_db)
-):
+async def classify_activity(activity_id: int, db: AsyncSession = Depends(get_db)):
     """(Re-)run the classifier on this activity and persist the result.
 
     Useful for debugging classifier changes without touching enrichment.
     """
     from backend.services.classifier import classify_and_persist, dump
 
-    activity = (await db.execute(
-        select(Activity).where(Activity.id == activity_id)
-    )).scalar_one_or_none()
+    activity = (
+        await db.execute(select(Activity).where(Activity.id == activity_id))
+    ).scalar_one_or_none()
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    laps = (await db.execute(
-        select(ActivityLap)
-        .where(ActivityLap.activity_id == activity_id)
-        .order_by(ActivityLap.lap_index)
-    )).scalars().all()
+    laps = (
+        (
+            await db.execute(
+                select(ActivityLap)
+                .where(ActivityLap.activity_id == activity_id)
+                .order_by(ActivityLap.lap_index)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
     result = classify_and_persist(activity, list(laps))
     await db.commit()
@@ -304,48 +256,45 @@ async def get_activity_weather(
     ``?raw=true`` to include it (useful for rendering icons from the
     ``weather[0].icon`` code).
     """
-    activity = (await db.execute(
-        select(Activity).where(Activity.id == activity_id)
-    )).scalar_one_or_none()
+    activity = (
+        await db.execute(select(Activity).where(Activity.id == activity_id))
+    ).scalar_one_or_none()
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    snapshot = (await db.execute(
-        select(WeatherSnapshot).where(
-            WeatherSnapshot.activity_id == activity_id
-        )
-    )).scalar_one_or_none()
+    snapshot = (
+        await db.execute(select(WeatherSnapshot).where(WeatherSnapshot.activity_id == activity_id))
+    ).scalar_one_or_none()
     if not snapshot:
-        raise HTTPException(
-            status_code=404, detail="No weather snapshot for this activity"
-        )
+        raise HTTPException(status_code=404, detail="No weather snapshot for this activity")
 
     return _weather_full_dict(snapshot, include_raw=raw)
 
 
 @router.get("/{activity_id}/streams")
-async def get_activity_streams(
-    activity_id: int, db: AsyncSession = Depends(get_db)
-):
+async def get_activity_streams(activity_id: int, db: AsyncSession = Depends(get_db)):
     """Get per-sample streams for an activity. Lazy-fetched from Strava.
 
     First call for a given activity pulls streams from Strava and caches
     them in `activity_streams`. Subsequent calls return the cached data.
     """
-    activity = (await db.execute(
-        select(Activity).where(Activity.id == activity_id)
-    )).scalar_one_or_none()
+    activity = (
+        await db.execute(select(Activity).where(Activity.id == activity_id))
+    ).scalar_one_or_none()
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    cached = (await db.execute(
-        select(ActivityStream).where(ActivityStream.activity_id == activity_id)
-    )).scalars().all()
+    cached = (
+        (await db.execute(select(ActivityStream).where(ActivityStream.activity_id == activity_id)))
+        .scalars()
+        .all()
+    )
     if cached:
         return {s.stream_type: s.data for s in cached}
 
     # Fetch + cache
     from backend.clients.strava import StravaClient
+
     client = StravaClient()
     try:
         streams = await client.get_activity_streams(activity.strava_id)
@@ -357,11 +306,13 @@ async def get_activity_streams(
 
     for stream_type, data in streams.items():
         if data:
-            db.add(ActivityStream(
-                activity_id=activity_id,
-                stream_type=stream_type,
-                data=data,
-            ))
+            db.add(
+                ActivityStream(
+                    activity_id=activity_id,
+                    stream_type=stream_type,
+                    data=data,
+                )
+            )
     await db.commit()
     return streams
 
