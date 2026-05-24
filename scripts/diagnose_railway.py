@@ -102,6 +102,54 @@ def _section(title: str) -> None:
     print()
 
 
+async def _check_id_autoincrement(engine: AsyncEngine) -> None:
+    _section("Primary-key autoincrement check (Bug A + B root cause)")
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                text(
+                    """
+                    SELECT table_name,
+                           column_default,
+                           is_identity,
+                           is_nullable,
+                           data_type
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND column_name = 'id'
+                    ORDER BY table_name
+                    """
+                )
+            )
+        ).mappings().all()
+    if not rows:
+        print("(no tables with an 'id' column found)")
+        return
+    broken: list[str] = []
+    for row in rows:
+        has_default = row["column_default"] is not None
+        is_identity = row["is_identity"] == "YES"
+        ok = has_default or is_identity
+        mark = "OK " if ok else "BROKEN"
+        print(
+            f"- {mark}  {row['table_name']:<28} "
+            f"type={row['data_type']:<10} "
+            f"default={row['column_default']!r:<40} "
+            f"identity={row['is_identity']}"
+        )
+        if not ok:
+            broken.append(row["table_name"])
+    if broken:
+        print()
+        print(f">>> {len(broken)} tables have NO autoincrement on id: "
+              f"{', '.join(broken)} <<<")
+        print(">>> Every INSERT into these tables fails with "
+              "NotNullViolationError. <<<")
+    else:
+        print()
+        print("All id columns have a default or are IDENTITY. Autoincrement OK.")
+
+
 async def _check_tables_present(engine: AsyncEngine) -> None:
     _section("Tables present in schema")
     async with engine.connect() as conn:
@@ -310,6 +358,9 @@ async def main() -> None:
     engine = create_async_engine(url, echo=False)
     try:
         await _run_check("Tables present", _check_tables_present, engine)
+        await _run_check(
+            "Primary-key autoincrement", _check_id_autoincrement, engine
+        )
         await _run_check("oauth_tokens", _check_oauth_tokens, engine)
         await _run_check("sync_log", _check_sync_log, engine)
         await _run_check(
