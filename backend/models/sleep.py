@@ -17,8 +17,8 @@ class SleepSession(Base):
     source: Mapped[str] = mapped_column(String, nullable=False)  # "eight_sleep" or "whoop"
     external_id: Mapped[str | None] = mapped_column(String)
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
-    bed_time: Mapped[datetime | None] = mapped_column(DateTime)
-    wake_time: Mapped[datetime | None] = mapped_column(DateTime)
+    bed_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    wake_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     total_duration: Mapped[int | None] = mapped_column(Integer)  # minutes
     deep_sleep: Mapped[int | None] = mapped_column(Integer)  # minutes
     rem_sleep: Mapped[int | None] = mapped_column(Integer)  # minutes
@@ -47,4 +47,4 @@ class SleepSession(Base):
     sleep_need_baseline_min: Mapped[int | None] = mapped_column(Integer)  # baseline need
     sleep_debt_min: Mapped[int | None] = mapped_column(Integer)  # accrued sleep debt
     raw_data: Mapped[dict | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

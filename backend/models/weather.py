@@ -27,6 +27,6 @@ class WeatherSnapshot(Base):
     pressure: Mapped[float | None] = mapped_column(Float)
     uv_index: Mapped[float | None] = mapped_column(Float)
     raw_data: Mapped[dict | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     activity = relationship("Activity", back_populates="weather")

@@ -28,5 +28,5 @@ class UserLocation(Base):
         Boolean, nullable=False, default=False, server_default="0", index=True
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), nullable=False
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
