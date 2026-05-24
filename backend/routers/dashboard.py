@@ -28,6 +28,7 @@ from backend.services.time_utils import local_today, utc_now_naive
 if find_spec("backend.services.environment"):
     from backend.services.environment import fetch_environment_today
 else:  # pragma: no cover - replaced by the environment chunk.
+
     async def fetch_environment_today(db: AsyncSession) -> dict | None:
         return None
 
@@ -201,15 +202,11 @@ async def dashboard_today(
     sleep_ms = (time.perf_counter() - stage_started) * 1000
 
     stage_started = time.perf_counter()
-    recovery = await sleep_recovery_snapshot.get_recovery_snapshot(
-        db, days=7, today=target
-    )
+    recovery = await sleep_recovery_snapshot.get_recovery_snapshot(db, days=7, today=target)
     recovery_ms = (time.perf_counter() - stage_started) * 1000
 
     stage_started = time.perf_counter()
-    training = await training_load_snapshot.get_training_load_snapshot(
-        db, days=42, today=target
-    )
+    training = await training_load_snapshot.get_training_load_snapshot(db, days=42, today=target)
     training_ms = (time.perf_counter() - stage_started) * 1000
 
     environment_ms = 0.0
@@ -262,13 +259,10 @@ async def dashboard_today(
 
 def _dashboard_training_payload(training: dict, today: date) -> dict:
     daily_loads = {
-        date.fromisoformat(point["date"]): point["value"]
-        for point in training["daily_loads"]
+        date.fromisoformat(point["date"]): point["value"] for point in training["daily_loads"]
     }
     week_start = today - timedelta(days=today.weekday())
-    week_to_date = sum(
-        load for day, load in daily_loads.items() if week_start <= day <= today
-    )
+    week_to_date = sum(load for day, load in daily_loads.items() if week_start <= day <= today)
     yesterday = today - timedelta(days=1)
     acwr = training["acwr"]
 

@@ -16,6 +16,7 @@ Before the fix, both endpoints:
 Both behaviors are reproduced below — the tests fail on ``main`` and
 pass on the branch.
 """
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -125,25 +126,19 @@ class TestDashboardHistoryAppleMerge:
         """Apple-only row AND the Apple winner of a deduped pair both
         appear in the default response, tagged ``source='apple_health'``.
         """
-        _, apple_winner_dp, apple_only_dp = (
-            await _seed_dedup_pair_plus_apple_only(db)
-        )
+        _, apple_winner_dp, apple_only_dp = await _seed_dedup_pair_plus_apple_only(db)
 
         resp = await client.get("/api/dashboard/history?days=30")
         assert resp.status_code == 200
         payload = resp.json()
-        apple_rows = [
-            r for r in payload["activities"] if r["source"] == "apple_health"
-        ]
+        apple_rows = [r for r in payload["activities"] if r["source"] == "apple_health"]
         external_ids = sorted(r["external_id"] for r in apple_rows)
         assert external_ids == ["apple-only", "apple-winner"]
         # Each Apple row carries the HDP id as ``id``.
         ids = {r["id"] for r in apple_rows}
         assert ids == {apple_winner_dp.id, apple_only_dp.id}
 
-    async def test_default_response_hides_superseded_strava_rows(
-        self, client, db
-    ):
+    async def test_default_response_hides_superseded_strava_rows(self, client, db):
         """No row with a non-null ``superseded_by_id`` is returned by
         default — the Strava loser is gone."""
         await _seed_dedup_pair_plus_apple_only(db)
@@ -151,31 +146,21 @@ class TestDashboardHistoryAppleMerge:
         resp = await client.get("/api/dashboard/history?days=30")
         assert resp.status_code == 200
         payload = resp.json()
-        assert all(
-            r.get("superseded_by_id") is None for r in payload["activities"]
-        )
+        assert all(r.get("superseded_by_id") is None for r in payload["activities"])
         # And specifically: no ``strava`` row is in the response.
         assert all(r["source"] != "strava" for r in payload["activities"])
 
-    async def test_include_superseded_returns_strava_loser_and_apple_rows(
-        self, client, db
-    ):
+    async def test_include_superseded_returns_strava_loser_and_apple_rows(self, client, db):
         """``?include_superseded=true`` surfaces both sides of the
         deduped pair AND the Apple-only row."""
         strava, apple_winner_dp, _ = await _seed_dedup_pair_plus_apple_only(db)
 
-        resp = await client.get(
-            "/api/dashboard/history?days=30&include_superseded=true"
-        )
+        resp = await client.get("/api/dashboard/history?days=30&include_superseded=true")
         assert resp.status_code == 200
         payload = resp.json()
 
-        strava_rows = [
-            r for r in payload["activities"] if r["source"] == "strava"
-        ]
-        apple_rows = [
-            r for r in payload["activities"] if r["source"] == "apple_health"
-        ]
+        strava_rows = [r for r in payload["activities"] if r["source"] == "strava"]
+        apple_rows = [r for r in payload["activities"] if r["source"] == "apple_health"]
         assert len(strava_rows) == 1
         assert strava_rows[0]["strava_id"] == strava.strava_id
         assert strava_rows[0]["superseded_by_id"] == apple_winner_dp.id
@@ -188,51 +173,35 @@ class TestDashboardTrainingTrendsAppleMerge:
     """Same three assertions for ``GET /api/dashboard/training-trends``."""
 
     async def test_default_response_merges_apple_workouts(self, client, db):
-        _, apple_winner_dp, apple_only_dp = (
-            await _seed_dedup_pair_plus_apple_only(db)
-        )
+        _, apple_winner_dp, apple_only_dp = await _seed_dedup_pair_plus_apple_only(db)
 
         resp = await client.get("/api/dashboard/training-trends?days=30")
         assert resp.status_code == 200
         payload = resp.json()
-        apple_rows = [
-            r for r in payload["activities"] if r["source"] == "apple_health"
-        ]
+        apple_rows = [r for r in payload["activities"] if r["source"] == "apple_health"]
         external_ids = sorted(r["external_id"] for r in apple_rows)
         assert external_ids == ["apple-only", "apple-winner"]
         ids = {r["id"] for r in apple_rows}
         assert ids == {apple_winner_dp.id, apple_only_dp.id}
 
-    async def test_default_response_hides_superseded_strava_rows(
-        self, client, db
-    ):
+    async def test_default_response_hides_superseded_strava_rows(self, client, db):
         await _seed_dedup_pair_plus_apple_only(db)
 
         resp = await client.get("/api/dashboard/training-trends?days=30")
         assert resp.status_code == 200
         payload = resp.json()
-        assert all(
-            r.get("superseded_by_id") is None for r in payload["activities"]
-        )
+        assert all(r.get("superseded_by_id") is None for r in payload["activities"])
         assert all(r["source"] != "strava" for r in payload["activities"])
 
-    async def test_include_superseded_returns_strava_loser_and_apple_rows(
-        self, client, db
-    ):
+    async def test_include_superseded_returns_strava_loser_and_apple_rows(self, client, db):
         strava, apple_winner_dp, _ = await _seed_dedup_pair_plus_apple_only(db)
 
-        resp = await client.get(
-            "/api/dashboard/training-trends?days=30&include_superseded=true"
-        )
+        resp = await client.get("/api/dashboard/training-trends?days=30&include_superseded=true")
         assert resp.status_code == 200
         payload = resp.json()
 
-        strava_rows = [
-            r for r in payload["activities"] if r["source"] == "strava"
-        ]
-        apple_rows = [
-            r for r in payload["activities"] if r["source"] == "apple_health"
-        ]
+        strava_rows = [r for r in payload["activities"] if r["source"] == "strava"]
+        apple_rows = [r for r in payload["activities"] if r["source"] == "apple_health"]
         assert len(strava_rows) == 1
         assert strava_rows[0]["strava_id"] == strava.strava_id
         assert strava_rows[0]["superseded_by_id"] == apple_winner_dp.id

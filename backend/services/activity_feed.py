@@ -14,6 +14,7 @@ enough between Strava ``Activity`` and Apple ``Workout`` that a UNION
 would be more code than a small Python sort-merge. Volumes are also
 small (days-of-history scale), so a dict-shape merge is fine.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
