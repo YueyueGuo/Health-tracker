@@ -138,7 +138,7 @@ async def debug_db(db: AsyncSession = Depends(get_db)):
     main_file = next((r["file"] for r in db_list if r["name"] == "main"), None)
 
     counts = {}
-    for table in ("activities", "sleep_sessions", "recovery_records", "sync_logs"):
+    for table in ("activities", "sleep_sessions", "recovery_metrics", "sync_log"):
         try:
             n = (await db.execute(text(f"SELECT COUNT(*) FROM {table}"))).scalar_one()
             counts[table] = int(n)

@@ -89,11 +89,11 @@ API; `/*` serves `index.html` + `/assets`). See `backend/main.py:170-182` and
 | `activity_laps` (`backend/models/activity.py:122-149`) | Embedded laps after enrichment | `(activity_id, lap_index)` unique, `hr_zone` |
 | `activity_streams` (`backend/models/activity.py:108-119`) | Lazy-fetched HR/pace/power streams | `(activity_id, stream_type)` unique, `data JSON` |
 | `sleep_sessions` (`backend/models/sleep.py`) | Eight Sleep + Whoop (single table, `source` discriminator) | `(source, date)` unique; bed/wake naive-local; stage durations in minutes; Whoop-specific extras nullable |
-| `recovery_records` (`backend/models/recovery.py`) | Whoop daily recovery | unique per date |
+| `recovery_metrics` (`backend/models/recovery.py`) | Whoop daily recovery | unique per date |
 | `whoop_workouts` (`backend/models/whoop_workout.py`) | Whoop activity table (separate from Strava) | `whoop_id` STRING unique (migrated from int) |
 | `strength_sets` | Manual lifting entries | Implicit "session" = group by `date`; `performed_at` naive-local optional |
 | `weather_snapshots` (`backend/models/weather.py`) | One row per activity (one-to-one) | FK activity_id |
-| `user_locations`, `user_profile`, `goal`, `recommendation_feedback` | Profile/preferences/goals/RPE feedback | |
+| `user_locations`, `user_profile`, `goals`, `recommendation_feedback` | Profile/preferences/goals/RPE feedback | |
 | `oauth_tokens` (`backend/models/oauth_token.py`) | Strava + Whoop token persistence (Eight Sleep NOT here) | `provider` PK |
 | `sync_log` (`backend/models/sync_log.py`) | Per-sync audit row (one per call) | `source`, `started_at`, `completed_at`, `status`, `records_synced`, `error_message` |
 | `analysis_cache` | LLM result cache | |
@@ -197,7 +197,7 @@ lose JSON operators/indexes and silently round-trip strings.
 - **Fetch / schedule**: same APScheduler `sync_all` job; default 30-day
   window. Endpoints `/cycle`, `/recovery`, `/activity/sleep`,
   `/activity/workout` (v2; `backend/clients/whoop.py:55, 344-374`).
-- **DB write**: `recovery_records` (per cycle date), `sleep_sessions`
+- **DB write**: `recovery_metrics` (per cycle date), `sleep_sessions`
   with `source="whoop"`, `whoop_workouts` (`whoop_id` string-keyed).
   Upserts in `backend/services/whoop_sync.py:_upsert_*`.
 - **Frontend read**: `frontend/src/api/recovery.ts`, `/api/recovery`,
@@ -403,7 +403,7 @@ Railway DB):
    Strava last land data?
 4. `SELECT source, MAX(date), COUNT(*) FROM sleep_sessions
    GROUP BY source;`
-5. `SELECT MAX(date) FROM recovery_records;`
+5. `SELECT MAX(date) FROM recovery_metrics;`
 6. Check Railway variables: `STRAVA_REFRESH_TOKEN`,
    `EIGHT_SLEEP_EMAIL`/`PASSWORD`/`USER_ID`, `WHOOP_ACCESS_TOKEN`/
    `REFRESH_TOKEN`, `WHOOP_ENABLED`, `SYNC_ON_STARTUP`.
@@ -574,6 +574,7 @@ session, logs no sets, and hits Finish.**
 | M15 | `scripts/*.py` | Every script in `scripts/` (`backfill_strava.py`, `backfill_weather.py`, `backfill_eight_sleep.py`, `purge_streams.py`, `classify_all.py`, etc.) is documented in README/AGENTS.md for local CLI use. There is no Railway-side mechanism to invoke them (no Railway cron, no admin endpoint). After migration, the user can no longer trigger a backfill without `railway run` or shelling in. |
 | M16 | `backend/services/whoop_sync.py:73-78` and `clients/whoop.py:174-178` | Defensive comments admitting "WHOOP_ENABLED env var lags the oauth_tokens table after a Railway redeploy" — direct evidence that the migration surfaced this bug, the fix was applied to the sync path but not the client property. |
 | M17 | `backend/main.py:32-42` and `scheduler.py:91-122` | APScheduler runs **in-process** inside the FastAPI app. On Railway this is fine for a single-instance deploy but breaks silently if Railway ever auto-scales to 2 instances (each runs its own scheduler → duplicate Strava calls → faster rate-limit exhaustion). Mac mini had only one process, no risk. No locking/leader-election here. |
+| M18 | `backend/routers/sync.py:141`, `scripts/diagnose_railway.py:62,68,270,274,373` | **Schema-name drift (resolved).** The model layer correctly uses `recovery_metrics` / `goals` to match the live Railway DB (per migrations `353259d46b97_initial_schema` and `c1a4e8f27b10_goals_rpe_feedback`), but stale raw-SQL strings and the diagnostic script's `EXPECTED_TABLES` list still referenced the old singular names `recovery_records` / `goal`. The diagnostic script therefore emitted a false-positive `MISSING expected tables` warning on every run (see `docs/audit-001-findings.md` line 7), and `GET /api/sync/debug/db` returned `None` for the recovery row count on Postgres because `SELECT COUNT(*) FROM recovery_records` raised `UndefinedTableError`. **Resolved** in this PR by aligning the stale call-sites with the canonical DB names and by adding `tests/test_database.py::test_recovery_tablename_matches_railway_schema` + `…test_goal_tablename_matches_railway_schema` regression guards. (DB-wins decision — no DDL needed; models, migrations, and DB were already consistent.) |
 
 ---
 
@@ -662,7 +663,7 @@ The audit's role is to point. In order:
      one query.
    - `SELECT MAX(start_date), COUNT(*) FROM activities;`,
      `SELECT source, MAX(date), COUNT(*) FROM sleep_sessions
-     GROUP BY source;`, `SELECT MAX(date) FROM recovery_records;` —
+     GROUP BY source;`, `SELECT MAX(date) FROM recovery_metrics;` —
      confirms staleness per source.
    - Audit Railway service variables for: `DATABASE_URL`,
      `PUBLIC_BASE_URL`, `SYNC_ON_STARTUP`, `STRAVA_*`,
