@@ -76,6 +76,41 @@ async def test_create_sets_round_trips_performed_at(client, db):
     assert row.performed_at.replace(tzinfo=None) == datetime(2026, 5, 1, 18, 30, 0)
 
 
+async def test_create_sets_accepts_omitted_performed_at(client, db):
+    """Legacy-shape coverage: a POST that omits ``performed_at`` must
+    persist with ``performed_at = NULL`` and round-trip the same way.
+
+    Per ``backend/routers/strength.py`` ``StrengthSetInput.performed_at``
+    docstring, rows without ``performed_at`` are still a supported shape
+    (legacy clients pre-dating the column). This also guards against a
+    regression where the router substitutes a default value for None.
+    """
+    payload = {
+        "date": "2026-05-05",
+        "activity_id": None,
+        "sets": [
+            {
+                "exercise_name": "Front Squat",
+                "set_number": 1,
+                "reps": 5,
+                "weight_kg": 90.0,
+            }
+        ],
+    }
+
+    response = await client.post("/api/strength/sets", json=payload)
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["created"] == 1
+    assert body["session"]["sets"][0]["performed_at"] is None
+
+    row = (
+        await db.execute(select(StrengthSet).where(StrengthSet.date == date(2026, 5, 5)))
+    ).scalar_one()
+    assert row.performed_at is None
+
+
 async def test_create_sets_empty_list_returns_400(client):
     payload = {"date": "2026-05-01", "activity_id": None, "sets": []}
     response = await client.post("/api/strength/sets", json=payload)
@@ -118,13 +153,16 @@ async def test_create_sets_set_number_less_than_one_returns_422(client):
 
 
 async def test_create_sets_auto_assigns_id(client, db):
-    """Regression gate for Bug B's underlying cause.
+    """Regression gate for SQLAlchemy-level ``autoincrement=True``.
 
-    The router never provides ``id`` on insert; SQLAlchemy/SQLite's
-    autoincrement is what makes the row land. If ``StrengthSet.id`` ever
-    loses its ``autoincrement=True`` primary key (e.g. a column-mode
-    migration that drops it on Postgres), INSERT will fail loudly here
-    rather than silently in production.
+    The router never provides ``id`` on insert; on SQLite this works
+    because ``INTEGER PRIMARY KEY`` autoincrements implicitly via ROWID.
+    This test fails if the model loses its SQLAlchemy primary-key
+    declaration entirely — but it does *not* exercise the real Bug B
+    failure mode, which is a Postgres ``id bigint NOT NULL`` column
+    with no IDENTITY / no DEFAULT. The Postgres-IDENTITY regression
+    gate lives in ``tests/test_migrations_autoincrement_timezone.py``
+    (audit-001 W2-bug-B).
     """
     payload = {
         "date": "2026-05-02",
