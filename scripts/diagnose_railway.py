@@ -59,13 +59,13 @@ EXPECTED_TABLES = (
     "activity_laps",
     "activity_streams",
     "sleep_sessions",
-    "recovery_records",
+    "recovery_metrics",
     "whoop_workouts",
     "strength_sets",
     "weather_snapshots",
     "user_locations",
     "user_profile",
-    "goal",
+    "goals",
     "recommendation_feedback",
     "oauth_tokens",
     "sync_log",
@@ -267,11 +267,11 @@ async def _check_freshness_sleep(engine: AsyncEngine) -> None:
 
 
 async def _check_freshness_recovery(engine: AsyncEngine) -> None:
-    _section("Data freshness — recovery_records (Whoop)")
+    _section("Data freshness — recovery_metrics (Whoop)")
     async with engine.connect() as conn:
         row = (
             await conn.execute(
-                text("SELECT MAX(date) AS latest, COUNT(*) AS n FROM recovery_records")
+                text("SELECT MAX(date) AS latest, COUNT(*) AS n FROM recovery_metrics")
             )
         ).mappings().one()
     print(f"- latest={row['latest']} count={row['n']}")
@@ -370,7 +370,7 @@ async def main() -> None:
             "Data freshness — sleep_sessions", _check_freshness_sleep, engine
         )
         await _run_check(
-            "Data freshness — recovery_records", _check_freshness_recovery, engine
+            "Data freshness — recovery_metrics", _check_freshness_recovery, engine
         )
         await _run_check(
             "strength_sets schema", _check_strength_schema, engine
