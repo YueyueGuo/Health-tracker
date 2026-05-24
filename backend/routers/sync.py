@@ -140,6 +140,7 @@ async def debug_db(db: AsyncSession = Depends(get_db)):
     counts = {}
     for table in ("activities", "sleep_sessions", "recovery_metrics", "sync_log"):
         try:
+            # table names come from the hardcoded tuple above, not user input — safe to interpolate.
             n = (await db.execute(text(f"SELECT COUNT(*) FROM {table}"))).scalar_one()
             counts[table] = int(n)
         except Exception:
