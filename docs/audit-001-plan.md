@@ -11,16 +11,38 @@ the agent should be able to land a PR without further prompting.
 
 | Wave | Task | Branch | PR | Status |
 |---|---|---|---|---|
-| 0 | DB diagnostics + findings doc | (manual) | — | TODO |
+| 0 | DB diagnostics + findings doc | (manual) | — | DONE — see `docs/audit-001-findings.md` |
 | 1 | W1-tests — router + Postgres tests | | | TODO |
 | 1 | W1-alembic — Alembic on Railway | | | TODO |
 | 1 | W1-config — defaults & dialect guards | | | TODO |
 | 1 | W1-eightsleep-tokens — move to oauth_tokens | | | TODO |
 | 1 | W1-deploy-cleanup — quarantine `deploy/` | | | TODO |
-| 2 | W2-bug-B — fix lifting save | | | BLOCKED on Wave 0 |
-| 2 | W2-bug-A — fix data refresh + surface errors | | | BLOCKED on Wave 0 |
+| 1 | W1-schema-drift — reconcile `recovery_records` / `goal` table names (NEW) | | | TODO |
+| 2 | W2-bug-B — fix lifting save | | | BLOCKED on reproducing the real error |
+| 2 | W2-bug-A — restore scheduler + Whoop re-OAuth | | | BLOCKED on Wave 1 schema fix |
 
 Update this table as PRs open / merge.
+
+---
+
+## Findings summary (from Wave 0)
+
+What the diagnostic revealed beyond the original audit:
+
+- **Sync stopped entirely on 2026-04-28 23:43 UTC** — scheduler offline
+  for 26+ days as of the diagnostic. Not a token-expiry symptom; the
+  service itself has been broken.
+- **Schema drift:** DB has `recovery_metrics` and `goals`; code expects
+  `recovery_records` and `goal`. Whoop recovery writes have been silently
+  failing because the table the code targets doesn't exist.
+- **Railway is behind on Alembic.** `alembic_version` = `d4f1a8b62c70`;
+  head per audit = `f9c2e1a45b80`. The table-rename migrations are
+  almost certainly among the un-applied ones.
+- **Whoop OAuth is invalid.** Whoop's API response literally says
+  "Re-authorize at /api/auth/whoop." Manual re-OAuth required.
+- **Bug B is NOT a missing-column issue.** `strength_sets.performed_at`
+  is present. Real cause still unknown — needs reproduction with
+  browser devtools.
 
 ---
 
@@ -277,6 +299,63 @@ rebase onto its CI-with-Postgres setup.
 
 ---
 
+### Brief: W1-schema-drift (NEW — added after Wave 0)
+
+> **Branch off `main`.** Read `docs/audit-001-findings.md` "Tables
+> present in schema" section first.
+>
+> **Goal.** Reconcile the mismatch between table names the code
+> writes to and the actual table names in the Railway DB. Today the
+> code references `recovery_records` and `goal`; the DB has
+> `recovery_metrics` and `goals`. Whoop recovery writes will fail
+> with "relation does not exist" the moment OAuth is restored, so
+> this MUST land before W2-bug-A.
+>
+> **Investigate first.**
+> 1. Search the code for both names:
+>    `git grep -n recovery_records backend/`, `git grep -n recovery_metrics backend/`,
+>    `git grep -n '"goal"' backend/`, `git grep -n '"goals"' backend/`.
+> 2. Inspect the model files (`backend/models/recovery.py`,
+>    `backend/models/goal.py`) — what `__tablename__` do they
+>    declare?
+> 3. Inspect every Alembic migration under `alembic/versions/` for
+>    `op.rename_table` or any reference to either name to figure out
+>    what the canonical name is supposed to be.
+>
+> **Decide which name wins.** Two options:
+> - **(a) Code wins** (`recovery_records`, `goal`). Then this PR
+>   adds an Alembic migration that renames the DB tables. Risk: any
+>   in-flight reads/writes against the old names fail mid-rename.
+>   Lowest-risk path: take a 30s downtime window during deploy.
+> - **(b) DB wins** (`recovery_metrics`, `goals`). Then this PR
+>   updates the model `__tablename__` and any raw SQL strings to
+>   match the DB. No data migration needed. Safer.
+>
+> **Default recommendation: option (b)** unless you find evidence
+> in the migration history that the canonical name is the
+> singular/`_records` form (in which case do (a)).
+>
+> **Tasks.**
+> 1. Update either the models OR write a rename migration depending
+>    on decision above.
+> 2. Verify with `grep` that no remaining code references the
+>    obsolete name.
+> 3. Add a test under `tests/test_database_postgres.py` (created by
+>    W1-tests) that asserts the chosen table names exist after
+>    `init_db()`.
+> 4. Update `docs/audit-001-initial.md` §4 with a new migration-debt
+>    item noting this drift was found and resolved.
+>
+> **Non-goals.** Do not touch any other table. Do not change the
+> column shapes — only names. Do not write code that handles BOTH
+> names — pick one and commit.
+>
+> **Verification.** Local pytest passes, ruff passes. After deploy
+> with W1-alembic landed, `scripts/diagnose_railway.py` shows no
+> "MISSING expected tables" warnings.
+
+---
+
 ### Brief: W1-deploy-cleanup
 
 > **Branch off `main`.** Read `docs/audit-001-initial.md` §4 item M8
@@ -316,38 +395,34 @@ committed. Each agent should refuse to start if it's absent.
 ### Brief: W2-bug-B
 
 > **Branch off `main`.** Pre-flight: `docs/audit-001-findings.md`
-> must exist. If it doesn't, stop and ask. Read
-> `docs/audit-001-initial.md` §3 Bug B and `docs/audit-001-findings.md`
-> "strength_sets schema" section.
+> must exist AND the user must have pasted a reproduction (browser
+> devtools 500 response + Railway log stack trace) into a new
+> section `## Bug B reproduction` of that file. If either is
+> missing, STOP and ask — the audit's hypothesis B1 (missing
+> column) was disproven by Wave 0, so this fix is reproduction-led.
 >
-> **Goal.** Make the lifting workout save succeed on Railway.
+> **What Wave 0 ruled out.** `strength_sets.performed_at` IS
+> present on Railway. All 12 expected columns exist. So Bug B is
+> NOT a schema issue. Likely candidates (from audit §3, B2–B7):
+> - FK constraint mismatch on `activity_id`
+> - Transaction/commit ordering bug
+> - Pydantic validation rejecting a payload the frontend now sends
+> - Service was down entirely (frontend errors not from this code)
 >
-> **Branch by finding.**
+> **Goal.** Make the lifting workout save succeed on Railway, based
+> on the actual reproduction in findings.md.
 >
-> - **If findings.md shows `performed_at` MISSING:**
->   - Add a small Alembic migration that ALTERs `strength_sets` to
->     add the column (or rely on `_ensure_compat_schema` + a
->     redeploy if W1-alembic hasn't landed yet — document in the PR).
->   - Add an explicit ALTER step to the migration file, NOT just a
->     model change.
->   - Verify by running `scripts/diagnose_railway.py` against a
->     fresh deploy.
-> - **If `performed_at` IS present:** the bug is elsewhere. Capture
->   the actual error from a reproduction: open the deployed app,
->   open devtools Network tab, log a set, hit Finish, paste the 500
->   response + Railway log stack trace into the PR description.
->   Then fix the root cause. Likely candidates from the audit: a
->   different missing column, a transaction commit issue, an FK
->   mismatch. The router test from W1-tests should now catch
->   regressions.
+> **Tasks.**
+> 1. Read the reproduction. Identify the failing line in the stack
+>    trace.
+> 2. Fix the root cause. Keep the diff minimal — do not refactor
+>    `backend/routers/strength.py` for style.
+> 3. Add a regression test to `tests/test_routers/test_strength.py`
+>    (created by W1-tests) that reproduces the exact failure mode
+>    and asserts the fix.
 >
-> **In either branch**, expand
-> `tests/test_routers/test_strength.py` (added by W1-tests) with a
-> regression test for the specific failure mode you fixed.
->
-> **Non-goals.** Do not refactor `backend/routers/strength.py` for
-> style. Do not change the frontend Record page. Do not touch other
-> bugs in this PR.
+> **Non-goals.** Do not change the frontend Record page. Do not
+> touch other bugs in this PR.
 >
 > **Verification.** `python -m pytest`, `ruff check .` pass.
 > Manually verify on Railway after deploy: log a set, hit Finish,
@@ -358,18 +433,33 @@ committed. Each agent should refuse to start if it's absent.
 ### Brief: W2-bug-A
 
 > **Branch off `main`.** Pre-flight: `docs/audit-001-findings.md`
-> must exist. If it doesn't, stop and ask. Read
-> `docs/audit-001-initial.md` §3 Bug A and `docs/audit-001-findings.md`
-> "oauth_tokens" and "sync_log" sections.
+> must exist AND **W1-schema-drift must have merged** (the recovery
+> table rename). Read `docs/audit-001-findings.md` "oauth_tokens"
+> and "sync_log" sections plus the "Findings summary" at the top
+> of `docs/audit-001-plan.md`.
 >
-> **Goal.** Restore Strava / Eight Sleep / Whoop data refresh AND
-> make future regressions visible.
+> **What Wave 0 revealed.** Sync has been offline for 26+ days.
+> The Whoop refresh token is invalid per Whoop's own API response
+> ("Re-authorize at /api/auth/whoop."). Strava has no row in
+> `oauth_tokens` but was operating off Railway env vars. The
+> immediate root cause of "data not refreshing" is that the
+> scheduler is not running at all — probably because startup is
+> failing somewhere.
 >
-> **Manual step (user does this, NOT the agent).** Re-run OAuth for
-> Strava and Whoop from the Railway-hosted app:
-> `https://<railway-host>/api/auth/strava` and `.../api/auth/whoop`.
-> Confirm new rows in `oauth_tokens` via a second
-> `diagnose_railway.py` run. The agent does NOT trigger OAuth.
+> **Goal.** Restore the scheduler and surface future regressions
+> visibly.
+>
+> **Manual step (user does this, NOT the agent).**
+> 1. Re-OAuth Whoop from the Railway-hosted app:
+>    `https://<railway-host>/api/auth/whoop`.
+> 2. Re-OAuth Strava if needed:
+>    `https://<railway-host>/api/auth/strava`.
+> 3. Confirm new rows in `oauth_tokens` via a second
+>    `scripts/diagnose_railway.py` run.
+> 4. Check Railway logs for the most recent startup. Paste the
+>    last 50 lines into a new section
+>    `## Startup logs (post-Wave-0)` of `docs/audit-001-findings.md`
+>    so the agent can see what's crashing.
 >
 > **Code-side tasks.**
 > 1. **Surface real errors in `/api/sync/status`.** Currently
