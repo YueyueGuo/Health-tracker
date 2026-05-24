@@ -115,7 +115,7 @@ async def _sync_window(
 
         interval = intervals_by_date.get(sleep_date)
 
-        fields = _extract_fields(day, interval)
+        fields = _attach_utc_to_sleep_times(_extract_fields(day, interval))
         raw = {"trend": day, "interval": interval} if interval else {"trend": day}
 
         existing = (await db.execute(
@@ -181,6 +181,27 @@ async def _sync_full_history(
 
 
 # ── Field extraction ────────────────────────────────────────────────
+
+
+def _attach_utc_to_sleep_times(fields: dict[str, Any]) -> dict[str, Any]:
+    """Attach UTC tzinfo to naive ``bed_time``/``wake_time`` in-place.
+
+    ``_extract_fields`` returns naive-local wall-clock datetimes for
+    these keys (see ``_to_local``). The model columns are
+    ``DateTime(timezone=True)`` (commit 35d648f), so we make the bind
+    contract explicit at the write boundary. The numeric wall-clock
+    value is preserved — asyncpg has been implicitly treating naive
+    datetimes as UTC for these writes for as long as the Postgres
+    column has been ``timestamp with time zone``. See
+    docs/audit-001-datetime-sweep-audit.md (and the "Scope honesty"
+    callout for why this preserves the on-disk value rather than
+    fixing the semantic contract).
+    """
+    for key in ("bed_time", "wake_time"):
+        val = fields.get(key)
+        if val is not None and val.tzinfo is None:
+            fields[key] = val.replace(tzinfo=timezone.utc)
+    return fields
 
 
 def _extract_fields(trend: dict, interval: dict | None) -> dict[str, Any]:

@@ -34,12 +34,21 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_dt(value: str | None) -> datetime | None:
-    """Parse Whoop's ISO-8601 ``...Z`` strings into naive-UTC datetimes."""
+    """Parse Whoop's ISO-8601 ``...Z`` strings into tz-aware UTC datetimes.
+
+    The values feed ``SleepSession.bed_time`` / ``wake_time`` and
+    ``WhoopWorkout.start`` / ``end``, all of which are
+    ``DateTime(timezone=True)`` after commit 35d648f. Keeping tzinfo
+    avoids any implicit-UTC reinterpretation by asyncpg and keeps the
+    semantics explicit. ``.date()`` works the same on naive and tz-aware
+    datetimes, so the existing ``_cycle_start_date`` / ``_sleep_wake_date``
+    callers are unaffected.
+    """
     if not value:
         return None
     s = value.replace("Z", "+00:00")
     try:
-        return datetime.fromisoformat(s).astimezone(timezone.utc).replace(tzinfo=None)
+        return datetime.fromisoformat(s).astimezone(timezone.utc)
     except (ValueError, TypeError):
         return None
 
