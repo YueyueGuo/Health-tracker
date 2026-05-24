@@ -25,7 +25,10 @@ env/
 *.bak
 
 # IDE
-.claude/
+.claude/*
+!.claude/agents/
+!.claude/commands/
+!.claude/README.md
 .vscode/
 .idea/
 *.swp

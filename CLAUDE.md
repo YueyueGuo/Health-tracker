@@ -45,16 +45,18 @@ extend to others later.
 - Open PRs against `main`; never push directly to `main`
 - Never commit secrets or credentials
 
-## Current mission: initial audit
-Read-only architecture audit by the `architecture-auditor` agent.
-No code changes. Produce a written report covering current architecture,
-data flow, root-cause hypotheses for the two known bugs, migration debt,
-and test coverage.
+## Agentic workflow
+Features and bugs are driven by specialized agents under `.claude/agents/`,
+orchestrated by two slash commands:
 
-## Definition of "done" for the current mission
-A written report covering the items listed in the architecture-auditor
-agent definition, presented for the project owner's review. Once
-reviewed, save to `docs/audit-001-initial.md`.
+- `/feature <description>` — plan → research + migration (parallel) →
+  backend + frontend (parallel) → tests → review → PR → subscribe.
+- `/bug <description>` — investigate → fix + regression test →
+  tests → review → PR → subscribe.
+
+See `.claude/README.md` for the full agent roster and parallelism plan.
+Plans land in `docs/plans/`, bug diagnoses in `docs/bugs/`,
+architectural decisions in `docs/decisions/`.
 
 ---
 
