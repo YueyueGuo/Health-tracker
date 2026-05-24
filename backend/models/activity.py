@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
     func,
 )
 from sqlalchemy.dialects.sqlite import JSON
@@ -94,6 +95,22 @@ class Activity(Base):
     raw_data: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    # Source taxonomy (additive back-compat columns added by the
+    # Apple Health migration). Existing rows are backfilled to
+    # source='strava' / external_id=str(strava_id). New Strava rows
+    # default to the same values at the model layer so app-level
+    # inserts stay consistent without relying on backfill.
+    source: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, default="strava"
+    )
+    external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Plain int (no FK) — points at health_data_points.id when an Apple
+    # Health workout has superseded this Strava activity. Kept FK-less
+    # to avoid a cross-table dependency in the Alembic head.
+    superseded_by_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True
+    )
+
     streams: Mapped[list[ActivityStream]] = relationship(
         back_populates="activity", cascade="all, delete-orphan"
     )
@@ -147,3 +164,19 @@ class ActivityLap(Base):
     end_index: Mapped[int | None] = mapped_column(Integer)
 
     activity: Mapped[Activity] = relationship(back_populates="laps")
+
+
+@event.listens_for(Activity, "before_insert")
+def _activity_default_source_external_id(mapper, connection, target: Activity) -> None:
+    """Default ``source='strava'`` / ``external_id=str(strava_id)`` on insert.
+
+    The migration backfilled existing rows; this keeps new rows
+    consistent without sprinkling the same defaults across every
+    insert site. Set by ``mapped_column(default=...)`` for ``source``
+    too, but spelling it out here keeps both columns in one place and
+    lets ``external_id`` use the row's ``strava_id`` at flush time.
+    """
+    if target.source is None:
+        target.source = "strava"
+    if target.external_id is None and target.strava_id is not None:
+        target.external_id = str(target.strava_id)

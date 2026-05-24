@@ -1,0 +1,190 @@
+"""Tests for the HAE payload parser + datetime / unit validators."""
+from __future__ import annotations
+
+from datetime import datetime
+
+import pytest
+from pydantic import ValidationError
+
+from backend.services.apple_health_parser import (
+    HAEBatch,
+    HAEQty,
+    HAEWorkout,
+    flatten_hae_workout,
+    parse_hae_datetime,
+)
+
+
+# ── parse_hae_datetime ──────────────────────────────────────────────
+
+
+def test_parse_hae_datetime_converts_offset_to_naive_utc():
+    # 13:14 EDT (-0400) → 17:14 UTC, then tzinfo stripped.
+    dt = parse_hae_datetime("2026-05-24 13:14:00 -0400")
+    assert dt == datetime(2026, 5, 24, 17, 14, 0)
+    assert dt.tzinfo is None
+
+
+def test_parse_hae_datetime_utc_zero_offset():
+    dt = parse_hae_datetime("2026-05-24 13:14:00 +0000")
+    assert dt == datetime(2026, 5, 24, 13, 14, 0)
+    assert dt.tzinfo is None
+
+
+def test_parse_hae_datetime_positive_offset():
+    # Sydney winter — +1100. 09:00 there → 22:00 UTC the previous day.
+    dt = parse_hae_datetime("2026-07-04 09:00:00 +1100")
+    assert dt == datetime(2026, 7, 3, 22, 0, 0)
+
+
+def test_parse_hae_datetime_rejects_iso_with_T_separator():
+    # HAE format is space-separated; anything else explodes loudly.
+    with pytest.raises(ValueError, match="unparseable HAE datetime"):
+        parse_hae_datetime("2026-05-24T13:14:00-04:00")
+
+
+def test_parse_hae_datetime_rejects_naive():
+    with pytest.raises(ValueError):
+        parse_hae_datetime("2026-05-24 13:14:00")
+
+
+def test_parse_hae_datetime_rejects_none():
+    with pytest.raises(ValueError):
+        parse_hae_datetime(None)  # type: ignore[arg-type]
+
+
+# ── HAEQty.as_unit ──────────────────────────────────────────────────
+
+
+def test_qty_as_unit_returns_value_when_units_match():
+    assert HAEQty(qty=42.5, units="kcal").as_unit("kcal") == 42.5
+
+
+def test_qty_as_unit_accepts_set_of_aliases():
+    # HAE writes "kcal" / "Cal" interchangeably; the helper accepts either.
+    assert HAEQty(qty=12.0, units="Cal").as_unit({"kcal", "Cal"}) == 12.0
+
+
+def test_qty_as_unit_raises_on_mismatch():
+    with pytest.raises(ValueError, match="unexpected HAE units"):
+        HAEQty(qty=1.0, units="km").as_unit("m")
+
+
+# ── HAEBatch validation ─────────────────────────────────────────────
+
+
+_SAMPLE_PAYLOAD = {
+    "data": {
+        "workouts": [
+            {
+                "id": "B6D2A7F1-3C8E-4A21-9F0B-1E5C7D8A2B3F",
+                "name": "Running",
+                "start": "2026-05-24 13:14:00 -0400",
+                "end": "2026-05-24 14:02:35 -0400",
+                "duration": 2915.0,
+                "activeEnergyBurned": {"qty": 412.3, "units": "kcal"},
+                "totalEnergy": {"qty": 488.0, "units": "kcal"},
+                "distance": {"qty": 8043.6, "units": "m"},
+                "avgHeartRate": {"qty": 154, "units": "count/min"},
+                "maxHeartRate": {"qty": 178, "units": "count/min"},
+                "avgSpeed": {"qty": 2.76, "units": "m/s"},
+                "maxSpeed": {"qty": 4.21, "units": "m/s"},
+                "elevationUp": {"qty": 64.0, "units": "m"},
+                "stepCount": {"qty": 7821, "units": "count"},
+                "location": "Outdoor",
+                "heartRateData": [
+                    {"date": "2026-05-24 13:14:01 -0400", "qty": 124, "units": "count/min"},
+                ],
+                "route": [{"lat": 40.7128, "lon": -74.006}],
+            }
+        ]
+    }
+}
+
+
+def test_batch_parses_full_sample():
+    batch = HAEBatch.model_validate(_SAMPLE_PAYLOAD)
+    assert len(batch.data.workouts) == 1
+    w = batch.data.workouts[0]
+    assert w.id.startswith("B6D2A7F1")
+    assert w.name == "Running"
+    assert w.activeEnergyBurned.qty == 412.3
+
+
+def test_batch_accepts_empty_workouts_list():
+    batch = HAEBatch.model_validate({"data": {"workouts": []}})
+    assert batch.data.workouts == []
+
+
+def test_batch_rejects_missing_required_workout_fields():
+    bad = {"data": {"workouts": [{"id": "x"}]}}  # no name/start/end/duration
+    with pytest.raises(ValidationError):
+        HAEBatch.model_validate(bad)
+
+
+def test_workout_preserves_extra_series_via_model_dump():
+    w = HAEWorkout.model_validate(_SAMPLE_PAYLOAD["data"]["workouts"][0])
+    dumped = w.model_dump()
+    # heart-rate samples + route ride along in raw_payload territory.
+    assert "heartRateData" in dumped
+    assert "route" in dumped
+
+
+# ── flatten_hae_workout ─────────────────────────────────────────────
+
+
+def test_flatten_full_workout_maps_all_fields():
+    w = HAEWorkout.model_validate(_SAMPLE_PAYLOAD["data"]["workouts"][0])
+    parsed = flatten_hae_workout(w)
+
+    assert parsed.external_id == "B6D2A7F1-3C8E-4A21-9F0B-1E5C7D8A2B3F"
+    assert parsed.activity_type == "run"
+    assert parsed.start_time == datetime(2026, 5, 24, 17, 14, 0)
+    assert parsed.end_time == datetime(2026, 5, 24, 18, 2, 35)
+    assert parsed.duration_s == 2915
+    assert parsed.active_energy_kcal == 412.3
+    assert parsed.distance_m == 8043.6
+    assert parsed.avg_hr == 154.0
+    assert parsed.max_hr == 178.0
+    assert parsed.avg_speed_mps == 2.76
+    assert parsed.total_elevation_m == 64.0
+    assert parsed.raw_payload["heartRateData"][0]["qty"] == 124
+
+
+def test_flatten_unknown_activity_falls_through_to_other():
+    w = HAEWorkout(
+        id="x",
+        name="Hopscotch",
+        start="2026-05-24 12:00:00 +0000",
+        end="2026-05-24 12:30:00 +0000",
+        duration=1800.0,
+    )
+    parsed = flatten_hae_workout(w)
+    assert parsed.activity_type == "other"
+
+
+def test_flatten_rejects_bad_units():
+    bad = HAEWorkout(
+        id="x",
+        name="Running",
+        start="2026-05-24 12:00:00 +0000",
+        end="2026-05-24 12:30:00 +0000",
+        duration=1800.0,
+        distance=HAEQty(qty=5.0, units="km"),  # plan requires meters
+    )
+    with pytest.raises(ValueError, match="unexpected HAE units"):
+        flatten_hae_workout(bad)
+
+
+def test_flatten_handles_missing_optional_fields():
+    w = HAEWorkout(
+        id="x",
+        name="Walking",
+        start="2026-05-24 12:00:00 +0000",
+        end="2026-05-24 12:30:00 +0000",
+        duration=1800.0,
+    )
+    parsed = flatten_hae_workout(w)
+    assert parsed.distance_m is None
+    assert parsed.active_energy_kcal is None
+    assert parsed.avg_hr is None

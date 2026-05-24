@@ -117,6 +117,7 @@ def create_app() -> FastAPI:
     # Import and register routers
     from backend.routers import (
         activities,
+        apple_health,
         auth,
         chat,
         correlations,
@@ -153,6 +154,11 @@ def create_app() -> FastAPI:
     app.include_router(locations.router, prefix="/api/locations", tags=["locations"])
     app.include_router(goals.router, prefix="/api/goals", tags=["goals"])
     app.include_router(profile.router, prefix="/api/profile", tags=["profile"])
+    app.include_router(
+        apple_health.router,
+        prefix="/api/ingest/apple-health",
+        tags=["apple-health"],
+    )
 
     @app.get("/api/health")
     async def health_check():

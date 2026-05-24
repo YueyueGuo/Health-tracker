@@ -8,7 +8,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.models import Activity, ActivityLap, ActivityStream, WeatherSnapshot
+from backend.models import (
+    Activity,
+    ActivityLap,
+    ActivityStream,
+    HealthDataPoint,
+    WeatherSnapshot,
+    Workout,
+)
 from backend.services.hr_zones import (
     compute_hr_drift,
     compute_pace_hr_decoupling,
@@ -41,24 +48,65 @@ async def list_activities(
     days: int = Query(30, ge=1, le=365),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    include_superseded: bool = Query(
+        False,
+        description=(
+            "When False (default), hide Strava activities that an Apple "
+            "Health workout has superseded."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
-    """List activities with optional filtering."""
+    """List activities with optional filtering.
+
+    Surfaces both Strava ``Activity`` rows and Apple-Health-only
+    ``Workout`` rows (workouts with no Strava back-link) in one list
+    sorted by start time. We do the Strava query + the Apple query
+    separately and merge in Python — the volumes are small and the
+    column shapes differ enough that a UNION would be more code than
+    sort-merge.
+    """
     from datetime import timedelta
 
-    query = select(Activity).order_by(Activity.start_date.desc())
-
     cutoff = utc_now_naive() - timedelta(days=days)
-    query = query.where(Activity.start_date >= cutoff)
 
+    # ── Strava (existing activities table) ──────────────────────────
+    query = select(Activity).order_by(Activity.start_date.desc())
+    query = query.where(Activity.start_date >= cutoff)
+    if not include_superseded:
+        query = query.where(Activity.superseded_by_id.is_(None))
     if sport_type:
         query = query.where(Activity.sport_type == sport_type)
+    # Over-fetch so a downstream Python merge can still respect ``limit``.
+    query = query.limit(limit + offset)
+    activities = (await db.execute(query)).scalars().all()
+    strava_rows = [_activity_summary(a) for a in activities]
 
-    query = query.offset(offset).limit(limit)
-    result = await db.execute(query)
-    activities = result.scalars().all()
+    # ── Apple-only workouts (workouts with no activity_id back-link) ─
+    # When the caller passes a ``sport_type`` filter we skip Apple rows
+    # entirely — Apple's ``activity_type`` taxonomy is the normalized
+    # one, not Strava's, so the filter wouldn't be meaningful here.
+    apple_rows: list[dict] = []
+    if not sport_type:
+        apple_q = (
+            select(Workout, HealthDataPoint)
+            .join(HealthDataPoint, Workout.id == HealthDataPoint.id)
+            .where(
+                HealthDataPoint.data_type == "workout",
+                HealthDataPoint.source == "apple_health",
+                HealthDataPoint.start_time >= cutoff,
+                Workout.activity_id.is_(None),
+            )
+            .order_by(HealthDataPoint.start_time.desc())
+            .limit(limit + offset)
+        )
+        for workout, dp in (await db.execute(apple_q)).all():
+            apple_rows.append(_apple_workout_summary(workout, dp))
 
-    return [_activity_summary(a) for a in activities]
+    # Merge + sort by start_date, then page in Python.
+    combined = strava_rows + apple_rows
+    combined.sort(key=lambda r: r.get("start_date") or "", reverse=True)
+    return combined[offset : offset + limit]
 
 
 @router.get("/types")
@@ -325,6 +373,65 @@ def _activity_summary(a: Activity) -> dict:
         "rpe": a.rpe,
         "user_notes": a.user_notes,
         "rated_at": a.rated_at.isoformat() if a.rated_at else None,
+        "source": a.source or "strava",
+        "external_id": a.external_id,
+        "superseded_by_id": a.superseded_by_id,
+    }
+
+
+def _apple_workout_summary(workout: Workout, dp: HealthDataPoint) -> dict:
+    """Map an Apple-only ``Workout`` onto the ``ActivitySummary`` shape.
+
+    Frontend consumers treat ``source == "apple_health"`` as the cue
+    that Strava-specific fields (``strava_id``, zones, power, etc.) are
+    intentionally absent.
+    """
+    return {
+        # Use the health_data_points.id as the ``id`` — there's no
+        # Strava row to point at, and HDP is the polymorphic anchor.
+        "id": dp.id,
+        "strava_id": None,
+        "name": (dp.raw_payload or {}).get("name") or workout.activity_type,
+        "sport_type": workout.activity_type,
+        "start_date": dp.start_time.isoformat() if dp.start_time else None,
+        "start_date_local": None,
+        "elapsed_time": workout.duration_s,
+        "moving_time": workout.duration_s,
+        "distance": workout.distance_m,
+        "total_elevation": workout.total_elevation_m,
+        "average_hr": workout.avg_hr,
+        "max_hr": workout.max_hr,
+        "average_speed": workout.avg_speed_mps,
+        "max_speed": None,
+        "average_power": None,
+        "max_power": None,
+        "weighted_avg_power": None,
+        "average_cadence": None,
+        "calories": workout.active_energy_kcal,
+        "kilojoules": None,
+        "suffer_score": None,
+        "device_watts": None,
+        "workout_type": None,
+        "available_zones": None,
+        "enrichment_status": "complete",
+        "enriched_at": None,
+        "classification_type": None,
+        "classification_flags": None,
+        "classified_at": None,
+        "weather_enriched": False,
+        "elev_high_m": None,
+        "elev_low_m": None,
+        "base_elevation_m": None,
+        "elevation_enriched": False,
+        "location_id": None,
+        "start_lat": None,
+        "start_lng": None,
+        "rpe": None,
+        "user_notes": None,
+        "rated_at": None,
+        "source": "apple_health",
+        "external_id": dp.external_id,
+        "superseded_by_id": dp.superseded_by_id,
     }
 
 

@@ -670,3 +670,64 @@ def test_lap_from_raw_handles_malformed_start_date():
     raw = _lap_raw(0, start_date="nonsense")
     lap = _lap_from_raw(activity_id=1, raw=raw)
     assert lap.start_date is None
+
+
+# ── Phase A: Apple Health dedup hook ───────────────────────────────
+
+
+async def test_phase_a_marks_new_strava_superseded_by_existing_apple(db):
+    """A new Strava row in the same window as an existing Apple workout
+    must get its ``superseded_by_id`` set immediately, so the default UI
+    list never shows the now-stale Strava version."""
+    from backend.models import HealthDataPoint, Workout
+
+    # Pre-seed an Apple Health workout at the same start as the Strava
+    # row we're about to list.
+    apple_start = datetime(2026, 4, 15, 8, 0, 0)
+    dp = HealthDataPoint(
+        source="apple_health",
+        data_type="workout",
+        external_id="apple-existing",
+        start_time=apple_start,
+    )
+    db.add(dp)
+    await db.flush()
+    db.add(Workout(id=dp.id, activity_type="run"))
+    await db.commit()
+    await db.refresh(dp)
+
+    # Strava list returns a Run starting within the ±10-min window.
+    strava = StubStravaClient(
+        list_payload=[
+            _list_activity(
+                strava_id=500,
+                start=(apple_start + timedelta(minutes=2))
+                .replace(tzinfo=timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z"),
+            )
+        ]
+    )
+    await _engine(db, strava)._strava_phase_a(full_history=True)
+
+    act = (await db.execute(select(Activity))).scalar_one()
+    assert act.superseded_by_id == dp.id
+
+
+async def test_phase_a_dedup_failure_does_not_break_sync(db, monkeypatch):
+    """A crashing dedup helper must NOT take down Strava Phase A —
+    the raw insert is more important than the derived link."""
+    from backend.services import workout_dedup
+
+    async def _boom(db_, activity):
+        raise RuntimeError("dedup exploded")
+
+    monkeypatch.setattr(workout_dedup, "match_strava_against_apple", _boom)
+
+    strava = StubStravaClient(list_payload=[_list_activity(strava_id=600)])
+    # Should not raise.
+    count = await _engine(db, strava)._strava_phase_a(full_history=True)
+    assert count == 1
+    act = (await db.execute(select(Activity))).scalar_one()
+    assert act.strava_id == 600
+    assert act.superseded_by_id is None

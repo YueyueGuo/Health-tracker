@@ -187,6 +187,21 @@ class SyncEngine:
             self.db.add(activity)
             new_count += 1
 
+            # Cross-source dedup: if an Apple Health workout for this
+            # window already exists, flag this Strava row as superseded
+            # immediately so the default /api/activities list hides it.
+            # Wrapped — a dedup failure must never break Strava sync.
+            try:
+                await self.db.flush()  # populate activity.id for the link
+                from backend.services import workout_dedup
+
+                await workout_dedup.match_strava_against_apple(self.db, activity)
+            except Exception:
+                logger.exception(
+                    "Strava→Apple dedup failed for activity strava_id=%s",
+                    strava_id,
+                )
+
         await self.db.commit()
         return new_count
 

@@ -72,6 +72,20 @@ class WeatherSettings(BaseSettings):
     api_key: str = ""
 
 
+class AppleHealthSettings(BaseSettings):
+    """Apple Health (Health Auto Export) ingestion settings.
+
+    ``ingest_token`` is a shared secret the iOS app sends in
+    ``X-Apple-Health-Token``. Blank disables ingestion (503 from the
+    webhook so it's obvious the deploy is misconfigured rather than
+    failing open).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="APPLE_HEALTH_", **_env_file_config)
+
+    ingest_token: str = ""
+
+
 class LLMSettings(BaseSettings):
     model_config = SettingsConfigDict(**_env_file_config)
 
@@ -132,6 +146,7 @@ class Settings(BaseSettings):
     eight_sleep: EightSleepSettings = Field(default_factory=EightSleepSettings)
     whoop: WhoopSettings = Field(default_factory=WhoopSettings)
     weather: WeatherSettings = Field(default_factory=WeatherSettings)
+    apple_health: AppleHealthSettings = Field(default_factory=AppleHealthSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
 
     @field_validator("cors_origins", mode="before")
