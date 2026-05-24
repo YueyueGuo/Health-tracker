@@ -137,110 +137,152 @@ The Strava→`health_data_points` projection is **not** done in this PR. Existin
 - Populate `activities.source = 'strava'` and `activities.external_id = strava_id::text` for every existing row.
 - No projection of Strava activities into `health_data_points` (see ADR).
 
-## 6. External integration
+## 6. External integration (REVISED — Health Auto Export)
 
-### Auth & transport (locked)
+**Decision change (2026-05-24):** Research (`docs/research/apple-health-shortcuts.md`) confirmed that plain iOS Shortcuts cannot read workout records from Apple Health — only scalar samples. User has chosen **Health Auto Export (HAE)** as the ingestion path. HAE is a paid iOS app (~$8 one-time IAP) that exposes a "REST API Export" automation: on workout end, it POSTs a JSON payload to our backend.
+
+### Auth & transport
 - Method: shared-secret token via `X-Apple-Health-Token` header.
 - Storage: env var `APPLE_HEALTH_INGEST_TOKEN`, surfaced through `backend/config.py` as `AppleHealthSettings`.
 - Compare in constant time (`hmac.compare_digest`).
-- 401 on missing/wrong; 403 if header present but token blank in env (misconfig signal).
+- 401 on missing/wrong; 503 if header present but token blank in env (misconfig signal).
 
-### Sync model (locked)
-- Push from iOS Shortcut. Single-user. No polling.
-- Idempotent: `(source='apple_health', data_type='workout', external_id=HK UUID)` is the natural key. Replay = upsert (update mutable fields, do **not** create duplicate laps — replace lap rows wholesale, mirroring Strava enrichment in `backend/services/sync.py:247-253`).
+### Sync model
+- Push from HAE (iOS app, in the background, triggered by HKObserverQuery on workout writes).
+- Single-user. No polling.
+- HAE sends one POST per export event; payload contains a `data.workouts: [...]` array (may carry one OR many workouts in a single POST — engineer must handle batch).
+- Idempotent: `(source='apple_health', data_type='workout', external_id=HAE workout id)` is the natural key. HAE's `id` field is documented to be the HKWorkout UUID stringified. Replay = upsert (replace lap rows wholesale).
 
-### Expected payload shape (the Shortcut must produce this)
-The Shortcut **must** flatten what the iOS "Health" actions expose to JSON. Documented contract:
+### Expected payload shape (Health Auto Export)
+
+HAE's documented JSON shape (per `github.com/Lybron/health-auto-export/wiki/API-Export---JSON-Format`):
 
 ```json
 {
-  "workout": {
-    "uuid": "B6D2…",
-    "activity_type": "HKWorkoutActivityTypeRunning",
-    "start": "2026-05-24T13:14:00-04:00",
-    "end":   "2026-05-24T14:02:35-04:00",
-    "duration_s": 2915,
-    "active_energy_kcal": 412.3,
-    "distance_m": 8043.6,
-    "avg_hr": 154,
-    "max_hr": 178,
-    "total_elevation_m": 64.0,
-    "source_name": "Apple Watch",
-    "device": "Apple Watch Series 9"
-  },
-  "events": [
-    { "type": "lap", "start": "...", "end": "..." },
-    { "type": "segment", "start": "...", "end": "..." }
-  ],
-  "laps": [
-    {
-      "index": 1,
-      "start": "2026-05-24T13:14:00-04:00",
-      "duration_s": 360,
-      "distance_m": 1000,
-      "avg_hr": 152,
-      "max_hr": 168,
-      "avg_speed_mps": 2.78
-    }
-  ]
+  "data": {
+    "workouts": [
+      {
+        "id": "B6D2A7F1-3C8E-4A21-9F0B-1E5C7D8A2B3F",
+        "name": "Running",
+        "start": "2026-05-24 13:14:00 -0400",
+        "end":   "2026-05-24 14:02:35 -0400",
+        "duration": 2915.0,
+        "activeEnergyBurned": { "qty": 412.3, "units": "kcal" },
+        "totalEnergy":         { "qty": 488.0, "units": "kcal" },
+        "distance":            { "qty": 8043.6, "units": "m" },
+        "avgHeartRate":        { "qty": 154, "units": "count/min" },
+        "maxHeartRate":        { "qty": 178, "units": "count/min" },
+        "minHeartRate":        { "qty":  92, "units": "count/min" },
+        "stepCount":           { "qty": 7821, "units": "count" },
+        "stepCadence":         { "qty": 162, "units": "count/min" },
+        "flightsClimbed":      { "qty": 8,   "units": "count" },
+        "elevationUp":         { "qty": 64.0, "units": "m" },
+        "avgSpeed":            { "qty": 2.76, "units": "m/s" },
+        "maxSpeed":            { "qty": 4.21, "units": "m/s" },
+        "location": "Outdoor",
+        "heartRateData": [
+          { "date": "2026-05-24 13:14:01 -0400", "qty": 124, "units": "count/min" },
+          { "date": "2026-05-24 13:14:02 -0400", "qty": 128, "units": "count/min" }
+        ],
+        "heartRateRecovery": [
+          { "date": "2026-05-24 14:03:35 -0400", "qty": 142, "units": "count/min" }
+        ],
+        "route": [
+          { "lat": 40.7128, "lon": -74.0060, "altitude": 12.4, "timestamp": "2026-05-24 13:14:00 -0400" }
+        ]
+      }
+    ]
+  }
 }
 ```
 
-The ingest service must accept payloads with **either** a `laps` array (preferred) **or** an `events` array (it then derives even time-based splits per km/mi). If neither is present, the workout is stored without laps.
+Notes for the parser:
+- All numeric fields are wrapped as `{"qty": ..., "units": "..."}`. The parser must unwrap and validate units (reject if `distance.units != "m"`, etc., OR normalize — recommend reject for v1 to fail fast; HAE settings let the user pick metric).
+- Timestamps: `"2026-05-24 13:14:00 -0400"` — space-separated, with offset. `datetime.strptime("%Y-%m-%d %H:%M:%S %z")` handles this. Convert to UTC, strip tzinfo to match `time_utils` convention.
+- `name` is the display string (`"Running"`, `"Cycling"`, `"Pool Swim"`, etc.) — `sport_mapping.APPLE_TO_NORMALIZED` keys must be the lowercased display strings, NOT `HKWorkoutActivityType...` constants.
+- `heartRateData[]` can be very large (per-second). Store the array as-is in `health_data_points.raw_payload` JSON, but do NOT derive `workout_laps` from it in v1. Derive laps from time-based splits (every 1 km for runs/walks/hikes, every 5 km for rides, every 100 m for swims). This is consistent with what we'd do for Strava when laps are absent.
+- `route[]` similarly stored in `raw_payload`; no separate `workout_route` table in v1 (future feature).
+- `location` is informational; we don't model indoor/outdoor explicitly in v1 (the `activities` table has an `is_indoor` boolean — engineer may copy it through if the field exists).
 
-### Open questions for `integration-researcher`
-The user explicitly chose plain iOS Shortcuts (not Health Auto Export). The plan must be validated on these points before the backend agent writes the parser:
+### Sport mapping (HAE display strings → normalized)
 
-1. **Does plain iOS Shortcuts expose per-lap data?** The "Find Workouts" / "Get Workout" actions are known to expose duration, energy, distance, HR. Confirm whether they also expose `WorkoutEvents` (lap/segment markers) or `WorkoutRoute` segments. If **not**, the contract above must drop the `events`/`laps` arrays and the engineer falls back to time-based splits derived server-side from total duration + distance.
-2. **What is the canonical field name** the Shortcut output uses for the HKWorkout UUID? (Shortcuts sometimes surface it as `Identifier` rather than `UUID`.) The ingest service's parser key must match.
-3. **HR / HR-series**: can Shortcuts pull average + max HR for a workout in one action, or does it require a separate "Find Health Samples" with predicate `Workout = …`? This determines whether the user's Shortcut needs one stage or two.
-4. **Timezone**: do the timestamps come through as ISO8601 with offset, or as device-local naive strings? We store UTC-naive in `activities.start_date` (`backend/services/time_utils.py`). The parser must normalize consistently.
-5. **HKWorkoutActivityType list**: confirm the canonical Apple enum strings (e.g. `HKWorkoutActivityTypeRunning` vs `Running`) Shortcuts emits, so `sport_mapping.py` keys are correct.
-6. **Health Auto Export comparison**: even though we picked plain Shortcuts, document what HAE would have given us for laps/route — if plain Shortcuts can't do laps, this is the fallback to recommend to the user.
+```python
+APPLE_TO_NORMALIZED = {
+    "running": "run",
+    "outdoor run": "run",
+    "indoor run": "run",
+    "cycling": "ride",
+    "outdoor cycle": "ride",
+    "indoor cycle": "ride",
+    "walking": "walk",
+    "hiking": "hike",
+    "pool swim": "swim",
+    "open water swim": "swim",
+    "traditional strength training": "strength",
+    "functional strength training": "strength",
+    "yoga": "yoga",
+    "high intensity interval training": "hiit",
+    "hiit": "hiit",
+    "elliptical": "elliptical",
+    "rowing": "row",
+    "core training": "strength",
+    "mixed cardio": "cardio",
+}
+```
 
-Researcher should produce a brief covering §1-§7 of `.claude/agents/integration-researcher.md` and answer the six questions above with citations.
+Lookup must lowercase + strip the incoming `name`. Unknown values pass through as `"other"` (don't 422 — preserve the workout).
 
 ### Rate limits / error model
 - No external rate limit (we own the endpoint).
-- 200 on success; 401 bad token; 422 schema; 409 if `external_id` exists but payload conflict (return existing id, idempotent).
-- No retries server-side; Shortcuts auto-retries on network failure if the user configures it.
+- 200 on success; 401 bad token; 422 schema; on batch payload with mixed success, return per-workout result list.
+- No retries server-side; HAE retries on network failure when its automation runs.
+- Response shape: `{"results": [{"external_id": "...", "workout_id": 42, "dedup_matched_activity_id": 17, "lap_count": 3, "status": "created" | "updated"}, ...]}`.
 
-## 7. Backend tasks
+## 7. Backend tasks (revised for HAE)
 
 Ordered, each small enough for one agent run:
 
 1. **Config**
    - Add `AppleHealthSettings` to `backend/config.py`: `ingest_token: str = ""` with prefix `APPLE_HEALTH_`.
-   - Wire into `Settings` like the other sub-settings (`backend/config.py:131-135`).
+   - Wire into `Settings` like the other sub-settings.
 2. **Sport mapping module** (`backend/services/sport_mapping.py`)
-   - `APPLE_TO_NORMALIZED: dict[str, str]` (e.g. `HKWorkoutActivityTypeRunning → "run"`).
-   - `STRAVA_TO_NORMALIZED: dict[str, str]` (covers Strava `sport_type` values seen in code today, e.g. `Run`, `TrailRun`, `Ride`, `WeightTraining` etc.).
-   - `normalize_apple(t: str) -> str | None`, `normalize_strava(t: str) -> str | None`.
-   - `same_activity(apple_type: str, strava_type: str) -> bool`.
+   - `APPLE_TO_NORMALIZED: dict[str, str]` — lowercased display strings (see §6).
+   - `STRAVA_TO_NORMALIZED: dict[str, str]` — Strava `sport_type` values (`Run`, `TrailRun`, `Ride`, `WeightTraining`, etc.).
+   - `normalize_apple(name: str) -> str | None` — lowercases + strips before lookup; returns `"other"` for unknowns.
+   - `normalize_strava(t: str) -> str | None`.
+   - `same_activity(apple_name: str, strava_type: str) -> bool` — compares after normalization.
 3. **Models**
    - Create `backend/models/health_data_point.py` (`HealthDataPoint`).
    - Create `backend/models/workout.py` (`Workout`, `WorkoutLap`), joined-table style with `HealthDataPoint`.
    - Add `source`, `external_id`, `superseded_by_id` columns to `Activity` in `backend/models/activity.py`.
    - Export from `backend/models/__init__.py`.
-4. **Dedup service** (`backend/services/workout_dedup.py`)
+4. **HAE payload parser** (`backend/services/apple_health_parser.py`)
+   - Pydantic models for the HAE payload shape (`HAEBatch`, `HAEWorkout`, `HAEQty`).
+   - `HAEQty` is the wrapped `{"qty": float, "units": str}` shape; provide `.as_meters()`, `.as_kcal()`, etc. helpers that validate units and raise on mismatch.
+   - `parse_hae_datetime(s: str) -> datetime` — handles `"YYYY-MM-DD HH:MM:SS ±HHMM"`, returns naive UTC.
+   - One workout → an internal `ParsedWorkout` dataclass that the ingest service consumes.
+5. **Dedup service** (`backend/services/workout_dedup.py`)
    - `match_apple_against_strava(db, workout) -> Activity | None` — query `activities` where `start_date` in `[workout.start_time − 10m, workout.start_time + 10m]` AND normalized sport matches; if found, set `activity.superseded_by_id = workout.id`.
-   - `match_strava_against_apple(db, activity) -> Workout | None` — symmetric; if found, set `activity.superseded_by_id = workout.id` (and optionally `workout.activity_id = activity.id` for the back-pointer).
-   - Pure functions: take `db`, take the row, persist via passed session, no commit (caller commits).
-5. **Ingest service** (`backend/services/apple_health_ingest.py`)
-   - `ingest_workout(db, payload) -> dict`: validate (Pydantic model), upsert `HealthDataPoint` + `Workout`, parse laps from `payload.laps`, else derive from `payload.events`, else from total duration. Replace laps wholesale on re-post.
-   - Calls `workout_dedup.match_apple_against_strava` after upsert.
-   - Returns `{"workout_id": …, "external_id": …, "dedup_matched_activity_id": …|None, "lap_count": …}`.
-6. **Auth dependency** (`backend/routers/apple_health.py`)
+   - `match_strava_against_apple(db, activity) -> Workout | None` — symmetric.
+   - Pure functions: take `db` + row, persist via passed session, no commit (caller commits).
+6. **Ingest service** (`backend/services/apple_health_ingest.py`)
+   - `ingest_workouts(db, batch: HAEBatch) -> list[dict]`: iterate `batch.data.workouts`, for each:
+     - upsert `HealthDataPoint(source='apple_health', data_type='workout', external_id=hae_workout.id)` + `Workout` 1:1 child.
+     - Derive `workout_laps` via time-based splits (1 km for run/walk/hike, 5 km for ride, 100 m for swim — fall back to no laps if no distance). Replace laps wholesale on re-post.
+     - Store full HAE workout JSON in `raw_payload`.
+     - Call `workout_dedup.match_apple_against_strava`.
+     - Append result dict `{"external_id", "workout_id", "dedup_matched_activity_id", "lap_count", "status"}`.
+7. **Auth dependency** (`backend/routers/apple_health.py`)
    - `verify_apple_health_token(x_apple_health_token: str | None = Header(None))` FastAPI dependency using `hmac.compare_digest`.
-7. **Router** (`backend/routers/apple_health.py`)
-   - `POST /workouts` → calls ingest service.
-   - `POST /ping` (optional) — returns `{"ok": true}` for the user to test their Shortcut without writing data.
-8. **Wire router** in `backend/main.py:117-155` block: `app.include_router(apple_health.router, prefix="/api/ingest/apple-health", tags=["apple-health"])`.
-9. **Strava sync hook** — in `backend/services/sync.py::_strava_phase_a`, after each new `Activity` is added (around line 187), call `workout_dedup.match_strava_against_apple(self.db, activity)`. Wrap in `try/except` so a dedup failure never breaks Strava sync.
-10. **Activity router updates** — `backend/routers/activities.py:38`:
+8. **Router** (`backend/routers/apple_health.py`)
+   - `POST /workouts` → accepts HAE batch, calls ingest service, returns `{"results": [...]}`.
+   - `POST /ping` — returns `{"ok": true}` for the user to test HAE connectivity without writing data.
+9. **Wire router** in `backend/main.py`: `app.include_router(apple_health.router, prefix="/api/ingest/apple-health", tags=["apple-health"])`.
+10. **Strava sync hook** — in `backend/services/sync.py::_strava_phase_a`, after each new `Activity` is added, call `workout_dedup.match_strava_against_apple(self.db, activity)`. Wrap in `try/except` so a dedup failure never breaks Strava sync.
+11. **Activity router updates** — `backend/routers/activities.py`:
     - Add `include_superseded: bool = Query(False)` to `list_activities`; when `False`, filter `Activity.superseded_by_id.is_(None)`.
-    - Add `source` and `external_id` to `_activity_summary` (line 286).
-    - Add a parallel `/api/workouts` (or extend `/api/activities`) endpoint that returns the union of Strava `Activity` rows and Apple Health `Workout` rows in one shape, both annotated with `source`. (Engineer choice — recommended: extend `/api/activities` so the existing UI keeps working unchanged. Document the choice in the ADR.)
+    - Add `source` and `external_id` to `_activity_summary`.
+    - Extend `/api/activities` to also surface Apple-only workouts (those without a Strava `activity_id`). Engineer choice: either UNION at SQL level or two passes + merge in Python. Document the choice in the ADR. The response shape stays as `ActivitySummary[]` — Apple workouts map their fields onto the same shape, with `source: "apple_health"`.
 
 ## 8. Frontend tasks
 
