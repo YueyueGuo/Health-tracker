@@ -20,18 +20,18 @@ import asyncio
 import os
 import sys
 
-import httpx
+# Reuse the values your backend already uses so this can't drift.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import httpx  # noqa: E402
+
+from backend.config import settings  # noqa: E402
 
 AUTH_URL = "https://auth-api.8slp.net/v1/tokens"
-# The Eight Sleep "consumer-app" client id/secret are public defaults
-# baked into the mobile app; not actual secrets.
-CLIENT_ID = "0894c7f33bb94800a03f1f4df13a4f38"
-CLIENT_SECRET = "f0954a3ed5763ba3d06834c73731a32f15f168f47d4f164751275def86bf2eed"
 
 
 async def main() -> int:
-    email = os.environ.get("EIGHT_SLEEP_EMAIL")
-    password = os.environ.get("EIGHT_SLEEP_PASSWORD")
+    email = os.environ.get("EIGHT_SLEEP_EMAIL") or settings.eight_sleep.email
+    password = os.environ.get("EIGHT_SLEEP_PASSWORD") or settings.eight_sleep.password
     if not email or not password:
         print(
             "EIGHT_SLEEP_EMAIL and EIGHT_SLEEP_PASSWORD must be set.\n"
@@ -40,12 +40,15 @@ async def main() -> int:
         )
         return 1
 
+    client_id = settings.eight_sleep.client_id
+    client_secret = settings.eight_sleep.client_secret
+
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
             AUTH_URL,
             json={
-                "client_id": CLIENT_ID,
-                "client_secret": CLIENT_SECRET,
+                "client_id": client_id,
+                "client_secret": client_secret,
                 "grant_type": "password",
                 "username": email,
                 "password": password,
