@@ -119,10 +119,23 @@ async def get_activity(activity_id: int, db: AsyncSession = Depends(get_db)):
     Does NOT include streams — those are fetched on-demand via
     `GET /{activity_id}/streams` (see below) so they can be fetched lazily
     and cached.
+
+    The ``activity_id`` may resolve to either a Strava ``Activity`` row
+    or an Apple Health ``HealthDataPoint`` (workout) row — they live in
+    independent tables but share the same integer id space. Strava
+    wins on collisions; Apple-only ids only resolve after the Strava
+    lookup misses.
     """
     result = await db.execute(select(Activity).where(Activity.id == activity_id))
     activity = result.scalar_one_or_none()
     if not activity:
+        from backend.services.apple_workout_detail import (
+            get_apple_workout_detail,
+        )
+
+        apple_detail = await get_apple_workout_detail(db, activity_id)
+        if apple_detail is not None:
+            return apple_detail
         raise HTTPException(status_code=404, detail="Activity not found")
 
     # Get laps
@@ -188,6 +201,28 @@ async def patch_activity_feedback(
         await db.execute(select(Activity).where(Activity.id == activity_id))
     ).scalar_one_or_none()
     if activity is None:
+        # RPE is a Strava-only feature in v1 — the ``rpe`` / ``user_notes``
+        # columns live on ``activities`` and the Apple side has no
+        # equivalent. If the id resolves to an Apple Health workout
+        # instead, refuse explicitly so the frontend can render a "not
+        # supported" hint rather than swallow a 404.
+        is_apple = (
+            await db.execute(
+                select(HealthDataPoint).where(
+                    HealthDataPoint.id == activity_id,
+                    HealthDataPoint.source == "apple_health",
+                    HealthDataPoint.data_type == "workout",
+                )
+            )
+        ).scalar_one_or_none()
+        if is_apple is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "RPE / notes are not supported for apple_health "
+                    "workouts in v1"
+                ),
+            )
         raise HTTPException(status_code=404, detail="Activity not found")
 
     fields_set = payload.model_fields_set
@@ -222,6 +257,24 @@ async def classify_activity(activity_id: int, db: AsyncSession = Depends(get_db)
         await db.execute(select(Activity).where(Activity.id == activity_id))
     ).scalar_one_or_none()
     if not activity:
+        # Apple-resolved ids surface a soft no-op response — classifier
+        # is a rules engine for Strava-shaped activities and has no
+        # equivalent input from HAE. Returning HTTP 200 lets the caller
+        # treat this as "nothing to do" rather than a hard failure.
+        is_apple = (
+            await db.execute(
+                select(HealthDataPoint).where(
+                    HealthDataPoint.id == activity_id,
+                    HealthDataPoint.source == "apple_health",
+                    HealthDataPoint.data_type == "workout",
+                )
+            )
+        ).scalar_one_or_none()
+        if is_apple is not None:
+            return {
+                "classified": False,
+                "reason": "apple_health workouts are not classified yet",
+            }
         raise HTTPException(status_code=404, detail="Activity not found")
 
     laps = (
@@ -275,13 +328,22 @@ async def get_activity_weather(
 async def get_activity_streams(activity_id: int, db: AsyncSession = Depends(get_db)):
     """Get per-sample streams for an activity. Lazy-fetched from Strava.
 
-    First call for a given activity pulls streams from Strava and caches
-    them in `activity_streams`. Subsequent calls return the cached data.
+    First call for a given Strava activity pulls streams from Strava and
+    caches them in ``activity_streams``. Subsequent calls return the
+    cached data.
+
+    Apple Health ids resolve through ``raw_payload`` instead — HR comes
+    from ``heartRateData``; ``velocity_smooth`` is added only when HAE
+    ships per-sample speed in the ``route`` array. No Strava call is
+    made for Apple ids, ever.
     """
     activity = (
         await db.execute(select(Activity).where(Activity.id == activity_id))
     ).scalar_one_or_none()
     if not activity:
+        apple_streams = await _maybe_apple_streams(db, activity_id)
+        if apple_streams is not None:
+            return apple_streams
         raise HTTPException(status_code=404, detail="Activity not found")
 
     cached = (
@@ -372,13 +434,23 @@ def _apple_workout_summary(workout: Workout, dp: HealthDataPoint) -> dict:
     that Strava-specific fields (``strava_id``, zones, power, etc.) are
     intentionally absent.
     """
+    from backend.services.sport_mapping import normalized_to_strava_view
+
     return {
         # Use the health_data_points.id as the ``id`` — there's no
         # Strava row to point at, and HDP is the polymorphic anchor.
         "id": dp.id,
         "strava_id": None,
         "name": (dp.raw_payload or {}).get("name") or workout.activity_type,
-        "sport_type": workout.activity_type,
+        # Emit the CamelCase Strava-style label the frontend's
+        # ``classifyActivity`` helper (frontend/src/lib/historyEvents.ts)
+        # uses to drive the Run/Ride/Strength view switch. Apple stores
+        # the normalized lowercase form ("run", "ride", "strength") —
+        # the frontend's switch doesn't match those, so the detail page
+        # would fall through to the generic view. ``classifyActivity``
+        # also accepts lowercase in the history feed, so this is a safe
+        # widening, not a breaking change.
+        "sport_type": normalized_to_strava_view(workout.activity_type),
         "start_date": dp.start_time.isoformat() if dp.start_time else None,
         "start_date_local": None,
         "elapsed_time": workout.duration_s,
@@ -451,6 +523,96 @@ def _lap_dict(lap: ActivityLap) -> dict:
         "start_index": lap.start_index,
         "end_index": lap.end_index,
     }
+
+
+async def _maybe_apple_streams(
+    db: AsyncSession, activity_id: int
+) -> dict | None:
+    """Reconstruct an Apple workout's streams from its HAE ``raw_payload``.
+
+    Returns ``None`` if the id isn't an Apple workout (the caller will
+    then 404). Returns an empty dict when the workout exists but has
+    no usable series — matching the frontend's "degrade gracefully"
+    expectation. Otherwise returns ``{"heartrate": [...], "time": [...]}``
+    plus an optional ``"velocity_smooth"`` series when HAE ships per-
+    sample speed in ``route``.
+    """
+    from datetime import datetime as _datetime
+
+    row = (
+        await db.execute(
+            select(HealthDataPoint).where(
+                HealthDataPoint.id == activity_id,
+                HealthDataPoint.source == "apple_health",
+                HealthDataPoint.data_type == "workout",
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+
+    payload = row.raw_payload or {}
+    streams: dict[str, list] = {}
+
+    # HR series — HAE emits per-minute or per-second entries shaped
+    # ``{"date": "...", "qty": <bpm>, "units": "count/min"}``. We
+    # convert ``date`` into seconds-since-first-sample to populate a
+    # parallel ``time`` array. Falls back to a 0..N index when dates
+    # are unparseable so the chart can still render.
+    hr_series = payload.get("heartRateData")
+    if isinstance(hr_series, list) and hr_series:
+        hr_values: list[float] = []
+        time_values: list[float] = []
+        base_ts: float | None = None
+        for i, entry in enumerate(hr_series):
+            if not isinstance(entry, dict):
+                continue
+            qty = entry.get("qty")
+            if qty is None:
+                continue
+            try:
+                hr_values.append(float(qty))
+            except (TypeError, ValueError):
+                continue
+            ts: float | None = None
+            date_raw = entry.get("date")
+            if isinstance(date_raw, str):
+                try:
+                    parsed = _datetime.strptime(date_raw, "%Y-%m-%d %H:%M:%S %z")
+                    ts = parsed.timestamp()
+                except ValueError:
+                    ts = None
+            if ts is not None:
+                if base_ts is None:
+                    base_ts = ts
+                time_values.append(ts - base_ts)
+            else:
+                time_values.append(float(i))
+        if hr_values:
+            streams["heartrate"] = hr_values
+            streams["time"] = time_values
+
+    # Velocity — only when HAE actually ships a per-sample speed field.
+    # The tests-of-record (``test_apple_health_parser.py``) carry routes
+    # as ``[{"lat", "lon"}]`` with no speed; the HAE export ships a
+    # ``speed`` key per point when the user enables it.
+    route = payload.get("route")
+    if isinstance(route, list) and route:
+        velocities: list[float] = []
+        for entry in route:
+            if not isinstance(entry, dict):
+                continue
+            speed = entry.get("speed")
+            if speed is None:
+                continue
+            try:
+                velocities.append(float(speed))
+            except (TypeError, ValueError):
+                continue
+        if velocities:
+            streams["velocity_smooth"] = velocities
+
+    return streams
 
 
 def _weather_dict(w: WeatherSnapshot) -> dict:

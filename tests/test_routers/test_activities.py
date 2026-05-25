@@ -184,8 +184,10 @@ async def test_apple_only_workouts_appear_with_apple_health_source(client, db):
     apple_rows = [r for r in body if r["source"] == "apple_health"]
     assert len(apple_rows) == 1
     assert apple_rows[0]["external_id"] == "apple-only"
-    # Apple rows use the normalized sport label.
-    assert apple_rows[0]["sport_type"] == "run"
+    # Apple rows emit the CamelCase Strava-style label so the frontend's
+    # ``classifyActivity`` switch resolves to ``Run`` (the normalized
+    # "run" form wouldn't trigger the Run-specific detail view).
+    assert apple_rows[0]["sport_type"] == "Run"
 
 
 async def test_mixed_list_sorts_by_start_date_desc(client, db):
@@ -198,3 +200,101 @@ async def test_mixed_list_sorts_by_start_date_desc(client, db):
     assert len(body) == 2
     assert body[0]["source"] == "apple_health"
     assert body[1]["source"] == "strava"
+
+
+# ── GET /activities/{id} — Apple fallback ───────────────────────────
+
+
+async def test_get_activity_resolves_strava_id_first(client, db):
+    a = await _seed_strava(db, strava_id=77)
+    resp = await client.get(f"/api/activities/{a.id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "strava"
+    assert body["id"] == a.id
+
+
+async def test_get_activity_falls_back_to_apple_workout(client, db):
+    """When no Strava row matches the id, fall back to the Apple workout."""
+    _, dp = await _seed_apple(db, external_id="apple-detail", activity_type="run")
+    resp = await client.get(f"/api/activities/{dp.id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "apple_health"
+    assert body["id"] == dp.id
+    # CamelCase sport_type so frontend's classifyActivity resolves to Run.
+    assert body["sport_type"] == "Run"
+    # Detail-page extras present even for Apple.
+    assert "laps" in body
+    assert "zones" in body
+    assert body["pace_hr_decoupling"] is None
+    assert body["power_hr_decoupling"] is None
+
+
+async def test_get_activity_404_when_neither_strava_nor_apple(client, db):
+    resp = await client.get("/api/activities/99999")
+    assert resp.status_code == 404
+
+
+# ── GET /activities/{id}/streams — Apple reconstruction ─────────────
+
+
+async def test_streams_for_apple_reconstructed_from_raw_payload(client, db):
+    """HR series in ``raw_payload.heartRateData`` becomes ``{heartrate, time}``."""
+    _, dp = await _seed_apple(db, external_id="apple-streams")
+    # Populate the HR series on the DP we just seeded.
+    dp.raw_payload = {
+        "heartRateData": [
+            {"date": "2026-05-24 13:14:01 -0400", "qty": 124, "units": "count/min"},
+            {"date": "2026-05-24 13:14:02 -0400", "qty": 132, "units": "count/min"},
+            {"date": "2026-05-24 13:14:03 -0400", "qty": 145, "units": "count/min"},
+        ]
+    }
+    await db.commit()
+
+    resp = await client.get(f"/api/activities/{dp.id}/streams")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "heartrate" in body
+    assert "time" in body
+    assert body["heartrate"] == [124.0, 132.0, 145.0]
+    # Time series is monotonically increasing, starts at 0.
+    assert body["time"][0] == 0.0
+    assert body["time"][-1] > 0
+    # No velocity stream when route lacks per-sample speed.
+    assert "velocity_smooth" not in body
+
+
+async def test_streams_for_apple_returns_empty_dict_when_no_series(client, db):
+    """No heartRateData and no route speed → empty payload, never a Strava call."""
+    _, dp = await _seed_apple(db, external_id="apple-no-series")
+    dp.raw_payload = {"name": "Running"}
+    await db.commit()
+    resp = await client.get(f"/api/activities/{dp.id}/streams")
+    assert resp.status_code == 200
+    assert resp.json() == {}
+
+
+async def test_streams_404_when_neither_strava_nor_apple(client, db):
+    resp = await client.get("/api/activities/99999/streams")
+    assert resp.status_code == 404
+
+
+# ── POST /activities/{id}/classify — Apple no-op ────────────────────
+
+
+async def test_classify_returns_not_classified_for_apple(client, db):
+    """The classifier is Strava-only — Apple ids surface a soft no-op."""
+    _, dp = await _seed_apple(db, external_id="apple-classify")
+    resp = await client.post(f"/api/activities/{dp.id}/classify")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {
+        "classified": False,
+        "reason": "apple_health workouts are not classified yet",
+    }
+
+
+async def test_classify_404_when_neither_strava_nor_apple(client, db):
+    resp = await client.post("/api/activities/99999/classify")
+    assert resp.status_code == 404

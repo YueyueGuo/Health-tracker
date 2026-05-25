@@ -29,6 +29,18 @@ from backend.models import ActivityStream
 MIN_DRIFT_DURATION_S = 600
 MIN_DECOUPLING_DURATION_S = 1200
 
+# Default 5-zone breakpoints expressed as fractions of max HR. These
+# are the standard "%HRmax" zone boundaries used by most coaching
+# textbooks; Strava's default 5-bucket profile lines up with these.
+# Z1: <50%, Z2: 50-60%, Z3: 60-70%, Z4: 70-80%, Z5: 80-90% (and ≥90%
+# rolls into Z5 since we cap at 5 buckets).
+_HR_MAX_FRACTIONS: tuple[float, ...] = (0.5, 0.6, 0.7, 0.8, 0.9)
+
+# LTHR-anchored breakpoints (Friel/Coggan-style 5-zone): boundaries at
+# 65 / 81 / 89 / 94 / 99 % of LTHR (z6 / VO2max merged into z5 here so
+# the bucket count matches the %HRmax variant).
+_HR_LTHR_FRACTIONS: tuple[float, ...] = (0.65, 0.81, 0.89, 0.94, 0.99)
+
 
 def _find_hr_buckets(zones_data: list | None) -> list[dict] | None:
     """Return the ``distribution_buckets`` list from the HR zone entry, or None."""
@@ -121,6 +133,149 @@ def assign_lap_hr_zone(
         if hr < bmax:
             return max(1, i + 1)  # clamp below-z1 to z1
     return len(buckets)  # above declared range — top zone
+
+
+def synthesize_hr_zones_from_samples(
+    samples: list[float], *, max_hr: int, lthr: int | None = None
+) -> dict | None:
+    """Build a 5-bucket HR distribution from a raw sample series.
+
+    Used when the data source (Apple Health / HAE) ships per-sample HR
+    but no time-in-zone summary. Returns a dict in the same shape as
+    Strava's ``zones_data`` entries::
+
+        {
+          "type": "heartrate",
+          "distribution_buckets": [
+            {"min": 0,   "max": 99,  "time": 12},  # samples below 50% of max
+            {"min": 100, "max": 119, "time": 34},
+            ...
+            {"min": 180, "max": -1,  "time": 4},   # open-top bucket
+          ],
+          "sensor_based": False,
+          "points": 50,
+        }
+
+    Each sample is treated as one second (HAE emits per-minute or per-
+    second; we don't try to interpolate). When ``lthr`` is provided we
+    anchor the breakpoints at 65/81/89/94/99 % of LTHR (Friel-style 5-
+    zone). Otherwise we fall back to 50/60/70/80/90 % of ``max_hr``.
+
+    Returns ``None`` when ``samples`` is empty or ``max_hr`` is invalid
+    — there's nothing meaningful to bucket and the caller will set
+    ``zones=None`` on the response.
+    """
+    if not samples:
+        return None
+    if max_hr is None or max_hr <= 0:
+        return None
+
+    if lthr is not None and lthr > 0:
+        anchor = lthr
+        fractions = _HR_LTHR_FRACTIONS
+    else:
+        anchor = max_hr
+        fractions = _HR_MAX_FRACTIONS
+
+    # Five buckets means four interior breakpoints; we reserve the last
+    # fraction as the "open-top" floor.
+    breakpoints = [int(round(anchor * f)) for f in fractions]
+    # Ensure monotonicity even with rounding edge cases.
+    for i in range(1, len(breakpoints)):
+        if breakpoints[i] <= breakpoints[i - 1]:
+            breakpoints[i] = breakpoints[i - 1] + 1
+
+    buckets = [
+        {"min": 0, "max": breakpoints[1] - 1, "time": 0},
+        {"min": breakpoints[1], "max": breakpoints[2] - 1, "time": 0},
+        {"min": breakpoints[2], "max": breakpoints[3] - 1, "time": 0},
+        {"min": breakpoints[3], "max": breakpoints[4] - 1, "time": 0},
+        {"min": breakpoints[4], "max": -1, "time": 0},
+    ]
+
+    counted = 0
+    for raw in samples:
+        if raw is None:
+            continue
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if v <= 0:
+            continue
+        if v >= breakpoints[4]:
+            buckets[4]["time"] += 1
+        elif v >= breakpoints[3]:
+            buckets[3]["time"] += 1
+        elif v >= breakpoints[2]:
+            buckets[2]["time"] += 1
+        elif v >= breakpoints[1]:
+            buckets[1]["time"] += 1
+        else:
+            buckets[0]["time"] += 1
+        counted += 1
+
+    if counted == 0:
+        return None
+
+    return {
+        "type": "heartrate",
+        "distribution_buckets": buckets,
+        "sensor_based": False,
+        "points": counted,
+    }
+
+
+def derive_hr_samples_from_raw_payload(
+    raw_payload: dict | None,
+) -> list[float] | None:
+    """Extract a flat HR float list from a HAE workout ``raw_payload``.
+
+    HAE emits ``heartRateData`` in one of two shapes, controlled by the
+    user's "Aggregate workout data" toggle (see
+    `backend/services/apple_health_parser.py`):
+
+    * Scalar ``{"qty": <bpm>, "units": "count/min"}`` — one-element list
+      back. (Effectively a single avg-HR sample; not useful for zones,
+      but we surface it so the caller can decide.)
+    * Series ``[{"date": ..., "qty": <bpm>, "units": "count/min",
+      "source": ...}, ...]`` — one float per entry.
+
+    Returns ``None`` when no HR data is present or the field is in an
+    unrecognized shape. Caller decides whether the resulting series is
+    long enough to bucket.
+    """
+    if not raw_payload or not isinstance(raw_payload, dict):
+        return None
+    hr = raw_payload.get("heartRateData")
+    if hr is None:
+        return None
+
+    samples: list[float] = []
+    # Scalar {qty, units} shape — wrap as a single-entry list.
+    if isinstance(hr, dict):
+        qty = hr.get("qty")
+        if qty is None:
+            return None
+        try:
+            return [float(qty)]
+        except (TypeError, ValueError):
+            return None
+
+    if isinstance(hr, list):
+        for entry in hr:
+            if not isinstance(entry, dict):
+                continue
+            qty = entry.get("qty")
+            if qty is None:
+                continue
+            try:
+                samples.append(float(qty))
+            except (TypeError, ValueError):
+                continue
+        return samples or None
+
+    return None
 
 
 async def _load_streams(

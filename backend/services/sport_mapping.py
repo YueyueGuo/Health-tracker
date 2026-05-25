@@ -130,3 +130,33 @@ def same_activity(apple_name: str | None, strava_type: str | None) -> bool:
     if a == "other" or s is None:
         return False
     return a == s
+
+
+# Inverse of `normalize_strava` for the subset the frontend's
+# `classifyActivity` (frontend/src/lib/historyEvents.ts) recognizes.
+# Apple workouts are stored with the normalized lowercase label
+# ("run", "ride", "strength", …) but the detail-page sport switch
+# in `ActivityDetail.tsx` reads CamelCase ("Run", "Ride",
+# "WeightTraining"). This helper bridges the two without leaking the
+# full Strava enum (we only need the buckets the frontend handles).
+_NORMALIZED_TO_STRAVA_VIEW: dict[str, str] = {
+    "run": "Run",
+    "ride": "Ride",
+    "strength": "WeightTraining",
+    "walk": "Walk",
+    "hike": "Hike",
+    "swim": "Swim",
+    "yoga": "Yoga",
+    "other": "Workout",
+}
+
+
+def normalized_to_strava_view(name: str | None) -> str:
+    """Map a normalized sport label to the CamelCase form the frontend uses.
+
+    Returns ``"Workout"`` for unknown / None inputs so the frontend's
+    fallback "Other" branch still gets a label that classifies cleanly.
+    """
+    if not name:
+        return "Workout"
+    return _NORMALIZED_TO_STRAVA_VIEW.get(name.strip().lower(), "Workout")
