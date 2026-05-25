@@ -130,4 +130,51 @@ describe("DeviceWorkoutPanel", () => {
     const degraded = screen.getByTestId("device-workout-degraded");
     expect(degraded.textContent).toMatch(/Strava heart-rate stream/i);
   });
+
+  it("renders placeholders instead of 'Invalid Date' / 'NaN' when the link is missing name, sport, start_iso, and duration_s", () => {
+    // Regression for review-round-1: backend can legitimately return null for
+    // any of these (e.g. Apple-only summary-row workouts), but the panel used
+    // to feed null straight into `new Date()` / `Math.round()`.
+    render(
+      <DeviceWorkoutPanel
+        date="2026-05-25"
+        link={makeLink({
+          name: null,
+          sport: null,
+          start_iso: null,
+          duration_s: null,
+          avg_hr: null,
+          max_hr: null,
+        })}
+        segmentation={makeSeg({ status: "ok" })}
+        onOpenPicker={vi.fn()}
+        onUnlink={vi.fn()}
+        onRetry={vi.fn()}
+      />
+    );
+    expect(screen.getByText("Untitled workout")).toBeInTheDocument();
+    // start_iso null and duration_s null both render as "—".
+    expect(screen.getByText(/— · —/)).toBeInTheDocument();
+    // HR summary degrades to "— / —" rather than "NaN / NaN".
+    expect(screen.getByText(/— \/ —/)).toBeInTheDocument();
+    // Guard against the prior buggy output leaking through.
+    expect(document.body.textContent).not.toMatch(/Invalid Date/);
+    expect(document.body.textContent).not.toMatch(/NaN/);
+  });
+
+  it("passes data-testid through to the underlying Card element", () => {
+    // Card now spreads rest props onto motion.div, so the panel-level testid
+    // actually lands on the rendered DOM (review-round-1 must-fix #3).
+    render(
+      <DeviceWorkoutPanel
+        date="2026-05-25"
+        link={null}
+        segmentation={null}
+        onOpenPicker={vi.fn()}
+        onUnlink={vi.fn()}
+        onRetry={vi.fn()}
+      />
+    );
+    expect(screen.getByTestId("device-workout-panel")).toBeInTheDocument();
+  });
 });

@@ -232,18 +232,61 @@ describe("buildHistoryEvents", () => {
   it("merges and sorts newest-first", () => {
     const events = buildHistoryEvents(
       [
-        makeActivity({ id: 1, start_date_local: "2026-04-23T10:00:00" }),
-        makeActivity({ id: 2, start_date_local: "2026-04-25T10:00:00" }),
+        makeActivity({
+          id: 1,
+          source: "strava",
+          start_date_local: "2026-04-23T10:00:00",
+        }),
+        makeActivity({
+          id: 2,
+          source: "strava",
+          start_date_local: "2026-04-25T10:00:00",
+        }),
       ],
       [makeSleep({ id: 1, date: "2026-04-24", wake_time: "2026-04-24T07:00:00" })],
       [makeStrength({ date: "2026-04-22" })]
     );
     expect(events.map((e) => e.id)).toEqual([
-      "activity-2",
+      "strava-2",
       "sleep-1",
-      "activity-1",
+      "strava-1",
       "strength-2026-04-22",
     ]);
+  });
+
+  it("uses source-prefixed keys so an Apple workout and Strava activity with the same numeric id do not collide", () => {
+    // Regression for review-round-1: prior to this fix both events keyed as
+    // "activity-1" and React warned about duplicate child keys.
+    const events = buildHistoryEvents(
+      [
+        makeActivity({
+          id: 1,
+          source: "strava",
+          name: "Strava Activity",
+          start_date_local: "2026-04-25T10:00:00",
+        }),
+        makeActivity({
+          id: 1,
+          source: "apple_health",
+          name: "Apple Workout",
+          start_date_local: "2026-04-25T11:00:00",
+        }),
+      ],
+      [],
+      []
+    );
+    const ids = events.map((e) => e.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toEqual(expect.arrayContaining(["apple-1", "strava-1"]));
+  });
+
+  it("falls back to an 'activity-' prefix for legacy rows missing a source", () => {
+    const events = buildHistoryEvents(
+      [makeActivity({ id: 5, source: null, name: "Legacy" })],
+      [],
+      []
+    );
+    expect(events[0].id).toBe("activity-5");
   });
 
   it("dedups a strength session that points to a Strava WeightTraining activity", () => {

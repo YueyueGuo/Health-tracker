@@ -108,22 +108,35 @@ export default function SessionHRCurve({
                 typeof label === "number" ? formatMmSs(label) : String(label)
               }
             />
-            {segmentMarkers?.map((m) => (
-              <ReferenceArea
-                key={`seg-${m.set_number}-${m.start_sec}`}
-                x1={m.start_sec}
-                x2={m.end_sec}
-                strokeOpacity={0}
-                fill="#fb7185"
-                fillOpacity={0.12}
-                label={{
-                  value: `Set ${m.set_number}`,
-                  position: "insideTop",
-                  fontSize: 9,
-                  fill: "#fb7185",
-                }}
-              />
-            ))}
+            {segmentMarkers?.map((m) => {
+              // Top-line label uses the session-wide ordinal so the bands
+              // read 1..N in chronological order. When the marker carries an
+              // exercise name we surface it as a small subtitle tucked just
+              // below the ordinal — keeps the band readable when the same
+              // exercise occupies multiple consecutive sets.
+              const caption =
+                m.exercise_name && m.exercise_name.trim().length > 0
+                  ? m.exercise_name
+                  : null;
+              return (
+                <ReferenceArea
+                  key={`seg-${m.set_number}-${m.start_sec}`}
+                  x1={m.start_sec}
+                  x2={m.end_sec}
+                  strokeOpacity={0}
+                  fill="#fb7185"
+                  fillOpacity={0.12}
+                  label={{
+                    value: caption
+                      ? `Set ${m.set_number} · ${caption}`
+                      : `Set ${m.set_number}`,
+                    position: "insideTop",
+                    fontSize: 9,
+                    fill: "#fb7185",
+                  }}
+                />
+              );
+            })}
             <Line
               type="monotone"
               dataKey="hr"

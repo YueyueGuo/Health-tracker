@@ -19,7 +19,8 @@ interface Props {
   onLinked: () => void;
 }
 
-function formatStartLocal(iso: string): string {
+function formatStartLocal(iso: string | null | undefined): string {
+  if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString("en-US", {
@@ -35,7 +36,8 @@ function sourceToBadge(source: LinkSource) {
   return source === "strava" ? "strava" : "apple";
 }
 
-function isDistanceSport(sport: string): boolean {
+function isDistanceSport(sport: string | null | undefined): boolean {
+  if (!sport) return false;
   const s = sport.toLowerCase();
   return (
     s.includes("run") ||
@@ -203,7 +205,7 @@ export default function LinkWorkoutPicker({
                       <div className="flex items-center gap-1.5 mb-1">
                         <SourceBadge source={sourceToBadge(c.source)} />
                         <span className="text-[10px] uppercase tracking-wider text-slate-500">
-                          {c.sport}
+                          {c.sport ?? "—"}
                         </span>
                         {submittingId === id && (
                           <Loader2
@@ -214,7 +216,7 @@ export default function LinkWorkoutPicker({
                         )}
                       </div>
                       <div className="text-sm font-semibold text-white truncate">
-                        {c.name}
+                        {c.name ?? "Untitled workout"}
                       </div>
                       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400">
                         <span>{formatStartLocal(c.start_local)}</span>

@@ -161,8 +161,18 @@ function activityToEvent(a: ActivitySummary): HistoryEvent {
   // Apple-only rows `a.id` is the `health_data_points.id`; for Strava (and
   // Apple-wins-dedup) rows it is the `activities.id`. The detail router
   // resolves the right table on the backend.
+  //
+  // The React key is composed from the row's `source` so an Apple workout
+  // and a Strava activity that happen to share the same integer id don't
+  // collide as siblings in the History list.
+  const sourceKey =
+    a.source === "apple_health"
+      ? "apple"
+      : a.source === "strava"
+      ? "strava"
+      : "activity";
   return {
-    id: `activity-${a.id}`,
+    id: `${sourceKey}-${a.id}`,
     category: "Workout",
     type,
     title: a.name,

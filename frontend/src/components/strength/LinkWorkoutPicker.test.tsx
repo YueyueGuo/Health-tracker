@@ -149,6 +149,38 @@ describe("LinkWorkoutPicker", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it("renders placeholders for candidates with null name, sport, start_local, and duration_s", async () => {
+    // Regression for review-round-1 must-fix #1: backend can return null for
+    // any of these fields (legacy / Apple-only summary rows). Without the
+    // guard the row would render "Invalid Date" + "NaN".
+    fetchLinkCandidatesMock.mockResolvedValue([
+      {
+        source: "apple_health" as const,
+        ref_id: 99,
+        name: null,
+        sport: null,
+        start_local: null,
+        duration_s: null,
+        avg_hr: null,
+        max_hr: null,
+        distance_m: null,
+        hr_stream_available: false,
+      },
+    ]);
+    render(
+      <LinkWorkoutPicker
+        date="2026-05-25"
+        open
+        onClose={vi.fn()}
+        onLinked={vi.fn()}
+      />
+    );
+    const row = await screen.findByTestId("link-picker-row-apple_health:99");
+    expect(row.textContent).toContain("Untitled workout");
+    expect(row.textContent).not.toMatch(/Invalid Date/);
+    expect(row.textContent).not.toMatch(/NaN/);
+  });
+
   it("closes after a 502 because the link is persisted server-side", async () => {
     fetchLinkCandidatesMock.mockResolvedValue([fakeStrava()]);
     const resp = new Response(null, {

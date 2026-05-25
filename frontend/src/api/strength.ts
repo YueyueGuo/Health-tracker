@@ -69,9 +69,13 @@ export interface ExerciseBreakdown {
 export interface StrengthSessionLink {
   source: LinkSource;
   ref_id: number;
+  /** Backend may return null for legacy/Apple-only rows missing a name. */
   name: string | null;
+  /** Backend may return null when sport_type is unknown. */
   sport: string | null;
+  /** Backend may return null when start_date_local is missing. */
   start_iso: string | null;
+  /** Backend may return null when elapsed_time / duration is missing. */
   duration_s: number | null;
   avg_hr: number | null;
   max_hr: number | null;
@@ -84,9 +88,11 @@ export interface StrengthSessionSegmentation {
 }
 
 export interface StrengthSegmentMarker {
-  /** Session-wide chronological ordinal (1..N over all detected sets). */
+  /** Session-wide ordinal (1..N over chronological order). */
   set_number: number;
+  /** Optional: exercise the set belongs to, used for tooltip captions. */
   exercise_name?: string | null;
+  /** Optional: per-exercise set number, used for tooltip captions. */
   per_exercise_set_number?: number | null;
   start_sec: number;
   end_sec: number;
@@ -133,9 +139,13 @@ export interface StrengthSessionDetail {
 export interface LinkCandidate {
   source: LinkSource;
   ref_id: number;
+  /** Backend may return null for activities missing a name. */
   name: string | null;
+  /** Backend may return null when sport_type is unknown. */
   sport: string | null;
+  /** Backend may return null when start_date_local is missing. */
   start_local: string | null;
+  /** Backend may return null when elapsed_time / duration is missing. */
   duration_s: number | null;
   avg_hr: number | null;
   max_hr: number | null;

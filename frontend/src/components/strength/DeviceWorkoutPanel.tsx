@@ -70,7 +70,8 @@ function sourceToBadge(source: StrengthSessionLink["source"]) {
   return source === "strava" ? "strava" : "apple";
 }
 
-function formatStartTime(iso: string): string {
+function formatStartTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString("en-US", {
@@ -155,11 +156,11 @@ export default function DeviceWorkoutPanel({
               <div className="flex items-center gap-1.5 mb-0.5">
                 <SourceBadge source={sourceToBadge(link.source)} />
                 <span className="text-[10px] uppercase tracking-wider text-slate-500">
-                  {link.sport}
+                  {link.sport ?? "—"}
                 </span>
               </div>
               <div className="text-sm font-semibold text-white truncate">
-                {link.name}
+                {link.name ?? "Untitled workout"}
               </div>
               <div className="text-[11px] text-slate-500">
                 {formatStartTime(link.start_iso)} · {formatHmsCompact(link.duration_s)}
