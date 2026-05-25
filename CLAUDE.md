@@ -47,16 +47,20 @@ extend to others later.
 
 ## Agentic workflow
 Features and bugs are driven by specialized agents under `.claude/agents/`,
-orchestrated by two slash commands:
+orchestrated by three slash commands:
 
-- `/feature <description>` — plan → research + migration (parallel) →
-  backend + frontend (parallel) → tests → review → PR → subscribe.
+- `/spec <rough idea>` — interactive Q&A to turn a vague idea into a
+  concrete spec at `docs/specs/<slug>.md`. Stops at the spec; opt into
+  `/feature` from there.
+- `/feature <description | spec path>` — plan → research + migration
+  (parallel) → backend + frontend (parallel) → tests → review → PR →
+  subscribe.
 - `/bug <description>` — investigate → fix + regression test →
   tests → review → PR → subscribe.
 
 See `.claude/README.md` for the full agent roster and parallelism plan.
-Plans land in `docs/plans/`, bug diagnoses in `docs/bugs/`,
-architectural decisions in `docs/decisions/`.
+Specs land in `docs/specs/`, plans in `docs/plans/`, bug diagnoses in
+`docs/bugs/`, architectural decisions in `docs/decisions/`.
 
 ---
 
