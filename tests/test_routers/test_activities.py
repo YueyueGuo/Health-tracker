@@ -188,6 +188,18 @@ async def test_apple_only_workouts_appear_with_apple_health_source(client, db):
     # ``classifyActivity`` switch resolves to ``Run`` (the normalized
     # "run" form wouldn't trigger the Run-specific detail view).
     assert apple_rows[0]["sport_type"] == "Run"
+    # Apple workouts report ``enrichment_status == "complete"`` — the
+    # frontend renders any other value as a raw status pill next to the
+    # source badge, and there's no Strava-style Phase-B enrichment to do
+    # for Apple rows. Updated from the previous ``"apple_health"`` value
+    # that was leaking into the UI as a literal pill.
+    assert apple_rows[0]["enrichment_status"] == "complete"
+    # ``start_date_local`` must be an ISO-8601 string so the frontend's
+    # ``formatActivityDateTime`` can render the date subtitle. HAE only
+    # exposes a UTC ``start_time``; we pass it through and let the
+    # client format it in the viewer's local TZ.
+    assert apple_rows[0]["start_date_local"] is not None
+    assert isinstance(apple_rows[0]["start_date_local"], str)
 
 
 async def test_mixed_list_sorts_by_start_date_desc(client, db):
@@ -229,6 +241,12 @@ async def test_get_activity_falls_back_to_apple_workout(client, db):
     assert "zones" in body
     assert body["pace_hr_decoupling"] is None
     assert body["power_hr_decoupling"] is None
+    # ``enrichment_status`` is "complete" (not "apple_health") so the
+    # frontend's ``ActivityHeader`` doesn't render a raw status pill.
+    assert body["enrichment_status"] == "complete"
+    # ``start_date_local`` is populated so the date subtitle renders.
+    assert body["start_date_local"] is not None
+    assert isinstance(body["start_date_local"], str)
 
 
 async def test_get_activity_404_when_neither_strava_nor_apple(client, db):
@@ -273,6 +291,23 @@ async def test_streams_for_apple_returns_empty_dict_when_no_series(client, db):
     resp = await client.get(f"/api/activities/{dp.id}/streams")
     assert resp.status_code == 200
     assert resp.json() == {}
+
+
+async def test_streams_for_apple_reconstructs_velocity_smooth_from_route(client, db):
+    """HAE ``route[*].speed`` becomes the ``velocity_smooth`` stream entry.
+
+    The reconstructor in ``_maybe_apple_streams`` walks the route array
+    for a per-sample ``speed`` field; this test pins the contract so a
+    refactor doesn't silently drop the pace stream.
+    """
+    _, dp = await _seed_apple(db, external_id="apple-velocity")
+    dp.raw_payload = {"route": [{"speed": 2.5}, {"speed": 3.0}]}
+    await db.commit()
+
+    resp = await client.get(f"/api/activities/{dp.id}/streams")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body.get("velocity_smooth") == [2.5, 3.0]
 
 
 async def test_streams_404_when_neither_strava_nor_apple(client, db):

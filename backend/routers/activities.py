@@ -452,7 +452,13 @@ def _apple_workout_summary(workout: Workout, dp: HealthDataPoint) -> dict:
         # widening, not a breaking change.
         "sport_type": normalized_to_strava_view(workout.activity_type),
         "start_date": dp.start_time.isoformat() if dp.start_time else None,
-        "start_date_local": None,
+        # HealthDataPoint stores only a UTC ``start_time``; HAE does not
+        # surface a separate local-time field. Pass the UTC value through
+        # so the frontend's ``formatActivityDateTime`` can render a date
+        # subtitle (it formats in the viewer's local TZ, which is the
+        # right behavior for a single-user app). Without this the
+        # subtitle was rendering blank.
+        "start_date_local": dp.start_time.isoformat() if dp.start_time else None,
         "elapsed_time": workout.duration_s,
         "moving_time": workout.duration_s,
         "distance": workout.distance_m,
@@ -471,16 +477,15 @@ def _apple_workout_summary(workout: Workout, dp: HealthDataPoint) -> dict:
         "device_watts": None,
         "workout_type": None,
         "available_zones": None,
-        # Apple-Health-sourced rows are never "enriched" through the
-        # Strava Phase-B path; surfacing ``"complete"`` here was
-        # misleading (the field implies Strava-side enrichment state).
-        # Frontend currently renders the value as a pill when it isn't
-        # ``"complete"`` — ``"apple_health"`` is a meaningful label and
-        # doesn't break the existing ``string`` typing in
-        # ``frontend/src/api/activities.ts``. If we ever turn that field
-        # into a strict enum, add ``"apple_health"`` as a documented
-        # variant alongside the existing Strava enrichment states.
-        "enrichment_status": "apple_health",
+        # Apple-Health-sourced rows are never enriched through the
+        # Strava Phase-B path, but the frontend renders any
+        # ``enrichment_status`` value other than ``"complete"`` as a raw
+        # status pill (see ``ActivityHeader.tsx``). The badge already
+        # carries the "Apple Health" source label, so we report
+        # ``"complete"`` here — there is no further server-side
+        # enrichment to do for Apple workouts in v1 (no Strava-style
+        # stream enrichment, no classifier pass).
+        "enrichment_status": "complete",
         "enriched_at": None,
         "classification_type": None,
         "classification_flags": None,
