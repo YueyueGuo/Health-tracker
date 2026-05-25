@@ -62,6 +62,53 @@ describe("HistoryEventCard", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders the HR-linked indicator only when hrLinked is true and type is Strength", () => {
+    const { unmount } = render(
+      <HistoryEventCard
+        event={makeEvent({
+          id: "strength-2026-05-25",
+          type: "Strength",
+          title: "Strength Session",
+          hrLinked: true,
+          navigateTo: "/strength/session/2026-05-25",
+        })}
+      />
+    );
+    expect(screen.getByTestId("hr-linked-indicator")).toBeInTheDocument();
+    unmount();
+
+    const { unmount: u2 } = render(
+      <HistoryEventCard
+        event={makeEvent({
+          id: "strength-2026-05-25",
+          type: "Strength",
+          title: "Strength Session",
+          hrLinked: false,
+          navigateTo: "/strength/session/2026-05-25",
+        })}
+      />
+    );
+    expect(
+      screen.queryByTestId("hr-linked-indicator")
+    ).not.toBeInTheDocument();
+    u2();
+
+    // Non-strength events: indicator should never render even if the flag is set.
+    render(
+      <HistoryEventCard
+        event={makeEvent({
+          id: "activity-99",
+          type: "Run",
+          title: "Run",
+          hrLinked: true,
+        })}
+      />
+    );
+    expect(
+      screen.queryByTestId("hr-linked-indicator")
+    ).not.toBeInTheDocument();
+  });
+
   it("renders no clickable container for Apple-only workouts (no onClick)", () => {
     // Mirrors the wiring in History.tsx: when `navigateTo` is null, the
     // page does not pass an `onClick`. The card must then render as a

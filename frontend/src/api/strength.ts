@@ -15,9 +15,9 @@ interface StrengthSet {
   /** Naive-local ISO datetime stamped when the set was logged.
    *  Optional only for legacy rows created before Live-only mode. */
   performed_at?: string | null;
-  /** Working-HR window ending at ``performed_at`` (45s lookback).
-   *  Populated on the session_summary response when the linked Strava
-   *  activity's streams are cached. Undefined otherwise. */
+  /** Working-HR window from the linked device workout's HR stream.
+   *  Populated by the auto-segmenter on the session_summary response when
+   *  a device workout is linked. Undefined when no link / no HR data. */
   avg_hr?: number;
   max_hr?: number;
   /** Sets that share a non-null group id were performed back-to-back as a
@@ -30,12 +30,27 @@ interface StrengthSet {
   updated_at?: string | null;
 }
 
+export type LinkSource = "strava" | "apple_health";
+
+export type SegmentationStatus =
+  | "ok"
+  | "too_few"
+  | "too_many"
+  | "flat"
+  | "no_stream"
+  | "no_curve"
+  | "pending"
+  | "error";
+
 export interface StrengthSession {
   date: string;
   exercise_count: number;
   total_sets: number;
   total_volume_kg: number;
   activity_id: number | null;
+  /** True when a device workout is linked to this session and HR data
+   *  is potentially available (regardless of segmentation status). */
+  hr_linked?: boolean;
 }
 
 export interface ExerciseBreakdown {
@@ -51,19 +66,53 @@ export interface ExerciseBreakdown {
   order_index?: number | null;
 }
 
+export interface StrengthSessionLink {
+  source: LinkSource;
+  ref_id: number;
+  name: string | null;
+  sport: string | null;
+  start_iso: string | null;
+  duration_s: number | null;
+  avg_hr: number | null;
+  max_hr: number | null;
+}
+
+export interface StrengthSessionSegmentation {
+  status: SegmentationStatus;
+  detected_count: number;
+  target_count: number;
+}
+
+export interface StrengthSegmentMarker {
+  /** Session-wide chronological ordinal (1..N over all detected sets). */
+  set_number: number;
+  exercise_name?: string | null;
+  per_exercise_set_number?: number | null;
+  start_sec: number;
+  end_sec: number;
+}
+
 export interface StrengthSessionDetail {
   date: string;
+  /** Back-compat for legacy callers — populated when the link is a
+   *  Strava activity. New consumers should read `link` instead. */
   activity_id: number | null;
   sets: StrengthSet[];
   exercises: ExerciseBreakdown[];
-  /** Decimated [offset_sec, bpm] pairs spanning the linked Strava
-   *  activity. Present only when the activity's time + heartrate streams
-   *  are cached. */
-  hr_curve?: Array<[number, number]>;
-  /** ISO string of the linked activity's start_date_local (or UTC
-   *  start_date fallback). Lets the frontend convert set performed_at
-   *  timestamps to x-axis offsets for the hr_curve chart. */
-  activity_start_iso?: string;
+  /** Linked device workout, or null when this session has no link. */
+  link: StrengthSessionLink | null;
+  /** Segmentation result of the HR stream against the logged set count.
+   *  Null when no link exists. */
+  segmentation: StrengthSessionSegmentation | null;
+  /** Decimated [offset_sec, bpm] pairs spanning the linked device
+   *  workout. Null when no stream is available (e.g. Apple Health
+   *  summary-only) or when streams haven't been fetched yet. */
+  hr_curve: Array<[number, number]> | null;
+  /** Detected per-set HR windows on the session-wide curve, used to
+   *  overlay shaded bands. Null when segmentation produced no segments. */
+  segment_markers: StrengthSegmentMarker[] | null;
+  /** ISO string of the linked workout's local start. Null when no link. */
+  activity_start_iso: string | null;
   /** Duration in seconds. Prefers ``ended_at - started_at`` when stamped
    *  by the recorder; otherwise derived from ``performed_at`` range. */
   duration_sec?: number | null;
@@ -79,6 +128,19 @@ export interface StrengthSessionDetail {
   started_at?: string | null;
   /** Naive-local ISO datetime stamped on the recorder's "Finish" tap. */
   ended_at?: string | null;
+}
+
+export interface LinkCandidate {
+  source: LinkSource;
+  ref_id: number;
+  name: string | null;
+  sport: string | null;
+  start_local: string | null;
+  duration_s: number | null;
+  avg_hr: number | null;
+  max_hr: number | null;
+  distance_m: number | null;
+  hr_stream_available: boolean;
 }
 
 export interface ProgressionPoint {
@@ -115,6 +177,11 @@ interface StrengthSessionCreate {
   ended_at?: string | null;
 }
 
+export interface LinkWorkoutBody {
+  source: LinkSource;
+  ref_id: number;
+}
+
 // ── Fetchers ────────────────────────────────────────────────────────────────
 
 export function fetchStrengthSessions(limit = 20): Promise<StrengthSession[]> {
@@ -148,4 +215,37 @@ export function fetchStrengthProgression(
 export function fetchStrengthExercises(q?: string): Promise<string[]> {
   const qs = q ? `?q=${encodeURIComponent(q)}` : "";
   return fetchJson<string[]>(`/strength/exercises${qs}`);
+}
+
+// ── Link / candidate / segmentation fetchers ────────────────────────────────
+
+export function fetchLinkCandidates(date: string): Promise<LinkCandidate[]> {
+  return fetchJson<LinkCandidate[]>(
+    `/strength/session/${date}/link-candidates`
+  );
+}
+
+export function linkWorkout(
+  date: string,
+  body: LinkWorkoutBody
+): Promise<StrengthSessionDetail> {
+  return fetchJson<StrengthSessionDetail>(`/strength/session/${date}/link`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export function unlinkWorkout(date: string): Promise<void> {
+  return fetchJson<void>(`/strength/session/${date}/link`, {
+    method: "DELETE",
+  });
+}
+
+export function resegmentSession(
+  date: string
+): Promise<StrengthSessionDetail> {
+  return fetchJson<StrengthSessionDetail>(
+    `/strength/session/${date}/resegment`,
+    { method: "POST" }
+  );
 }

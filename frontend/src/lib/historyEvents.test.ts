@@ -294,7 +294,7 @@ describe("buildHistoryEvents", () => {
   });
 
   it("routes strength rows with linked activity to /workouts/lifting/:date", () => {
-    // The detail page surfaces the linked Strava activity as its own chip,
+    // The detail page surfaces the linked device workout as its own chip,
     // so we always navigate to the date-keyed lifting page regardless of
     // whether `activity_id` is set.
     const events = buildHistoryEvents(
@@ -303,6 +303,24 @@ describe("buildHistoryEvents", () => {
       [makeStrength({ date: "2026-04-25", activity_id: 42 })]
     );
     expect(events[0].navigateTo).toBe("/workouts/lifting/2026-04-25");
+  });
+
+  it("flags strength events as HR-linked when hr_linked is true", () => {
+    const events = buildHistoryEvents(
+      [],
+      [],
+      [makeStrength({ activity_id: 42, hr_linked: true })]
+    );
+    expect(events[0].hrLinked).toBe(true);
+  });
+
+  it("defaults hrLinked to false when the strength row has no hr_linked flag", () => {
+    const events = buildHistoryEvents(
+      [],
+      [],
+      [makeStrength({ activity_id: null })]
+    );
+    expect(events[0].hrLinked).toBe(false);
   });
 
   it("dedupes sleep rows by date, preferring eight_sleep over whoop", () => {

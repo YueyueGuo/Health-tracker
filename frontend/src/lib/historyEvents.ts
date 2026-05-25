@@ -39,6 +39,9 @@ export interface HistoryEvent {
    *  event card. Undefined for non-workout events (sleep) or legacy rows
    *  with no `source` value from the backend. */
   sourceBadge?: SourceBadge;
+  /** True when this is a strength session linked to a device workout.
+   *  Drives a small heart icon next to the title in the history view. */
+  hrLinked?: boolean;
 }
 
 export type FilterId = "All" | "Workout" | "Health" | "Ride" | "Run" | "Strength";
@@ -182,10 +185,8 @@ function strengthToEvent(s: StrengthSession): HistoryEvent {
       { label: "Sets", value: s.total_sets.toString() },
       { label: "Exercises", value: s.exercise_count.toString() },
     ],
-    // Strength rows always route to the date-keyed lifting detail page.
-    // The detail page surfaces the linked Strava activity (when present) as
-    // its own chip, so we no longer branch on `activity_id` here.
     navigateTo: `/workouts/lifting/${s.date}`,
+    hrLinked: s.hr_linked === true,
   };
 }
 
