@@ -25,8 +25,11 @@ something is genuinely ambiguous or a hard limit is hit (3 test loops,
 | `backend-engineer` | FastAPI / SQLAlchemy / services / clients + tests. | No | Phase 2 (parallel) |
 | `frontend-engineer` | React 19 / Vite / TS / Tailwind + typecheck/build. | No | Phase 2 (parallel) |
 | `test-runner` | Runs ruff + pytest + npm typecheck + npm build; routes failures. | Yes | Verify |
-| `qa-verifier` | Boots backend + frontend, drives golden-path scenarios via Playwright, captures screenshots. Mocks external APIs at the client boundary. | Yes | Review (parallel with code-reviewer) |
-| `code-reviewer` | Reviews branch diff against the plan. | Yes | Review (parallel with qa-verifier) |
+| `migration-safety-checker` | Audits new Alembic revisions for Postgres production safety (drift, locks, NOT NULL hazards, backfill). | Yes | Phase 1 (sequential after `db-migrator`); re-run in Review if migrations exist |
+| `qa-verifier` | Boots backend + frontend, drives golden-path scenarios via Playwright, captures screenshots, runs axe-core a11y scan on each page. Mocks external APIs at the client boundary. | Yes | Review (parallel) |
+| `code-reviewer` | Reviews branch diff against the plan for correctness + conventions + scope. | Yes | Review (parallel) |
+| `security-reviewer` | Reviews diff for secrets, auth/authz, injection, unsafe deserialization, dep CVEs, prompt injection. | Yes | Review (parallel) |
+| `performance-sentinel` | Inspects diff for N+1, missing indexes, blocking I/O in async, frontend bundle bloat / re-renders. | Yes | Review (parallel) |
 | `architecture-auditor` | Standalone read-only repo audit (pre-existing). | Yes | Ad hoc |
 
 ## Parallelism
@@ -35,14 +38,20 @@ The orchestrator spawns parallel work in **a single message with
 multiple `Agent` tool uses**. Real parallelism points:
 
 - **Phase 1**: `integration-researcher` ∥ `db-migrator` (only when
-  the plan calls for both).
+  the plan calls for both). `migration-safety-checker` then runs
+  *sequentially* after `db-migrator` (it audits work that just landed).
 - **Phase 2**: `backend-engineer` ∥ `frontend-engineer` (whenever the
   plan touches both surfaces).
-- **Review**: `code-reviewer` ∥ `qa-verifier` (whenever the change
-  touches user-visible behavior — see `/feature` Step 5 for the rule).
+- **Review**: `code-reviewer` ∥ `security-reviewer` ∥
+  `performance-sentinel` ∥ `qa-verifier` ∥ `migration-safety-checker`
+  — all read-only, all safely concurrent. Run unconditionally except:
+  `qa-verifier` only when the change is user-visible,
+  `migration-safety-checker` only when migrations exist in the diff,
+  and the security/perf agents skip for doc-only diffs (see `/feature`
+  Step 5 for the full rule).
 
-Sequential by design: planner → phase 1 → phase 2 → tests →
-review+QA → PR → subscribe.
+Sequential by design: planner → phase 1 (incl. migration audit) →
+phase 2 → tests → review (multi-agent parallel) → PR → subscribe.
 
 ## Adding a new agent
 
