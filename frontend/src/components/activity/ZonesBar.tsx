@@ -29,6 +29,11 @@ export default function ZonesBar({ zones }: Props) {
             <h3 className="text-sm font-semibold text-slate-200">
               Time in {zoneTitle(zone.type)} Zones
             </h3>
+            {zone.type === "heartrate" && zone.sensor_based === false && (
+              <p className="mt-0.5 text-[10px] text-slate-500">
+                Computed from raw HR samples
+              </p>
+            )}
           </div>
           <div className="space-y-2.5">
             {zone.distribution_buckets.map((bucket, i) => {

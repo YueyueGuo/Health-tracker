@@ -3,8 +3,14 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithQuery } from "../test/renderWithQuery";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// Mutable param so tests can simulate navigation between two activity ids.
+const routeParams: { id: string } = { id: "7" };
+function setRouteId(id: string | number) {
+  routeParams.id = String(id);
+}
+
 vi.mock("react-router-dom", () => ({
-  useParams: () => ({ id: "7" }),
+  useParams: () => ({ id: routeParams.id }),
   useNavigate: () => vi.fn(),
 }));
 
@@ -143,6 +149,7 @@ function makeActivity(
 
 describe("ActivityDetailPage", () => {
   beforeEach(() => {
+    setRouteId(7);
     mockedGetActivityWeather.mockResolvedValue(null);
   });
 
@@ -344,5 +351,113 @@ describe("ActivityDetailPage", () => {
     await screen.findByText("Sunrise Hike");
     // Run layout shows Avg Pace; Ride/Strength do not.
     expect(screen.getByText("Avg Pace")).toBeInTheDocument();
+  });
+
+  it("hides RPE, LocationPicker, and Insight panels for Apple Health workouts", async () => {
+    mockedFetchActivity.mockResolvedValue(
+      makeActivity({
+        name: "Apple Run",
+        sport_type: "Run",
+        source: "apple_health",
+        start_lat: null,
+        start_lng: null,
+      })
+    );
+    // Apple streams are auto-fetched on mount; resolve to an empty object so
+    // the chart degrades gracefully and we don't trip the unhandled promise.
+    mockedFetchActivityStreams.mockResolvedValue({});
+
+    renderWithQuery(<ActivityDetailPage />);
+    await screen.findByText("Apple Run");
+
+    // RPE / LocationPicker / Insight cards are hidden for Apple rows.
+    expect(screen.queryByText("RPE card")).not.toBeInTheDocument();
+    expect(screen.queryByText("Location picker")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Analyze This Workout" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the Apple Health analysis copy and hides the Load Streams button when source is apple_health", async () => {
+    mockedFetchActivity.mockResolvedValue(
+      makeActivity({
+        name: "Apple Ride",
+        sport_type: "Ride",
+        source: "apple_health",
+      })
+    );
+    // Hold the streams promise open so the lazy-load panel stays mounted.
+    let resolveStreams: ((v: Record<string, number[]>) => void) | undefined;
+    mockedFetchActivityStreams.mockReturnValue(
+      new Promise<Record<string, number[]>>((resolve) => {
+        resolveStreams = resolve;
+      })
+    );
+
+    renderWithQuery(<ActivityDetailPage />);
+    await screen.findByText("Apple Ride");
+
+    // Streams are auto-fetched for Apple — no manual "Load Streams" button.
+    expect(
+      screen.queryByRole("button", { name: "Load Streams" })
+    ).not.toBeInTheDocument();
+
+    resolveStreams?.({});
+  });
+
+  it("skips the /weather call entirely for Apple Health workouts", async () => {
+    mockedFetchActivity.mockResolvedValue(
+      makeActivity({
+        name: "Apple Run",
+        sport_type: "Run",
+        source: "apple_health",
+      })
+    );
+    mockedFetchActivityStreams.mockResolvedValue({});
+
+    renderWithQuery(<ActivityDetailPage />);
+    await screen.findByText("Apple Run");
+
+    // The Strava-only /activities/{id}/weather endpoint must not be hit
+    // for Apple Health rows — it 404s and is a wasted network round-trip.
+    expect(mockedGetActivityWeather).not.toHaveBeenCalled();
+  });
+
+  it("re-fetches streams when navigating between Apple Health detail pages", async () => {
+    // Two Apple workouts back-to-back. The bug: streams state from workout
+    // A would leak into workout B because the auto-fetch effect guarded on
+    // streams === null but never reset on activityId change.
+    setRouteId(7);
+    mockedFetchActivity.mockImplementation(async (id: number) =>
+      makeActivity({
+        id,
+        name: id === 7 ? "Apple Run A" : "Apple Run B",
+        sport_type: "Run",
+        source: "apple_health",
+      })
+    );
+
+    const streamsA = { time: [0, 60], heartrate: [120, 125] };
+    const streamsB = { time: [0, 30], heartrate: [150, 155] };
+    mockedFetchActivityStreams.mockImplementation(async (id: number) =>
+      id === 7 ? streamsA : streamsB
+    );
+
+    const { rerender } = renderWithQuery(<ActivityDetailPage />);
+    await screen.findByText("Apple Run A");
+    await waitFor(() =>
+      expect(mockedFetchActivityStreams).toHaveBeenCalledWith(7)
+    );
+
+    // Simulate navigation: same component, new URL param.
+    setRouteId(11);
+    rerender(<ActivityDetailPage />);
+    await screen.findByText("Apple Run B");
+
+    // The new id must trigger its own streams fetch — proves the reset
+    // effect cleared the prior workout's stream state.
+    await waitFor(() =>
+      expect(mockedFetchActivityStreams).toHaveBeenCalledWith(11)
+    );
   });
 });

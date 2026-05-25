@@ -101,6 +101,12 @@ export interface ActivityDetail extends ActivitySummary {
   pace_hr_decoupling: number | null;
   power_hr_decoupling: number | null;
   raw_data: Record<string, unknown> | null;
+  /** True when HR zones were synthesized from raw HR samples rather than
+   *  reported by the source device. Set by the Apple-workout detail builder. */
+  zones_synthetic?: boolean;
+  /** True when lap splits were derived by the ingestion pipeline
+   *  (e.g. 1 km / 5 km auto-splits) rather than reported as real laps. */
+  splits_synthetic?: boolean;
 }
 
 interface ActivityClassificationResult {

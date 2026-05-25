@@ -154,12 +154,10 @@ function activityToEvent(a: ActivitySummary): HistoryEvent {
       metrics.push({ label: "RE", value: Math.round(a.suffer_score).toString() });
     }
   }
-  // v1: Apple-only workouts have no backend detail endpoint — they use
-  // `health_data_points.id` and the `/activities/:id` route queries the
-  // Strava `activities` table, which would 404. Skip the click target
-  // entirely for these rows. A dedicated Apple-workout detail page is a
-  // planned follow-up.
-  const isAppleOnly = a.source === "apple_health";
+  // Apple Health and Strava workouts both route to `/activities/:id`. For
+  // Apple-only rows `a.id` is the `health_data_points.id`; for Strava (and
+  // Apple-wins-dedup) rows it is the `activities.id`. The detail router
+  // resolves the right table on the backend.
   return {
     id: `activity-${a.id}`,
     category: "Workout",
@@ -167,7 +165,7 @@ function activityToEvent(a: ActivitySummary): HistoryEvent {
     title: a.name,
     timestamp: ts,
     metrics,
-    navigateTo: isAppleOnly ? null : `/activities/${a.id}`,
+    navigateTo: `/activities/${a.id}`,
     sourceBadge: activitySourceToBadge(a.source),
   };
 }

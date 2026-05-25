@@ -179,7 +179,7 @@ describe("activityToEvent (via buildHistoryEvents)", () => {
     expect(events[0].type).toBe("Strength");
   });
 
-  it("omits navigateTo for Apple-only workouts (v1: no detail endpoint)", () => {
+  it("routes Apple-only workouts to /activities/:id (using the HDP id)", () => {
     const events = buildHistoryEvents(
       [
         makeActivity({
@@ -192,7 +192,7 @@ describe("activityToEvent (via buildHistoryEvents)", () => {
       [],
       []
     );
-    expect(events[0].navigateTo).toBeNull();
+    expect(events[0].navigateTo).toBe("/activities/5");
   });
 
   it("keeps navigateTo for Strava-sourced workouts", () => {

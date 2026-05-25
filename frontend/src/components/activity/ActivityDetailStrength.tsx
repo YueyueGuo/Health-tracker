@@ -110,6 +110,7 @@ export default function ActivityDetailStrength({
         streamsError={streamsError}
         onLoadStreams={onLoadStreams}
         streamsCached={activity.streams_cached}
+        source={activity.source}
       />
       <ZonesBar zones={activity.zones} />
       {session && session.exercises.length > 0 && (

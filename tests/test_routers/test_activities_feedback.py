@@ -5,7 +5,7 @@ from datetime import timedelta
 
 import pytest
 
-from backend.models import Activity
+from backend.models import Activity, HealthDataPoint, Workout
 from backend.routers.activities import router as activities_router
 from backend.services.time_utils import utc_now_naive
 
@@ -111,3 +111,28 @@ async def test_patch_feedback_empty_body_rejected(client, db):
 async def test_patch_feedback_unknown_activity_404(client):
     resp = await client.patch("/api/activities/999/feedback", json={"rpe": 5})
     assert resp.status_code == 404
+
+
+async def test_patch_feedback_rejects_apple_workout_id(client, db):
+    """RPE writes live on ``activities``; Apple ids must surface a 4xx,
+    not a confusing 404 (the workout exists, the operation just isn't
+    supported for Apple in v1)."""
+    start = utc_now_naive() - timedelta(days=1)
+    dp = HealthDataPoint(
+        source="apple_health",
+        data_type="workout",
+        external_id="apple-rpe-1",
+        start_time=start,
+    )
+    db.add(dp)
+    await db.flush()
+    w = Workout(id=dp.id, activity_type="run", duration_s=1800)
+    db.add(w)
+    await db.commit()
+    await db.refresh(dp)
+
+    resp = await client.patch(
+        f"/api/activities/{dp.id}/feedback", json={"rpe": 5}
+    )
+    assert 400 <= resp.status_code < 500
+    assert resp.status_code != 404

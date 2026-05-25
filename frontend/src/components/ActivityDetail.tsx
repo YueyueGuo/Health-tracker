@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
   fetchActivity,
@@ -26,9 +26,14 @@ export default function ActivityDetailPage() {
     ["activities", "detail", activityId],
     () => fetchActivity(activityId),
   );
+  // The /activities/{id}/weather endpoint is Strava-only; for Apple Health
+  // workouts it always 404s. Wait until the activity payload arrives so we
+  // know the source, then skip the call for Apple. Avoids both a wasted RTT
+  // and a 404 in the network panel.
   const { data: weather } = useApi(
     ["activities", "weather", activityId, "raw"],
     () => getActivityWeather(activityId, { raw: true }),
+    { enabled: activity != null && activity.source !== "apple_health" },
   );
 
   const [insight, setInsight] = useState<WorkoutInsight | null>(null);
@@ -60,7 +65,7 @@ export default function ActivityDetailPage() {
     }
   };
 
-  const handleLoadStreams = async () => {
+  const handleLoadStreams = useCallback(async () => {
     setStreamsLoading(true);
     setStreamsError(null);
     try {
@@ -71,7 +76,29 @@ export default function ActivityDetailPage() {
     } finally {
       setStreamsLoading(false);
     }
-  };
+  }, [activityId]);
+
+  // Reset stream state whenever the active activity changes so that
+  // navigating from one detail page to another doesn't carry the previous
+  // workout's HR series (or a stale `streamsError`) into the new page.
+  useEffect(() => {
+    setStreams(null);
+    setStreamsError(null);
+    setStreamsLoading(false);
+  }, [activityId]);
+
+  // Apple Health streams come pre-cached in the workout `raw_payload`, so
+  // there's no network cost — fetch them eagerly once the activity loads.
+  useEffect(() => {
+    if (
+      activity?.source === "apple_health" &&
+      streams === null &&
+      !streamsLoading &&
+      !streamsError
+    ) {
+      void handleLoadStreams();
+    }
+  }, [activity?.source, streams, streamsLoading, streamsError, handleLoadStreams]);
 
   const handleReclassify = async () => {
     setReclassifying(true);
@@ -105,27 +132,33 @@ export default function ActivityDetailPage() {
         onLoadStreams={handleLoadStreams}
       />
       <div className="space-y-3 mt-3">
-        <RPECard
-          activityId={activityId}
-          initialRpe={activity.rpe}
-          initialNotes={activity.user_notes}
-          ratedAt={activity.rated_at}
-          onSaved={reload}
-        />
-        {activity.start_lat == null && activity.start_lng == null && (
-          <LocationPicker
+        {activity.source !== "apple_health" && (
+          <RPECard
             activityId={activityId}
-            currentLocationId={activity.location_id}
-            onChange={reload}
+            initialRpe={activity.rpe}
+            initialNotes={activity.user_notes}
+            ratedAt={activity.rated_at}
+            onSaved={reload}
           />
         )}
-        <WorkoutInsightView
-          insight={insight}
-          model={insightModel}
-          error={insightError}
-          analyzing={analyzing}
-          onAnalyze={handleAnalyze}
-        />
+        {activity.source !== "apple_health" &&
+          activity.start_lat == null &&
+          activity.start_lng == null && (
+            <LocationPicker
+              activityId={activityId}
+              currentLocationId={activity.location_id}
+              onChange={reload}
+            />
+          )}
+        {activity.source !== "apple_health" && (
+          <WorkoutInsightView
+            insight={insight}
+            model={insightModel}
+            error={insightError}
+            analyzing={analyzing}
+            onAnalyze={handleAnalyze}
+          />
+        )}
       </div>
     </div>
   );

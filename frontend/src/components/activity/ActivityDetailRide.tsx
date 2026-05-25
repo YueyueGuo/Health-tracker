@@ -133,9 +133,14 @@ export default function ActivityDetailRide({
         streamsError={streamsError}
         onLoadStreams={onLoadStreams}
         streamsCached={activity.streams_cached}
+        source={activity.source}
       />
       <ZonesBar zones={activity.zones} />
-      <SplitsTable variant="ride" laps={activity.laps} />
+      <SplitsTable
+        variant="ride"
+        laps={activity.laps}
+        splitsSynthetic={activity.splits_synthetic}
+      />
     </div>
   );
 }
