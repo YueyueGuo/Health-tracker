@@ -277,6 +277,279 @@ async def test_session_summary_no_hr_when_streams_missing(db: AsyncSession):
     assert "avg_hr" not in summary["sets"][0]
 
 
+async def test_session_summary_orders_by_order_index(db: AsyncSession):
+    """Exercises render in ``order_index`` order, not alphabetical."""
+    today = date.today()
+    # Bench seeded first alphabetically but tagged with a later order_index
+    # so Squat should still come out first in the response.
+    await _seed(
+        db,
+        [
+            StrengthSet(
+                date=today,
+                exercise_name="Bench",
+                set_number=1,
+                reps=5,
+                weight_kg=80,
+                order_index=2,
+            ),
+            StrengthSet(
+                date=today,
+                exercise_name="Squat",
+                set_number=1,
+                reps=5,
+                weight_kg=100,
+                order_index=0,
+            ),
+            StrengthSet(
+                date=today,
+                exercise_name="Row",
+                set_number=1,
+                reps=10,
+                weight_kg=60,
+                order_index=1,
+            ),
+        ],
+    )
+    summary = await session_summary(db, today)
+    assert summary is not None
+    names = [ex["name"] for ex in summary["exercises"]]
+    assert names == ["Squat", "Row", "Bench"]
+    indices = [ex["order_index"] for ex in summary["exercises"]]
+    assert indices == [0, 1, 2]
+
+
+async def test_session_summary_orders_falls_back_to_performed_at_then_name(
+    db: AsyncSession,
+):
+    """No order_index → fall back to min(performed_at), then name."""
+    today = date.today()
+    t0 = datetime(today.year, today.month, today.day, 10, 0, 0)
+    await _seed(
+        db,
+        [
+            # Alphabetically first, but recorded second.
+            StrengthSet(
+                date=today,
+                exercise_name="Bench",
+                set_number=1,
+                reps=5,
+                weight_kg=80,
+                performed_at=t0 + timedelta(minutes=10),
+            ),
+            # Alphabetically last, recorded first.
+            StrengthSet(
+                date=today,
+                exercise_name="Squat",
+                set_number=1,
+                reps=5,
+                weight_kg=100,
+                performed_at=t0,
+            ),
+            # No performed_at, no order_index → falls through to name.
+            StrengthSet(
+                date=today,
+                exercise_name="Deadlift",
+                set_number=1,
+                reps=5,
+                weight_kg=120,
+            ),
+        ],
+    )
+    summary = await session_summary(db, today)
+    assert summary is not None
+    names = [ex["name"] for ex in summary["exercises"]]
+    # Squat (earliest performed_at), Bench (later performed_at), then
+    # Deadlift (no timestamp, falls through to alphabetical bucket).
+    assert names == ["Squat", "Bench", "Deadlift"]
+
+
+async def test_session_summary_emits_superset_group_id(db: AsyncSession):
+    """Modal superset_group_id per exercise; standalone exercise → None."""
+    today = date.today()
+    await _seed(
+        db,
+        [
+            # Two exercises share group 1 (a superset).
+            StrengthSet(
+                date=today,
+                exercise_name="Bench",
+                set_number=1,
+                reps=5,
+                weight_kg=80,
+                order_index=0,
+                superset_group_id=1,
+            ),
+            StrengthSet(
+                date=today,
+                exercise_name="Bench",
+                set_number=2,
+                reps=5,
+                weight_kg=80,
+                order_index=0,
+                superset_group_id=1,
+            ),
+            StrengthSet(
+                date=today,
+                exercise_name="Row",
+                set_number=1,
+                reps=10,
+                weight_kg=60,
+                order_index=1,
+                superset_group_id=1,
+            ),
+            # Standalone exercise — no group.
+            StrengthSet(
+                date=today,
+                exercise_name="Squat",
+                set_number=1,
+                reps=5,
+                weight_kg=100,
+                order_index=2,
+            ),
+        ],
+    )
+    summary = await session_summary(db, today)
+    assert summary is not None
+    by_name = {ex["name"]: ex for ex in summary["exercises"]}
+    assert by_name["Bench"]["superset_group_id"] == 1
+    assert by_name["Row"]["superset_group_id"] == 1
+    assert by_name["Squat"]["superset_group_id"] is None
+    # Per-set serialization also carries the field.
+    bench_sets = by_name["Bench"]["sets"]
+    assert all(s["superset_group_id"] == 1 for s in bench_sets)
+    squat_sets = by_name["Squat"]["sets"]
+    assert all(s["superset_group_id"] is None for s in squat_sets)
+
+
+async def test_session_summary_duration_from_started_ended(db: AsyncSession):
+    """``duration_sec`` prefers max(ended_at) - min(started_at)."""
+    today = date.today()
+    started = datetime(today.year, today.month, today.day, 17, 30, 0)
+    ended = datetime(today.year, today.month, today.day, 18, 25, 0)
+    perf_mid = datetime(today.year, today.month, today.day, 17, 45, 0)
+    await _seed(
+        db,
+        [
+            StrengthSet(
+                date=today,
+                exercise_name="Squat",
+                set_number=1,
+                reps=5,
+                weight_kg=100,
+                performed_at=perf_mid,
+                started_at=started,
+                ended_at=ended,
+            ),
+            StrengthSet(
+                date=today,
+                exercise_name="Squat",
+                set_number=2,
+                reps=5,
+                weight_kg=100,
+                performed_at=perf_mid,
+                started_at=started,
+                ended_at=ended,
+            ),
+        ],
+    )
+    summary = await session_summary(db, today)
+    assert summary is not None
+    # 55 minutes = 3300s.
+    assert summary["duration_sec"] == 55 * 60
+    assert summary["started_at"] == started.isoformat()
+    assert summary["ended_at"] == ended.isoformat()
+
+
+async def test_session_summary_duration_fallback_to_performed_at_range(
+    db: AsyncSession,
+):
+    """No started_at/ended_at → fall back to performed_at min/max."""
+    today = date.today()
+    t0 = datetime(today.year, today.month, today.day, 10, 0, 0)
+    t1 = datetime(today.year, today.month, today.day, 10, 20, 30)
+    await _seed(
+        db,
+        [
+            StrengthSet(
+                date=today,
+                exercise_name="Bench",
+                set_number=1,
+                reps=5,
+                weight_kg=80,
+                performed_at=t0,
+            ),
+            StrengthSet(
+                date=today,
+                exercise_name="Bench",
+                set_number=2,
+                reps=5,
+                weight_kg=80,
+                performed_at=t1,
+            ),
+        ],
+    )
+    summary = await session_summary(db, today)
+    assert summary is not None
+    assert summary["duration_sec"] == 20 * 60 + 30
+    # No session-level stamps were written.
+    assert summary["started_at"] is None
+    assert summary["ended_at"] is None
+
+
+async def test_session_summary_duration_none_when_no_stamps(db: AsyncSession):
+    """A single bare set → duration_sec is None (no derivable range)."""
+    today = date.today()
+    await _seed(
+        db,
+        [
+            StrengthSet(
+                date=today, exercise_name="Squat", set_number=1, reps=5, weight_kg=100,
+            ),
+        ],
+    )
+    summary = await session_summary(db, today)
+    assert summary is not None
+    assert summary["duration_sec"] is None
+
+
+async def test_session_summary_session_aggregates(db: AsyncSession):
+    """total_sets / total_reps / total_volume_kg / exercise_count.
+
+    Mixes weighted and bodyweight (``weight_kg=None``) sets — reps and
+    set counts include bodyweight; volume does not.
+    """
+    today = date.today()
+    await _seed(
+        db,
+        [
+            # Weighted compound.
+            StrengthSet(
+                date=today, exercise_name="Squat", set_number=1, reps=5, weight_kg=100,
+            ),
+            StrengthSet(
+                date=today, exercise_name="Squat", set_number=2, reps=3, weight_kg=110,
+            ),
+            # Weighted accessory.
+            StrengthSet(
+                date=today, exercise_name="Row", set_number=1, reps=10, weight_kg=60,
+            ),
+            # Bodyweight set (no weight) — counted in reps + sets, not volume.
+            StrengthSet(
+                date=today, exercise_name="Pullup", set_number=1, reps=8, weight_kg=None,
+            ),
+        ],
+    )
+    summary = await session_summary(db, today)
+    assert summary is not None
+    assert summary["total_sets"] == 4
+    assert summary["total_reps"] == 5 + 3 + 10 + 8
+    assert summary["total_volume_kg"] == pytest.approx(
+        5 * 100 + 3 * 110 + 10 * 60
+    )
+    assert summary["exercise_count"] == 3
+
+
 async def test_search_exercises_prefix_match(db: AsyncSession):
     today = date.today()
     await _seed(

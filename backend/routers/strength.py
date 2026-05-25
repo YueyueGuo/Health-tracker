@@ -55,6 +55,11 @@ class StrengthSetInput(BaseModel):
     ``performed_at`` is a naive-local wall-clock timestamp stamped when
     the set is logged. Optional for legacy rows created before
     Live-only entry mode; new sets always carry it.
+
+    ``superset_group_id`` and ``order_index`` are stamped by the
+    recording flow (see ``docs/plans/strength-workout-detail.md``); a
+    non-null ``superset_group_id`` means the set's exercise was
+    performed back-to-back with other exercises sharing the same value.
     """
 
     exercise_name: str = Field(..., min_length=1, max_length=100)
@@ -64,14 +69,24 @@ class StrengthSetInput(BaseModel):
     rpe: float | None = Field(None, ge=0, le=10)
     notes: str | None = None
     performed_at: datetime | None = None
+    superset_group_id: int | None = None
+    order_index: int | None = None
 
 
 class StrengthSessionCreate(BaseModel):
-    """Bulk-insert payload: one date, many sets."""
+    """Bulk-insert payload: one date, many sets.
+
+    ``started_at`` / ``ended_at`` are session-level timestamps stamped
+    by the recorder's Start / Finish taps. They are denormalized onto
+    every row of the session (cheap; avoids a parent table). See
+    ``docs/plans/strength-workout-detail.md`` §6.
+    """
 
     date: date_type
     activity_id: int | None = None
     sets: list[StrengthSetInput]
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
 
 
 class StrengthSetPatch(BaseModel):
@@ -85,6 +100,8 @@ class StrengthSetPatch(BaseModel):
     notes: str | None = None
     performed_at: datetime | None = None
     activity_id: int | None = None
+    superset_group_id: int | None = None
+    order_index: int | None = None
 
 
 # ── Endpoints ───────────────────────────────────────────────────────
@@ -123,6 +140,9 @@ async def create_sets(
     if not payload.sets:
         raise HTTPException(status_code=400, detail="At least one set required")
 
+    started_at = _normalize_performed_at(payload.started_at)
+    ended_at = _normalize_performed_at(payload.ended_at)
+
     created: list[StrengthSet] = []
     for s in payload.sets:
         row = StrengthSet(
@@ -135,6 +155,10 @@ async def create_sets(
             rpe=s.rpe,
             notes=s.notes,
             performed_at=_normalize_performed_at(s.performed_at),
+            superset_group_id=s.superset_group_id,
+            order_index=s.order_index,
+            started_at=started_at,
+            ended_at=ended_at,
         )
         db.add(row)
         created.append(row)
@@ -182,6 +206,8 @@ async def update_set(
         "rpe": row.rpe,
         "notes": row.notes,
         "performed_at": row.performed_at.isoformat() if row.performed_at else None,
+        "superset_group_id": row.superset_group_id,
+        "order_index": row.order_index,
     }
 
 
