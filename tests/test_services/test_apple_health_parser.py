@@ -214,17 +214,89 @@ def test_flatten_unknown_activity_falls_through_to_other():
     assert parsed.activity_type == "other"
 
 
-def test_flatten_rejects_bad_units():
+def test_flatten_rejects_truly_unknown_units():
     bad = HAEWorkout(
         id="x",
         name="Running",
         start="2026-05-24 12:00:00 +0000",
         end="2026-05-24 12:30:00 +0000",
         duration=1800.0,
-        distance=HAEQty(qty=5.0, units="km"),  # plan requires meters
+        distance=HAEQty(qty=5.0, units="parsec"),  # not a HAE unit we'd ever see
     )
     with pytest.raises(ValueError, match="unexpected HAE units"):
         flatten_hae_workout(bad)
+
+
+# Regression: HAE → Settings → Units defaults to imperial on US accounts,
+# producing 'mi' for distance, 'mph' for speed, 'ft' for elevation in
+# real exports. Pre-fix _opt_qty rejected anything that wasn't the
+# canonical SI unit and dropped 6/9 workouts per batch on the floor.
+# Each conversion factor is exact (international yard / mile definition).
+
+
+def test_flatten_converts_imperial_distance_mi_to_m():
+    w = HAEWorkout(
+        id="x",
+        name="Running",
+        start="2026-05-24 12:00:00 +0000",
+        end="2026-05-24 12:30:00 +0000",
+        duration=1800.0,
+        distance=HAEQty(qty=3.10685596119, units="mi"),  # ≈5000 m
+    )
+    parsed = flatten_hae_workout(w)
+    assert parsed.distance_m == pytest.approx(5000.0, rel=1e-9)
+
+
+def test_flatten_converts_metric_distance_km_to_m():
+    w = HAEWorkout(
+        id="x",
+        name="Running",
+        start="2026-05-24 12:00:00 +0000",
+        end="2026-05-24 12:30:00 +0000",
+        duration=1800.0,
+        distance=HAEQty(qty=5.0, units="km"),
+    )
+    parsed = flatten_hae_workout(w)
+    assert parsed.distance_m == pytest.approx(5000.0, rel=1e-12)
+
+
+def test_flatten_converts_imperial_speed_mph_to_mps():
+    w = HAEWorkout(
+        id="x",
+        name="Running",
+        start="2026-05-24 12:00:00 +0000",
+        end="2026-05-24 12:30:00 +0000",
+        duration=1800.0,
+        avgSpeed=HAEQty(qty=10.0, units="mph"),  # 10 mph = 4.4704 m/s
+    )
+    parsed = flatten_hae_workout(w)
+    assert parsed.avg_speed_mps == pytest.approx(4.4704, rel=1e-12)
+
+
+def test_flatten_converts_imperial_elevation_ft_to_m():
+    w = HAEWorkout(
+        id="x",
+        name="Hiking",
+        start="2026-05-24 12:00:00 +0000",
+        end="2026-05-24 13:00:00 +0000",
+        duration=3600.0,
+        elevationUp=HAEQty(qty=100.0, units="ft"),  # 100 ft = 30.48 m
+    )
+    parsed = flatten_hae_workout(w)
+    assert parsed.total_elevation_m == pytest.approx(30.48, rel=1e-12)
+
+
+def test_flatten_accepts_bpm_alias_for_heart_rate():
+    w = HAEWorkout(
+        id="x",
+        name="Running",
+        start="2026-05-24 12:00:00 +0000",
+        end="2026-05-24 12:30:00 +0000",
+        duration=1800.0,
+        avgHeartRate=HAEQty(qty=154.0, units="bpm"),
+    )
+    parsed = flatten_hae_workout(w)
+    assert parsed.avg_hr == 154.0
 
 
 def test_flatten_handles_missing_optional_fields():

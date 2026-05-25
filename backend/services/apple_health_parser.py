@@ -27,14 +27,37 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-# Expected units per field. Keep this narrow — HAE settings let the user
-# pick metric vs imperial, but we want to fail loud rather than guess.
-_EXPECTED_UNITS: dict[str, set[str]] = {
-    "active_energy": {"kcal", "Cal"},
-    "distance": {"m"},
-    "hr": {"count/min", "bpm"},
-    "speed": {"m/s"},
-    "elevation": {"m"},
+# HAE → Settings → Units lets the user pick metric or imperial per
+# metric type, and a US-defaults install ships imperial for distance /
+# speed / elevation. Convert into the canonical unit we persist
+# (meters, m/s, kcal, count/min). Stay narrow — unknown units still
+# fail loud rather than silently guess.
+_UNIT_CONVERSIONS: dict[str, dict[str, float]] = {
+    "active_energy": {
+        "kcal": 1.0,
+        "Cal": 1.0,           # HAE writes food calorie interchangeably with kcal.
+        "kJ": 1.0 / 4.184,    # 1 kJ = 0.239006 kcal.
+    },
+    "distance": {
+        "m": 1.0,
+        "km": 1000.0,
+        "mi": 1609.344,       # international mile, exact.
+        "yd": 0.9144,
+        "ft": 0.3048,
+    },
+    "hr": {
+        "count/min": 1.0,
+        "bpm": 1.0,
+    },
+    "speed": {
+        "m/s": 1.0,
+        "km/h": 1000.0 / 3600.0,
+        "mph": 0.44704,       # = 1609.344 / 3600.
+    },
+    "elevation": {
+        "m": 1.0,
+        "ft": 0.3048,
+    },
 }
 
 
@@ -155,17 +178,28 @@ class ParsedWorkout:
 
 
 def _opt_qty(qty: HAEMetric, unit_key: str) -> float | None:
-    """Unwrap an :class:`HAEQty` validating against ``_EXPECTED_UNITS``.
+    """Convert an :class:`HAEQty` into our canonical unit.
+
+    Recognises both the metric and imperial units HAE emits depending
+    on the user's HAE → Settings → Units choice (see
+    :data:`_UNIT_CONVERSIONS`). Unknown units still raise
+    ``ValueError`` — silent unit guessing is worse than dropping a
+    workout.
 
     Series-shaped values (HAE's ``[{date, qty, units}, ...]`` format,
     emitted when "Aggregate workout data" is off in HAE) return
     ``None`` — the raw series is still preserved in ``raw_payload``
-    via ``model_dump``. We don't aggregate; that's a feature decision,
-    not a bug fix.
+    via ``model_dump``. We don't aggregate; that's a feature decision.
     """
     if qty is None or isinstance(qty, list):
         return None
-    return qty.as_unit(_EXPECTED_UNITS[unit_key])
+    factors = _UNIT_CONVERSIONS[unit_key]
+    if qty.units not in factors:
+        raise ValueError(
+            f"unexpected HAE units: got {qty.units!r}, "
+            f"expected one of {sorted(factors)!r}"
+        )
+    return float(qty.qty) * factors[qty.units]
 
 
 def flatten_hae_workout(hae: HAEWorkout) -> ParsedWorkout:
