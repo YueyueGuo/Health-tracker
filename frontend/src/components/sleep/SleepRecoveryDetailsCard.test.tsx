@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import type { SleepSession } from "../../api/sleep";
 import type { RecoveryRecord } from "../../api/recovery";
 
@@ -10,6 +10,16 @@ vi.mock("../../hooks/useUnits", () => ({
   formatTemperature: (c: number | null | undefined) =>
     c == null ? "—" : `${Math.round(c)}°`,
 }));
+
+const { mockNavigate } = vi.hoisted(() => ({ mockNavigate: vi.fn() }));
+
+vi.mock("react-router-dom", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router-dom")>();
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+  };
+});
 
 import { SleepRecoveryDetailsCard } from "./SleepRecoveryDetailsCard";
 
@@ -76,6 +86,10 @@ const recovery: RecoveryRecord = {
 };
 
 describe("SleepRecoveryDetailsCard", () => {
+  beforeEach(() => {
+    mockNavigate.mockClear();
+  });
+
   it("renders both source labels and the score circles", () => {
     render(
       <MemoryRouter>
@@ -117,5 +131,53 @@ describe("SleepRecoveryDetailsCard", () => {
     ).toBeInTheDocument();
     // Recovery circle falls back to em-dash placeholder.
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("back button falls back to dashboard when entered via deep link", () => {
+    // Single MemoryRouter entry — react-router classifies the initial
+    // navigation as "POP", mimicking a fresh-tab deep link to /sleep.
+    render(
+      <MemoryRouter initialEntries={["/sleep"]}>
+        <SleepRecoveryDetailsCard
+          whoopSleep={whoopSleep}
+          eightSleep={eightSleep}
+          recovery={recovery}
+        />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+
+    expect(mockNavigate).toHaveBeenCalledWith("/", { replace: true });
+    expect(mockNavigate).not.toHaveBeenCalledWith(-1);
+  });
+
+  it("back button calls navigate(-1) when entered from within the app", () => {
+    // Drive a real in-app PUSH (Link click) so useNavigationType reports
+    // "PUSH" when the detail card mounts. A static initialIndex doesn't
+    // work — MemoryRouter classifies its initial render as "POP".
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Link to="/sleep">Open sleep</Link>} />
+          <Route
+            path="/sleep"
+            element={
+              <SleepRecoveryDetailsCard
+                whoopSleep={whoopSleep}
+                eightSleep={eightSleep}
+                recovery={recovery}
+              />
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "Open sleep" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+
+    expect(mockNavigate).toHaveBeenCalledWith(-1);
+    expect(mockNavigate).not.toHaveBeenCalledWith("/", { replace: true });
   });
 });

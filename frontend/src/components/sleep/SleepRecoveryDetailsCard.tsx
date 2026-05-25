@@ -1,4 +1,5 @@
-import { useNavigate } from "react-router-dom";
+import { useRef } from "react";
+import { useNavigate, useNavigationType } from "react-router-dom";
 import {
   Activity,
   Battery,
@@ -40,6 +41,10 @@ export function SleepRecoveryDetailsCard({
   recovery,
 }: SleepRecoveryDetailsCardProps) {
   const navigate = useNavigate();
+  // Capture nav type on first mount only — re-renders after in-component
+  // state changes would otherwise reclassify a deep-link entry as a PUSH.
+  const navigationType = useNavigationType();
+  const enteredViaDeepLink = useRef(navigationType === "POP").current;
   const { units } = useUnits();
 
   const whoopColumnLabel =
@@ -135,11 +140,8 @@ export function SleepRecoveryDetailsCard({
           <button
             type="button"
             onClick={() => {
-              // If the user landed on /sleep via a deep link / PWA shortcut,
-              // history is empty and navigate(-1) is a dead-end. Fall back to
-              // the dashboard so the back button always goes somewhere.
-              if (typeof window !== "undefined" && window.history.length <= 1) {
-                navigate("/");
+              if (enteredViaDeepLink) {
+                navigate("/", { replace: true });
               } else {
                 navigate(-1);
               }
