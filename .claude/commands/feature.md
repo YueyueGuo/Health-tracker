@@ -19,6 +19,48 @@ it's empty, ask the user once for a description, then proceed.
   from the feature.
 - Read `CLAUDE.md` and `AGENTS.md` if not already in context.
 
+### Step 0.5 — Choose workflow lane
+
+Before invoking the planner, decide whether this change qualifies for
+the **fast path** (skips the planner + the entire review cascade).
+
+**Eligible only when ALL hold:**
+- One layer only — frontend OR backend, not both.
+- ≤ 2 production files expected to change (excluding tests).
+- No DB migration, no new dependency, no new external API integration.
+- No new public surface (route, exported function, schema field).
+- Change is a copy/label/styling tweak, a small formatter or prop
+  change, or a localized refactor.
+- User signal: phrasing like "minor", "tiny", "small", "be strategic
+  about agents", "skip the cascade" — **or** the description itself
+  is unambiguously trivial (e.g. "rename heading X to Y").
+
+If any condition fails, take the full lane (Steps 1-5 as written).
+
+**Fast-path workflow (replaces Steps 1-5):**
+1. Make the edit yourself, or spawn a single `frontend-engineer` /
+   `backend-engineer` if the work is enough to warrant isolating its
+   context. No `feature-planner`, no `docs/plans/<slug>.md`.
+2. Run typecheck + the relevant test suite inline via Bash. If
+   failures appear, fix inline (one retry). If they're non-trivial,
+   drop the fast path and resume the full lane from Step 4.
+3. Commit with a conventional message (`feat(frontend): ...` etc.).
+4. Skip Step 5's review cascade. Jump straight to Step 6 (push + PR).
+
+**PR body changes for the fast path:**
+- Replace the **Plan** section with a one-line **Scope note**
+  explaining why the fast path was used and how you verified locally
+  (e.g. "Single-component label change — skipped planner + review
+  cascade. Verified with `npm run typecheck` + full vitest suite.").
+- Test plan + QA screenshot rules unchanged.
+
+**Announce the lane in one line before proceeding**, e.g.:
+> Fast path: single-component label change, no backend/DB. Skipping planner + review cascade.
+
+**Escalation:** if mid-flight you discover a migration, a route /
+public-surface change, or > 2-file scope, drop the fast path and
+restart from Step 1 (planner). Tell the user in one line.
+
 ### Step 1 — Plan (single agent)
 Spawn the `feature-planner` agent. Pass the full feature description.
 When it returns the plan, **persist it to `docs/plans/<slug>.md`**
