@@ -11,9 +11,12 @@ import {
 interface Props {
   variant: "run" | "ride";
   laps: ActivityLap[];
+  /** When true, render a caption explaining the splits were derived by
+   *  the ingestion pipeline (e.g. Apple Health 1 km / 5 km auto-splits). */
+  splitsSynthetic?: boolean;
 }
 
-export default function SplitsTable({ variant, laps }: Props) {
+export default function SplitsTable({ variant, laps, splitsSynthetic }: Props) {
   const { units } = useUnits();
   if (!laps || laps.length === 0) return null;
 
@@ -28,6 +31,11 @@ export default function SplitsTable({ variant, laps }: Props) {
     <Card className="!p-3">
       <div className="mb-3">
         <h3 className="text-sm font-semibold text-slate-200">Splits</h3>
+        {splitsSynthetic && (
+          <p className="mt-0.5 text-[10px] text-slate-500">
+            Auto-split — Apple Health did not provide lap markers
+          </p>
+        )}
       </div>
       <div>
         <div

@@ -10,6 +10,7 @@ import {
 } from "recharts";
 import { Card } from "../ui/Card";
 import { useUnits } from "../../hooks/useUnits";
+import type { ActivitySource } from "../../api/activities";
 import {
   paceDecimal,
   paceUnitLabel,
@@ -26,6 +27,10 @@ interface Props {
   streamsError: string | null;
   onLoadStreams: () => void;
   streamsCached: boolean;
+  /** Source of the underlying workout. Apple Health streams are
+   *  reconstructed server-side from the cached `raw_payload`, so the
+   *  lazy "Load Streams" button is hidden and the copy reflects that. */
+  source?: ActivitySource | null;
 }
 
 interface ChartDatum {
@@ -41,8 +46,10 @@ export default function AnalysisChart({
   streamsError,
   onLoadStreams,
   streamsCached,
+  source,
 }: Props) {
   const { units } = useUnits();
+  const isApple = source === "apple_health";
   const [showHR, setShowHR] = useState(true);
   const [showSecondary, setShowSecondary] = useState(mode !== "strength");
 
@@ -81,6 +88,10 @@ export default function AnalysisChart({
   const hasSecondary = chartData.some((d) => d.secondary != null);
   const ridePowerAvailable =
     mode === "ride" && (streams?.watts?.length ?? 0) > 0;
+  // Apple rides never carry power; hide the Power toggle entirely so the
+  // chart controls stay honest. Strava rides without watts still expose
+  // the toggle as a "Speed" fallback.
+  const ridePowerToggleHidden = mode === "ride" && isApple && !ridePowerAvailable;
   const secondaryName =
     mode === "run"
       ? "Pace"
@@ -117,7 +128,7 @@ export default function AnalysisChart({
           >
             HR
           </button>
-          {mode !== "strength" && (
+          {mode !== "strength" && !ridePowerToggleHidden && (
             <button
               type="button"
               onClick={() => setShowSecondary((v) => !v)}
@@ -136,19 +147,27 @@ export default function AnalysisChart({
       {!streams && !streamsLoading && (
         <div className="flex flex-col items-start gap-3 py-2">
           <p className="text-[11px] text-slate-500 leading-snug">
-            Per-sample heart rate
-            {mode === "run" && " and pace"}
-            {mode === "ride" && ", power, and speed"}. Fetched on demand from
-            Strava.
-            {streamsCached && " (Previously cached.)"}
+            {isApple ? (
+              <>Per-sample heart rate from Apple Health.</>
+            ) : (
+              <>
+                Per-sample heart rate
+                {mode === "run" && " and pace"}
+                {mode === "ride" && ", power, and speed"}. Fetched on demand
+                from Strava.
+                {streamsCached && " (Previously cached.)"}
+              </>
+            )}
           </p>
-          <button
-            type="button"
-            onClick={onLoadStreams}
-            className="px-3 py-1.5 rounded-md text-xs font-medium bg-cardBorder text-slate-200 hover:bg-cardBorder/70 transition-colors"
-          >
-            Load Streams
-          </button>
+          {!isApple && (
+            <button
+              type="button"
+              onClick={onLoadStreams}
+              className="px-3 py-1.5 rounded-md text-xs font-medium bg-cardBorder text-slate-200 hover:bg-cardBorder/70 transition-colors"
+            >
+              Load Streams
+            </button>
+          )}
         </div>
       )}
 

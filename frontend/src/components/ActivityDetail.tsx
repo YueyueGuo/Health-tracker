@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
   fetchActivity,
@@ -73,6 +73,20 @@ export default function ActivityDetailPage() {
     }
   };
 
+  // Apple Health streams come pre-cached in the workout `raw_payload`, so
+  // there's no network cost — fetch them eagerly once the activity loads.
+  useEffect(() => {
+    if (
+      activity?.source === "apple_health" &&
+      streams === null &&
+      !streamsLoading &&
+      !streamsError
+    ) {
+      void handleLoadStreams();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activity?.source, activityId]);
+
   const handleReclassify = async () => {
     setReclassifying(true);
     try {
@@ -105,27 +119,33 @@ export default function ActivityDetailPage() {
         onLoadStreams={handleLoadStreams}
       />
       <div className="space-y-3 mt-3">
-        <RPECard
-          activityId={activityId}
-          initialRpe={activity.rpe}
-          initialNotes={activity.user_notes}
-          ratedAt={activity.rated_at}
-          onSaved={reload}
-        />
-        {activity.start_lat == null && activity.start_lng == null && (
-          <LocationPicker
+        {activity.source !== "apple_health" && (
+          <RPECard
             activityId={activityId}
-            currentLocationId={activity.location_id}
-            onChange={reload}
+            initialRpe={activity.rpe}
+            initialNotes={activity.user_notes}
+            ratedAt={activity.rated_at}
+            onSaved={reload}
           />
         )}
-        <WorkoutInsightView
-          insight={insight}
-          model={insightModel}
-          error={insightError}
-          analyzing={analyzing}
-          onAnalyze={handleAnalyze}
-        />
+        {activity.source !== "apple_health" &&
+          activity.start_lat == null &&
+          activity.start_lng == null && (
+            <LocationPicker
+              activityId={activityId}
+              currentLocationId={activity.location_id}
+              onChange={reload}
+            />
+          )}
+        {activity.source !== "apple_health" && (
+          <WorkoutInsightView
+            insight={insight}
+            model={insightModel}
+            error={insightError}
+            analyzing={analyzing}
+            onAnalyze={handleAnalyze}
+          />
+        )}
       </div>
     </div>
   );

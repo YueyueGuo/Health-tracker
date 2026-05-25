@@ -345,4 +345,56 @@ describe("ActivityDetailPage", () => {
     // Run layout shows Avg Pace; Ride/Strength do not.
     expect(screen.getByText("Avg Pace")).toBeInTheDocument();
   });
+
+  it("hides RPE, LocationPicker, and Insight panels for Apple Health workouts", async () => {
+    mockedFetchActivity.mockResolvedValue(
+      makeActivity({
+        name: "Apple Run",
+        sport_type: "Run",
+        source: "apple_health",
+        start_lat: null,
+        start_lng: null,
+      })
+    );
+    // Apple streams are auto-fetched on mount; resolve to an empty object so
+    // the chart degrades gracefully and we don't trip the unhandled promise.
+    mockedFetchActivityStreams.mockResolvedValue({});
+
+    renderWithQuery(<ActivityDetailPage />);
+    await screen.findByText("Apple Run");
+
+    // RPE / LocationPicker / Insight cards are hidden for Apple rows.
+    expect(screen.queryByText("RPE card")).not.toBeInTheDocument();
+    expect(screen.queryByText("Location picker")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Analyze This Workout" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the Apple Health analysis copy and hides the Load Streams button when source is apple_health", async () => {
+    mockedFetchActivity.mockResolvedValue(
+      makeActivity({
+        name: "Apple Ride",
+        sport_type: "Ride",
+        source: "apple_health",
+      })
+    );
+    // Hold the streams promise open so the lazy-load panel stays mounted.
+    let resolveStreams: ((v: Record<string, number[]>) => void) | undefined;
+    mockedFetchActivityStreams.mockReturnValue(
+      new Promise<Record<string, number[]>>((resolve) => {
+        resolveStreams = resolve;
+      })
+    );
+
+    renderWithQuery(<ActivityDetailPage />);
+    await screen.findByText("Apple Ride");
+
+    // Streams are auto-fetched for Apple — no manual "Load Streams" button.
+    expect(
+      screen.queryByRole("button", { name: "Load Streams" })
+    ).not.toBeInTheDocument();
+
+    resolveStreams?.({});
+  });
 });
