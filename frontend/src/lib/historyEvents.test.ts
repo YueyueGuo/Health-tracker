@@ -327,6 +327,18 @@ describe("buildHistoryEvents", () => {
     const ids = events.map((e) => e.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
+
+  it("encodes the row's date in navigateTo so /sleep deep-links scope correctly", () => {
+    // Regression for issue #51: without ?date=, /sleep always falls back to
+    // the latest Eight Sleep row. See docs/bugs/sleep-detail-date-scope.md.
+    const events = buildHistoryEvents(
+      [],
+      [makeSleep({ id: 77, date: "2025-05-12" })],
+      []
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0].navigateTo).toBe("/sleep?date=2025-05-12");
+  });
 });
 
 describe("applyHistoryFilter", () => {

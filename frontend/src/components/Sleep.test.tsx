@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { renderWithQuery } from "../test/renderWithQuery";
 import type { SleepSession } from "../api/sleep";
@@ -76,8 +76,8 @@ vi.mock("../hooks/useUnits", () => ({
 
 vi.mock("../api/sleep", () => ({
   fetchSleepSessions: vi.fn(() => Promise.resolve([whoopRow, eightRow])),
-  fetchLatestSleepBySource: vi.fn((source: string) =>
-    Promise.resolve(source === "whoop" ? whoopRow : eightRow),
+  fetchLatestSleep: vi.fn((opts?: { source?: string }) =>
+    Promise.resolve(opts?.source === "whoop" ? whoopRow : eightRow),
   ),
 }));
 
@@ -86,8 +86,15 @@ vi.mock("../api/recovery", () => ({
 }));
 
 import Sleep from "./Sleep";
+import { fetchLatestSleep } from "../api/sleep";
+import { fetchRecovery } from "../api/recovery";
 
 describe("Sleep page", () => {
+  beforeEach(() => {
+    vi.mocked(fetchLatestSleep).mockClear();
+    vi.mocked(fetchRecovery).mockClear();
+  });
+
   it("renders the detail card inside an AppShell-style container", async () => {
     const { container } = renderWithQuery(
       <MemoryRouter initialEntries={["/sleep"]}>
@@ -102,5 +109,77 @@ describe("Sleep page", () => {
     // No legacy sidebar shell should be on the page.
     expect(container.querySelector(".app-layout")).toBeNull();
     expect(container.querySelector(".sidebar")).toBeNull();
+  });
+
+  it("passes the ?date= query param as onOrBefore for both sources", async () => {
+    renderWithQuery(
+      <MemoryRouter initialEntries={["/sleep?date=2025-05-10"]}>
+        <Sleep />
+      </MemoryRouter>,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Sleep & Recovery" }),
+    ).toBeInTheDocument();
+
+    expect(fetchLatestSleep).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "whoop", onOrBefore: "2025-05-10" }),
+    );
+    expect(fetchLatestSleep).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "eight_sleep",
+        onOrBefore: "2025-05-10",
+      }),
+    );
+  });
+
+  it("omits onOrBefore when no ?date= param is present (dashboard entry point)", async () => {
+    renderWithQuery(
+      <MemoryRouter initialEntries={["/sleep"]}>
+        <Sleep />
+      </MemoryRouter>,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Sleep & Recovery" }),
+    ).toBeInTheDocument();
+
+    expect(fetchLatestSleep).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "whoop", onOrBefore: undefined }),
+    );
+    expect(fetchLatestSleep).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "eight_sleep",
+        onOrBefore: undefined,
+      }),
+    );
+  });
+
+  it("includes the date in the cache key so navigating to a new night refetches", async () => {
+    const first = renderWithQuery(
+      <MemoryRouter initialEntries={["/sleep?date=2025-05-10"]}>
+        <Sleep />
+      </MemoryRouter>,
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Sleep & Recovery" }),
+    ).toBeInTheDocument();
+    first.unmount();
+
+    const second = renderWithQuery(
+      <MemoryRouter initialEntries={["/sleep?date=2025-05-09"]}>
+        <Sleep />
+      </MemoryRouter>,
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Sleep & Recovery" }),
+    ).toBeInTheDocument();
+    second.unmount();
+
+    const onOrBeforeArgs = vi
+      .mocked(fetchLatestSleep)
+      .mock.calls.map(([opts]) => opts?.onOrBefore);
+    expect(onOrBeforeArgs).toContain("2025-05-10");
+    expect(onOrBeforeArgs).toContain("2025-05-09");
   });
 });

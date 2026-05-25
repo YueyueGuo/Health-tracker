@@ -62,15 +62,3 @@ export function fetchLatestSleep(opts?: {
   );
 }
 
-/**
- * Fetch the latest sleep session for a single source. Used by the
- * sleep details card so the WHOOP and Eight Sleep columns each bind
- * to their own most-recent row instead of fighting over /sleep/latest.
- */
-export function fetchLatestSleepBySource(
-  source: SleepSource,
-): Promise<SleepSession | null> {
-  return fetchJson<SleepSession | null>(
-    `/sleep/latest?source=${encodeURIComponent(source)}`,
-  );
-}
