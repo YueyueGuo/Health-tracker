@@ -6,7 +6,8 @@ Specialized agents and slash commands for the Health Tracker project.
 
 | Command | Purpose |
 |---------|---------|
-| `/feature <desc>` | Full feature workflow: plan → research + migration (parallel) → backend + frontend (parallel) → tests → review → PR → subscribe. |
+| `/spec <rough idea>` | Refinement workflow: draft → interactive Q&A → final spec at `docs/specs/<slug>.md`. Stops at a spec file — does **not** run planner or implementation. Hand off to `/feature` when ready. |
+| `/feature <desc \| spec path>` | Full feature workflow: plan → research + migration (parallel) → backend + frontend (parallel) → tests → review → PR → subscribe. Accepts a free-text description or a path to a spec file produced by `/spec`. |
 | `/bug <desc \| #N \| issue-url>` | Bug workflow: investigate → fix → regression test → tests → review → PR → subscribe. Accepts a free-text description **or** a GitHub issue reference (`#42`, `owner/repo#42`, or a github.com issue URL) — the orchestrator fetches the issue and uses it as the bug description, then adds `Closes #N` to the PR. |
 
 Both commands run in fully-autonomous mode by default. The orchestrator
@@ -18,7 +19,8 @@ something is genuinely ambiguous or a hard limit is hit (3 test loops,
 
 | Agent | Role | Read-only? | Use phase |
 |-------|------|------------|-----------|
-| `feature-planner` | Produces written implementation plan from a feature description. | Yes | Plan |
+| `product-spec` | Refines a rough feature idea into a concrete spec via an interactive Q&A loop. | Yes | Spec (pre-Plan) |
+| `feature-planner` | Produces written implementation plan from a feature description or refined spec. | Yes | Plan |
 | `bug-investigator` | Ranks root-cause hypotheses with file:line evidence. | Yes | Plan |
 | `integration-researcher` | Fetches external API docs; answers open questions from the plan. | Yes (WebFetch/Search) | Phase 1 (parallel) |
 | `db-migrator` | Writes Alembic revisions, DAG-aware, SQLite+Postgres safe. | No | Phase 1 (parallel) |
