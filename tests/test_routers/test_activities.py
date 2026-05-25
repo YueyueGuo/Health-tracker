@@ -333,3 +333,231 @@ async def test_classify_returns_not_classified_for_apple(client, db):
 async def test_classify_404_when_neither_strava_nor_apple(client, db):
     resp = await client.post("/api/activities/99999/classify")
     assert resp.status_code == 404
+
+
+# ── GET /activities/{id}?source=… — collision disambiguation ───────
+#
+# Regression for ``docs/bugs/apple-watch-routing-collision.md``: when an
+# ``activities.id`` collides with a ``health_data_points.id`` from
+# Apple Health, the legacy resolver always returns the Strava row. The
+# ``source`` query param disambiguates without breaking back-compat.
+
+
+async def _seed_colliding_pair(db, *, collision_id: int) -> tuple[Activity, HealthDataPoint]:
+    """Seed a Strava row AND an Apple workout sharing the same integer id.
+
+    The two tables autoincrement independently in production, so we set
+    ``id`` explicitly on both inserts to reproduce the collision in a
+    deterministic way. The Apple side uses joined-table inheritance —
+    ``Workout.id`` is both PK and FK back to ``health_data_points.id``,
+    so the ``Workout`` row also gets the collision id.
+    """
+    start = utc_now_naive() - timedelta(days=1)
+    strava = Activity(
+        id=collision_id,
+        strava_id=900_000 + collision_id,
+        name=f"strava-{collision_id}",
+        sport_type="Ride",
+        start_date=start,
+        start_date_local=start,
+        enrichment_status="complete",
+    )
+    db.add(strava)
+    await db.flush()
+
+    dp = HealthDataPoint(
+        id=collision_id,
+        source="apple_health",
+        data_type="workout",
+        external_id=f"apple-collide-{collision_id}",
+        start_time=start,
+    )
+    db.add(dp)
+    await db.flush()
+    w = Workout(
+        id=dp.id,
+        activity_type="strength",
+        duration_s=1800,
+        distance_m=None,
+    )
+    db.add(w)
+    await db.commit()
+    await db.refresh(strava)
+    await db.refresh(dp)
+    return strava, dp
+
+
+async def test_get_activity_collision_defaults_to_strava(client, db):
+    """Back-compat: no ``source`` → Strava row wins on collision."""
+    strava, dp = await _seed_colliding_pair(db, collision_id=12345)
+    assert strava.id == dp.id  # sanity: collision is real
+    resp = await client.get(f"/api/activities/{strava.id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "strava"
+    assert body["id"] == strava.id
+
+
+async def test_get_activity_collision_source_apple_returns_apple(client, db):
+    """``?source=apple_health`` returns the Apple row even when a Strava
+    row with the same id exists."""
+    strava, dp = await _seed_colliding_pair(db, collision_id=12346)
+    resp = await client.get(
+        f"/api/activities/{strava.id}?source=apple_health"
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "apple_health"
+    assert body["id"] == dp.id
+    assert body["external_id"] == f"apple-collide-{dp.id}"
+
+
+async def test_get_activity_collision_source_strava_returns_strava(client, db):
+    """``?source=strava`` returns the Strava row explicitly."""
+    strava, _ = await _seed_colliding_pair(db, collision_id=12347)
+    resp = await client.get(f"/api/activities/{strava.id}?source=strava")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "strava"
+    assert body["id"] == strava.id
+
+
+async def test_get_activity_source_apple_404_when_only_strava_exists(client, db):
+    """``?source=apple_health`` MUST NOT fall through to the Strava row.
+
+    Without the fix, this 404 path would never be reached: the resolver
+    would either return the Strava row (back-compat) or, with the param
+    ignored, also return the Strava row. The explicit source forces an
+    Apple lookup that misses.
+    """
+    strava = await _seed_strava(db, strava_id=998)
+    resp = await client.get(
+        f"/api/activities/{strava.id}?source=apple_health"
+    )
+    assert resp.status_code == 404
+
+
+async def test_get_activity_source_strava_404_when_only_apple_exists(client, db):
+    """``?source=strava`` MUST NOT fall through to the Apple row."""
+    _, dp = await _seed_apple(db, external_id="apple-strava-strict")
+    resp = await client.get(f"/api/activities/{dp.id}?source=strava")
+    assert resp.status_code == 404
+
+
+async def test_get_activity_invalid_source_returns_400(client, db):
+    resp = await client.get("/api/activities/1?source=garmin")
+    assert resp.status_code == 400
+
+
+# ── GET /activities/{id}/streams?source=… — same matrix ────────────
+
+
+async def test_streams_collision_defaults_to_strava(client, db):
+    """Back-compat: no ``source`` → streams resolves Strava-first on collision.
+
+    Strava has no cached streams here, so the lazy fetcher would try to
+    hit the API. We stub it via the cached path: insert an empty
+    ``ActivityStream`` row so the load helper returns from cache. The
+    important assertion is that we DID NOT fall through to the Apple
+    branch (which would return the HR series from ``raw_payload``).
+    """
+    strava, dp = await _seed_colliding_pair(db, collision_id=22345)
+    # Seed Apple HR series; if the resolver fell through to Apple, we'd
+    # see this back.
+    dp.raw_payload = {
+        "heartRateData": [
+            {"date": "2026-05-24 13:14:01 -0400", "qty": 124, "units": "count/min"},
+        ]
+    }
+    # Strava cache hit — empty time series, but the cached-streams path
+    # returns it without an outbound Strava call.
+    from backend.models import ActivityStream
+
+    db.add(ActivityStream(activity_id=strava.id, stream_type="time", data=[0, 1, 2]))
+    await db.commit()
+
+    resp = await client.get(f"/api/activities/{strava.id}/streams")
+    assert resp.status_code == 200
+    body = resp.json()
+    # Strava cache returns ``time`` series we just inserted, NOT the
+    # Apple ``heartrate`` reconstruction.
+    assert body.get("time") == [0, 1, 2]
+    assert "heartrate" not in body
+
+
+async def test_streams_collision_source_apple_returns_apple_series(client, db):
+    """``?source=apple_health`` returns the Apple HR reconstruction even
+    when a Strava row (with its own cached streams) shares the id."""
+    strava, dp = await _seed_colliding_pair(db, collision_id=22346)
+    dp.raw_payload = {
+        "heartRateData": [
+            {"date": "2026-05-24 13:14:01 -0400", "qty": 124, "units": "count/min"},
+            {"date": "2026-05-24 13:14:02 -0400", "qty": 132, "units": "count/min"},
+        ]
+    }
+    from backend.models import ActivityStream
+
+    db.add(ActivityStream(activity_id=strava.id, stream_type="time", data=[0, 1, 2]))
+    await db.commit()
+
+    resp = await client.get(
+        f"/api/activities/{strava.id}/streams?source=apple_health"
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body.get("heartrate") == [124.0, 132.0]
+    # The Strava cached ``time`` series must NOT be returned.
+    assert body.get("time") != [0, 1, 2]
+
+
+async def test_streams_collision_source_strava_returns_strava(client, db):
+    """``?source=strava`` returns the Strava-cached streams explicitly."""
+    strava, dp = await _seed_colliding_pair(db, collision_id=22347)
+    dp.raw_payload = {
+        "heartRateData": [
+            {"date": "2026-05-24 13:14:01 -0400", "qty": 200, "units": "count/min"},
+        ]
+    }
+    from backend.models import ActivityStream
+
+    db.add(
+        ActivityStream(activity_id=strava.id, stream_type="heartrate", data=[80, 90])
+    )
+    await db.commit()
+
+    resp = await client.get(
+        f"/api/activities/{strava.id}/streams?source=strava"
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    # Strava cached HR, NOT the Apple HR series of [200.0].
+    assert body.get("heartrate") == [80, 90]
+
+
+async def test_streams_source_apple_404_when_only_strava_exists(client, db):
+    """``?source=apple_health`` MUST NOT fall through to Strava streams."""
+    strava = await _seed_strava(db, strava_id=997)
+    resp = await client.get(
+        f"/api/activities/{strava.id}/streams?source=apple_health"
+    )
+    assert resp.status_code == 404
+
+
+async def test_streams_source_strava_404_when_only_apple_exists(client, db):
+    """``?source=strava`` MUST NOT fall through to the Apple HR series."""
+    _, dp = await _seed_apple(db, external_id="apple-streams-strict")
+    dp.raw_payload = {
+        "heartRateData": [
+            {"date": "2026-05-24 13:14:01 -0400", "qty": 124, "units": "count/min"},
+        ]
+    }
+    await db.commit()
+    resp = await client.get(
+        f"/api/activities/{dp.id}/streams?source=strava"
+    )
+    assert resp.status_code == 404
+
+
+async def test_streams_invalid_source_returns_400(client, db):
+    resp = await client.get("/api/activities/1/streams?source=garmin")
+    assert resp.status_code == 400
