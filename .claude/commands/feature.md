@@ -75,11 +75,31 @@ route by the `Owner:` tag:
 - `BLOCK` from either → stop and surface to the user.
 
 ### Step 6 — Push and open PR
+
+**6a. Promote QA screenshots (only if qa-verifier ran and PASSed).**
+The final qa-verifier pass writes screenshots to
+`/tmp/qa/screenshots/`. Copy them into the repo so they survive past
+the ephemeral container and render in the PR:
+```bash
+mkdir -p docs/qa/<slug>
+rm -f docs/qa/<slug>/*.png 2>/dev/null  # final state only — drop prior iterations
+cp /tmp/qa/screenshots/*.png docs/qa/<slug>/ 2>/dev/null || true
+git add docs/qa/<slug>
+git diff --cached --quiet || git commit -m "qa: attach final-state screenshots for <slug>"
+```
+
+**6b. Push and open the PR.**
 - Stage any final fixes, commit, push: `git push -u origin <branch>`.
 - Open a PR via `mcp__github__create_pull_request` against `main`.
-  Title: short, imperative. Body: link to `docs/plans/<slug>.md` and
-  summarize what changed in 3-5 bullets. Test plan: a checklist of
-  the smoke tests a human would run.
+  Title: short, imperative.
+- Body sections:
+  - **Summary** — what changed in 3-5 bullets.
+  - **Plan** — link to `docs/plans/<slug>.md`.
+  - **Test plan** — checklist of smoke tests a human would run.
+  - **QA screenshots** — only if Step 6a committed any. Embed each as
+    `![<scenario>](docs/qa/<slug>/<file>.png)` so GitHub renders them
+    inline. One per scenario, in the same order as qa-verifier's
+    "Scenarios run" table.
 
 ### Step 7 — Subscribe to PR activity
 Call `mcp__github__subscribe_pr_activity` with the new PR number so

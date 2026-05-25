@@ -93,6 +93,11 @@ For each golden-path scenario, write a short Playwright script under
 - Assert the expected post-conditions (text visible, network response
   shape, no console errors).
 - Capture a screenshot to `/tmp/qa/screenshots/<scenario>.png`.
+  Use stable, kebab-case filenames (e.g. `dashboard-loaded.png`,
+  `lifting-saved.png`) — the orchestrator promotes the final pass's
+  screenshots into `docs/qa/<slug>/` and embeds them in the PR body,
+  so filenames must be human-readable and consistent across re-runs
+  (later runs overwrite earlier ones, no accumulation).
 
 API smoke checks (parallel to the browser run) — hit the new/changed
 endpoints with `httpx` directly. Verify:
@@ -135,7 +140,10 @@ error), Owner is almost always `frontend-engineer`. If the API
 returned the wrong data, Owner is `backend-engineer`.
 
 ### Screenshots
-Inline list of paths the orchestrator can attach to the PR comment.
+Inline list of `/tmp/qa/screenshots/*.png` paths in the same order as
+the "Scenarios run" table. On a `PASS` verdict the orchestrator copies
+these into `docs/qa/<slug>/` and embeds them in the PR body — so make
+sure filenames are stable and descriptive (no timestamps, no UUIDs).
 
 ## Rules
 - Do not edit application code. You diagnose; the engineer agents fix.

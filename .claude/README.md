@@ -7,7 +7,7 @@ Specialized agents and slash commands for the Health Tracker project.
 | Command | Purpose |
 |---------|---------|
 | `/feature <desc>` | Full feature workflow: plan → research + migration (parallel) → backend + frontend (parallel) → tests → review → PR → subscribe. |
-| `/bug <desc>` | Bug workflow: investigate → fix → regression test → tests → review → PR → subscribe. |
+| `/bug <desc \| #N \| issue-url>` | Bug workflow: investigate → fix → regression test → tests → review → PR → subscribe. Accepts a free-text description **or** a GitHub issue reference (`#42`, `owner/repo#42`, or a github.com issue URL) — the orchestrator fetches the issue and uses it as the bug description, then adds `Closes #N` to the PR. |
 
 Both commands run in fully-autonomous mode by default. The orchestrator
 (top-level Claude in the session) spawns sub-agents and only pauses if
@@ -69,3 +69,16 @@ After opening a PR, the orchestrator calls
 - Review comments (interprets and routes)
 
 End the turn after subscribing; never poll.
+
+## QA screenshots in PRs
+
+When `qa-verifier` runs and returns `PASS` on the final review loop,
+the orchestrator promotes its screenshots from `/tmp/qa/screenshots/`
+into `docs/qa/<slug>/` on the branch and embeds them in the PR body
+via relative markdown. Only the **final state** is committed —
+earlier failed iterations are not retained. This gives the human
+reviewer a visual record of what was checked without bloating the
+repo with intermediate runs.
+
+`qa-verifier` must use stable, kebab-case screenshot filenames (e.g.
+`dashboard-loaded.png`) so re-runs overwrite rather than accumulate.
