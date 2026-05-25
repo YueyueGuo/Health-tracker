@@ -15,6 +15,25 @@ Both commands run in fully-autonomous mode by default. The orchestrator
 something is genuinely ambiguous or a hard limit is hit (3 test loops,
 2 review loops, `BLOCK` verdict).
 
+## Fast path (lightweight workflow)
+
+Both `/feature` and `/bug` offer an opt-in **fast path** that skips
+the planner/investigator + the multi-agent review cascade for
+genuinely trivial changes (single-layer copy/label/styling tweaks,
+≤ 2 files, no migration, no new dependency, no new public surface).
+The orchestrator still runs typecheck + tests inline, commits, pushes,
+opens a PR, and subscribes to PR activity — the agent cascade is
+what's skipped, not the safety net.
+
+Use it when the user signals "minor" / "tiny" / "be strategic about
+agents", or when the description is unambiguously trivial. Bug fixes
+on the fast path still require a regression test. If scope grows
+mid-flight (migration appears, second layer needed, > 2 files), drop
+the fast path and restart from the planner/investigator.
+
+Eligibility + workflow are defined in each command's "Step 0.5 —
+Choose workflow lane" section.
+
 ## Agents
 
 | Agent | Role | Read-only? | Use phase |

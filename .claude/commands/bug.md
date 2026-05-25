@@ -31,6 +31,48 @@ Otherwise: treat the argument as free-text bug description.
   `claude/fix-issue-<N>-<slug>` so the branch name traces back.
 - Read `CLAUDE.md` and `AGENTS.md` if not in context.
 
+### Step 0.5 — Choose workflow lane
+
+Before invoking the investigator, decide whether this bug qualifies
+for the **fast path** (skips the investigator + the entire review
+cascade). The regression-test rule below has no exception.
+
+**Eligible only when ALL hold:**
+- Symptom + location are obvious from the description (wrong label,
+  copy typo, missing default, off-by-one in a small formatter, a
+  named file/line the user points to).
+- Fix is confined to ≤ 2 files in a single layer.
+- No suspicion of data-sync, migration, auth/token, scheduler, or
+  external-API involvement.
+- User signal: "minor", "small", "be strategic", or the description
+  itself names the exact file/line.
+
+If any condition fails, take the full lane (Steps 1-4 as written).
+
+**Fast-path workflow (replaces Steps 1-4):**
+1. Skip `bug-investigator`. Write a 1-2 sentence diagnosis inline
+   (kept in the commit message + PR body); no `docs/bugs/<slug>.md`.
+2. Edit directly, or spawn a single engineer if the work is non-
+   trivial enough to warrant isolated context. **Add a regression
+   test that fails on `main` and passes on this branch** — this rule
+   is *not* waived by the fast path.
+3. Run tests inline; one retry on failure before escalating to the
+   full lane from Step 3.
+4. Commit with a conventional `fix(<layer>): ...` message.
+5. Skip Step 4's review cascade. Jump straight to Step 5 (push + PR).
+
+**PR body changes for the fast path:**
+- Replace the **Diagnosis** section with the 1-2 sentence inline
+  explanation (no link to a diagnosis doc, since none exists).
+- `Closes #N`, Test plan, and QA screenshot rules unchanged.
+
+**Announce the lane in one line**, e.g.:
+> Fast path: copy typo in `Header.tsx:38`. Skipping investigator + review cascade.
+
+**Escalation:** if mid-flight you discover deeper rot (data drift,
+auth involvement, multi-file fix needed), drop the fast path and
+restart from Step 1 (investigator). Tell the user in one line.
+
 ### Step 1 — Investigate
 Spawn `bug-investigator`. Pass the bug description. When it returns
 the diagnosis, persist it to `docs/bugs/<slug>.md` and commit:
