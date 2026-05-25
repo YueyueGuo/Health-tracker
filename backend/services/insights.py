@@ -257,11 +257,16 @@ async def get_cached_latest_workout_insight(
     on_date: date | None = None,
 ) -> WorkoutInsightResult | None:
     """Return a cached latest-workout insight without generating a new one."""
-    activity = await training_metrics._get_latest_completed_activity(
+    candidate = await training_metrics._get_latest_completed_activity(
         db, activity_id, on_date
     )
-    if activity is None:
+    if candidate is None:
         return None
+    # Apple Health workouts are not run through the LLM insight pipeline
+    # in v1, so there's never a cached insight to return for them.
+    if candidate.kind != "strava":
+        return None
+    activity = candidate.obj
 
     requested_model = model or settings.llm.dashboard_model
     cache_key = f"workout_insight:{activity.id}:{requested_model}"
