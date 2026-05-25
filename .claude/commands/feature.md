@@ -90,16 +90,27 @@ git diff --cached --quiet || git commit -m "qa: attach final-state screenshots f
 
 **6b. Push and open the PR.**
 - Stage any final fixes, commit, push: `git push -u origin <branch>`.
+- Capture the head commit SHA *after* the final push — you'll need it
+  for absolute image URLs below: `HEAD_SHA=$(git rev-parse HEAD)`.
 - Open a PR via `mcp__github__create_pull_request` against `main`.
   Title: short, imperative.
 - Body sections:
   - **Summary** — what changed in 3-5 bullets.
-  - **Plan** — link to `docs/plans/<slug>.md`.
+  - **Plan** — link to the plan file using an absolute GitHub URL:
+    `[docs/plans/<slug>.md](https://github.com/<owner>/<repo>/blob/<branch>/docs/plans/<slug>.md)`.
+    Relative links in PR bodies resolve against `/pull/<n>/...` in the
+    rendered page URL and break, so always use absolute URLs.
   - **Test plan** — checklist of smoke tests a human would run.
   - **QA screenshots** — only if Step 6a committed any. Embed each as
-    `![<scenario>](docs/qa/<slug>/<file>.png)` so GitHub renders them
-    inline. One per scenario, in the same order as qa-verifier's
-    "Scenarios run" table.
+    an absolute `raw.githubusercontent.com` URL pinned to the head SHA
+    so the image survives the post-merge branch deletion:
+    `![<scenario>](https://raw.githubusercontent.com/<owner>/<repo>/<HEAD_SHA>/docs/qa/<slug>/<file>.png)`.
+    Do **NOT** use a relative path like `docs/qa/<slug>/<file>.png` —
+    GitHub renders that as `<img src="docs/qa/...">` which the browser
+    resolves against the PR page URL (`/pull/<n>/...`) and ends up at
+    GitHub's compare route ("there isn't anything to compare"). One
+    image per scenario, in the same order as qa-verifier's "Scenarios
+    run" table.
 
 ### Step 7 — Subscribe to PR activity
 Call `mcp__github__subscribe_pr_activity` with the new PR number so
