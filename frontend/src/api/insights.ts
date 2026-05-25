@@ -129,7 +129,8 @@ export interface HistoricalComparisonSnapshot {
 
 export interface LatestWorkoutSnapshot {
   id: number;
-  strava_id: number;
+  strava_id: number | null;
+  source: "strava" | "apple_health";
   name: string;
   sport_type: string;
   classification_type: string | null;
