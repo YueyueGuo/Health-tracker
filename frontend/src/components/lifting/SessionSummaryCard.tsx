@@ -136,7 +136,7 @@ function SummaryTile({
       <div className="text-sm font-bold text-white">
         {value}
         {unit && (
-          <span className="text-[10px] font-normal text-slate-500 ml-1">
+          <span className="text-[10px] font-normal text-slate-400 ml-1">
             {unit}
           </span>
         )}

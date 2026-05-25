@@ -47,7 +47,7 @@ export function ExerciseDetailCard({ exercise }: Props) {
       </div>
 
       <div
-        className={`${gridClass} px-1 pb-1 text-[9px] font-medium text-slate-500 uppercase tracking-wider border-b border-cardBorder/50`}
+        className={`${gridClass} px-1 pb-1 text-[9px] font-medium text-slate-400 uppercase tracking-wider border-b border-cardBorder/50`}
       >
         <div className="text-center">Set</div>
         <div className="text-center">{weightHeader}</div>
