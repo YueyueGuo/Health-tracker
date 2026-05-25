@@ -157,10 +157,13 @@ function activityToEvent(a: ActivitySummary): HistoryEvent {
       metrics.push({ label: "RE", value: Math.round(a.suffer_score).toString() });
     }
   }
-  // Apple Health and Strava workouts both route to `/activities/:id`. For
-  // Apple-only rows `a.id` is the `health_data_points.id`; for Strava (and
-  // Apple-wins-dedup) rows it is the `activities.id`. The detail router
-  // resolves the right table on the backend.
+  // Apple Health and Strava workouts share the `/activities/:id` route but
+  // their numeric ids live in different tables (`health_data_points.id`
+  // vs. `activities.id`) and can collide. We disambiguate by appending a
+  // `?source=...` query string so the detail page (and the backend resolver
+  // it calls) picks the right row even when the ids overlap. Legacy rows
+  // with no `source` keep the bare URL for backward compatibility — the
+  // backend retains its Strava-first / Apple-fallback behavior in that case.
   //
   // The React key is composed from the row's `source` so an Apple workout
   // and a Strava activity that happen to share the same integer id don't
@@ -171,6 +174,10 @@ function activityToEvent(a: ActivitySummary): HistoryEvent {
       : a.source === "strava"
       ? "strava"
       : "activity";
+  const navigateTo =
+    a.source === "apple_health" || a.source === "strava"
+      ? `/activities/${a.id}?source=${a.source}`
+      : `/activities/${a.id}`;
   return {
     id: `${sourceKey}-${a.id}`,
     category: "Workout",
@@ -178,7 +185,7 @@ function activityToEvent(a: ActivitySummary): HistoryEvent {
     title: a.name,
     timestamp: ts,
     metrics,
-    navigateTo: `/activities/${a.id}`,
+    navigateTo,
     sourceBadge: activitySourceToBadge(a.source),
   };
 }

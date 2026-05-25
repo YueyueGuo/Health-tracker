@@ -133,12 +133,19 @@ export function fetchActivities(params?: {
   );
 }
 
-export function fetchActivity(id: number) {
-  return fetchJson<ActivityDetail>(`/activities/${id}`);
+export function fetchActivity(id: number, source?: ActivitySource | null) {
+  const qs = source ? `?source=${encodeURIComponent(source)}` : "";
+  return fetchJson<ActivityDetail>(`/activities/${id}${qs}`);
 }
 
-export function fetchActivityStreams(id: number) {
-  return fetchJson<Record<string, number[]>>(`/activities/${id}/streams`);
+export function fetchActivityStreams(
+  id: number,
+  source?: ActivitySource | null,
+) {
+  const qs = source ? `?source=${encodeURIComponent(source)}` : "";
+  return fetchJson<Record<string, number[]>>(
+    `/activities/${id}/streams${qs}`,
+  );
 }
 
 export function reclassifyActivity(id: number) {

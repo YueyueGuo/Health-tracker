@@ -9,9 +9,22 @@ function setRouteId(id: string | number) {
   routeParams.id = String(id);
 }
 
+// Mutable query string so tests can simulate a `?source=...` query without
+// pulling in a full MemoryRouter — `useSearchParams` is mocked to return a
+// `URLSearchParams` view onto this value.
+let routeSearch = "";
+function setRouteSearch(search: string) {
+  routeSearch = search;
+}
+
 vi.mock("react-router-dom", () => ({
   useParams: () => ({ id: routeParams.id }),
   useNavigate: () => vi.fn(),
+  useSearchParams: () => {
+    const params = new URLSearchParams(routeSearch);
+    const setParams = vi.fn();
+    return [params, setParams] as const;
+  },
 }));
 
 vi.mock("recharts", () => {
@@ -150,6 +163,7 @@ function makeActivity(
 describe("ActivityDetailPage", () => {
   beforeEach(() => {
     setRouteId(7);
+    setRouteSearch("");
     mockedGetActivityWeather.mockResolvedValue(null);
   });
 
@@ -227,7 +241,7 @@ describe("ActivityDetailPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Load Streams" }));
     await waitFor(() =>
-      expect(mockedFetchActivityStreams).toHaveBeenCalledWith(7)
+      expect(mockedFetchActivityStreams).toHaveBeenCalledWith(7, null)
     );
     expect(screen.getByTestId("composed-chart")).toBeInTheDocument();
   });
@@ -447,7 +461,7 @@ describe("ActivityDetailPage", () => {
     const { rerender } = renderWithQuery(<ActivityDetailPage />);
     await screen.findByText("Apple Run A");
     await waitFor(() =>
-      expect(mockedFetchActivityStreams).toHaveBeenCalledWith(7)
+      expect(mockedFetchActivityStreams).toHaveBeenCalledWith(7, null)
     );
 
     // Simulate navigation: same component, new URL param.
@@ -458,7 +472,68 @@ describe("ActivityDetailPage", () => {
     // The new id must trigger its own streams fetch — proves the reset
     // effect cleared the prior workout's stream state.
     await waitFor(() =>
-      expect(mockedFetchActivityStreams).toHaveBeenCalledWith(11)
+      expect(mockedFetchActivityStreams).toHaveBeenCalledWith(11, null)
     );
+  });
+
+  it("passes ?source=apple_health through to fetchActivity and renders the Apple branch", async () => {
+    // Regression for docs/bugs/apple-watch-routing-collision.md: when the
+    // History row navigates with ?source=apple_health, ActivityDetail must
+    // forward that to the API so the backend resolves the Apple HDP row
+    // (not the colliding Strava activity id).
+    setRouteId(123);
+    setRouteSearch("?source=apple_health");
+
+    mockedFetchActivity.mockResolvedValue(
+      makeActivity({
+        id: 123,
+        name: "Apple Strength",
+        sport_type: "strength",
+        source: "apple_health",
+        start_lat: null,
+        start_lng: null,
+      })
+    );
+    mockedFetchActivityStreams.mockResolvedValue({});
+
+    renderWithQuery(<ActivityDetailPage />);
+    await screen.findByText("Apple Strength");
+
+    // 1. The fetch was called with the explicit Apple-Health source so the
+    //    backend can disambiguate from a colliding Strava activity id.
+    expect(mockedFetchActivity).toHaveBeenCalledWith(123, "apple_health");
+
+    // 2. The Apple branch renders: no RPE card, no LocationPicker, no
+    //    "Analyze This Workout" insight button. (See ActivityDetail.tsx
+    //    lines 145-171 — these panels are gated on source !== apple_health.)
+    expect(screen.queryByText("RPE card")).not.toBeInTheDocument();
+    expect(screen.queryByText("Location picker")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Analyze This Workout" })
+    ).not.toBeInTheDocument();
+
+    // 3. Streams are auto-fetched for Apple, also with the source forwarded.
+    await waitFor(() =>
+      expect(mockedFetchActivityStreams).toHaveBeenCalledWith(123, "apple_health")
+    );
+  });
+
+  it("passes ?source=strava through to fetchActivity when the URL marks Strava explicitly", async () => {
+    setRouteId(123);
+    setRouteSearch("?source=strava");
+
+    mockedFetchActivity.mockResolvedValue(
+      makeActivity({
+        id: 123,
+        name: "Strava Run",
+        sport_type: "Run",
+        source: "strava",
+      })
+    );
+
+    renderWithQuery(<ActivityDetailPage />);
+    await screen.findByText("Strava Run");
+
+    expect(mockedFetchActivity).toHaveBeenCalledWith(123, "strava");
   });
 });

@@ -124,7 +124,19 @@ async def activity_stats(
 
 
 @router.get("/{activity_id}")
-async def get_activity(activity_id: int, db: AsyncSession = Depends(get_db)):
+async def get_activity(
+    activity_id: int,
+    source: str | None = Query(
+        None,
+        description=(
+            "Disambiguate Strava vs Apple Health when the integer ids "
+            "collide. ``strava`` forces the Strava row, ``apple_health`` "
+            "forces the Apple HealthDataPoint row. When omitted, retains "
+            "the legacy Strava-first / Apple-fallback resolution."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
+):
     """Get full activity detail including laps, zones, and weather.
 
     Does NOT include streams — those are fetched on-demand via
@@ -133,13 +145,33 @@ async def get_activity(activity_id: int, db: AsyncSession = Depends(get_db)):
 
     The ``activity_id`` may resolve to either a Strava ``Activity`` row
     or an Apple Health ``HealthDataPoint`` (workout) row — they live in
-    independent tables but share the same integer id space. Strava
-    wins on collisions; Apple-only ids only resolve after the Strava
-    lookup misses.
+    independent tables but share the same integer id space. Without
+    ``source``, Strava wins on collisions and Apple-only ids only resolve
+    after the Strava lookup misses. Pass ``source=apple_health`` or
+    ``source=strava`` to disambiguate explicitly.
     """
+    if source is not None and source not in ("strava", "apple_health"):
+        raise HTTPException(
+            status_code=400,
+            detail="source must be 'strava' or 'apple_health'",
+        )
+
+    if source == "apple_health":
+        from backend.services.apple_workout_detail import (
+            get_apple_workout_detail,
+        )
+
+        apple_detail = await get_apple_workout_detail(db, activity_id)
+        if apple_detail is None:
+            raise HTTPException(status_code=404, detail="Activity not found")
+        return apple_detail
+
     result = await db.execute(select(Activity).where(Activity.id == activity_id))
     activity = result.scalar_one_or_none()
     if not activity:
+        if source == "strava":
+            # Explicit Strava intent — do not fall through to Apple.
+            raise HTTPException(status_code=404, detail="Activity not found")
         from backend.services.apple_workout_detail import (
             get_apple_workout_detail,
         )
@@ -410,7 +442,19 @@ async def get_activity_weather(
 
 
 @router.get("/{activity_id}/streams")
-async def get_activity_streams(activity_id: int, db: AsyncSession = Depends(get_db)):
+async def get_activity_streams(
+    activity_id: int,
+    source: str | None = Query(
+        None,
+        description=(
+            "Disambiguate Strava vs Apple Health when the integer ids "
+            "collide. ``strava`` forces the Strava row, ``apple_health`` "
+            "forces the Apple HealthDataPoint row. When omitted, retains "
+            "the legacy Strava-first / Apple-fallback resolution."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
+):
     """Get per-sample streams for an activity. Lazy-fetched from Strava.
 
     First call for a given Strava activity pulls streams from Strava and
@@ -422,10 +466,28 @@ async def get_activity_streams(activity_id: int, db: AsyncSession = Depends(get_
     ships per-sample speed in the ``route`` array. No Strava call is
     made for Apple ids, ever.
 
+    The ``activity_id`` lives in the same shared integer id space as
+    ``GET /{activity_id}``; pass ``source=apple_health`` or
+    ``source=strava`` to disambiguate explicitly when colliding ids
+    exist across the two tables. Without ``source``, Strava wins on
+    collisions for backward compatibility.
+
     Stream load itself is delegated to
     ``backend.services.strava_streams.load_streams_for_activity`` so the
     strength-link service can share the same lazy-fetch + cache path.
     """
+    if source is not None and source not in ("strava", "apple_health"):
+        raise HTTPException(
+            status_code=400,
+            detail="source must be 'strava' or 'apple_health'",
+        )
+
+    if source == "apple_health":
+        apple_streams = await _maybe_apple_streams(db, activity_id)
+        if apple_streams is None:
+            raise HTTPException(status_code=404, detail="Activity not found")
+        return apple_streams
+
     from backend.services.strava_streams import (
         StravaStreamFetchError,
         load_streams_for_activity,
@@ -435,6 +497,9 @@ async def get_activity_streams(activity_id: int, db: AsyncSession = Depends(get_
         await db.execute(select(Activity).where(Activity.id == activity_id))
     ).scalar_one_or_none()
     if not activity:
+        if source == "strava":
+            # Explicit Strava intent — do not fall through to Apple.
+            raise HTTPException(status_code=404, detail="Activity not found")
         apple_streams = await _maybe_apple_streams(db, activity_id)
         if apple_streams is not None:
             return apple_streams

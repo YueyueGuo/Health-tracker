@@ -179,7 +179,11 @@ describe("activityToEvent (via buildHistoryEvents)", () => {
     expect(events[0].type).toBe("Strength");
   });
 
-  it("routes Apple-only workouts to /activities/:id (using the HDP id)", () => {
+  it("routes Apple-only workouts to /activities/:id with ?source=apple_health (using the HDP id)", () => {
+    // Regression for docs/bugs/apple-watch-routing-collision.md: when an
+    // Apple Watch workout's HDP id collides with a Strava activity id, the
+    // bare URL would resolve the Strava row on the backend. The query
+    // string disambiguates the source so the right detail row is returned.
     const events = buildHistoryEvents(
       [
         makeActivity({
@@ -192,10 +196,10 @@ describe("activityToEvent (via buildHistoryEvents)", () => {
       [],
       []
     );
-    expect(events[0].navigateTo).toBe("/activities/5");
+    expect(events[0].navigateTo).toBe("/activities/5?source=apple_health");
   });
 
-  it("keeps navigateTo for Strava-sourced workouts", () => {
+  it("appends ?source=strava for Strava-sourced workouts", () => {
     const events = buildHistoryEvents(
       [
         makeActivity({
@@ -208,10 +212,10 @@ describe("activityToEvent (via buildHistoryEvents)", () => {
       [],
       []
     );
-    expect(events[0].navigateTo).toBe("/activities/11");
+    expect(events[0].navigateTo).toBe("/activities/11?source=strava");
   });
 
-  it("keeps navigateTo for legacy rows with no source set", () => {
+  it("keeps navigateTo unqualified for legacy rows with no source set", () => {
     const events = buildHistoryEvents(
       [
         makeActivity({
@@ -257,6 +261,9 @@ describe("buildHistoryEvents", () => {
   it("uses source-prefixed keys so an Apple workout and Strava activity with the same numeric id do not collide", () => {
     // Regression for review-round-1: prior to this fix both events keyed as
     // "activity-1" and React warned about duplicate child keys.
+    // Also regression for docs/bugs/apple-watch-routing-collision.md: the
+    // two rows must navigate to distinct URLs (disambiguated by ?source=)
+    // so the detail page resolves the right row on the backend.
     const events = buildHistoryEvents(
       [
         makeActivity({
@@ -278,6 +285,14 @@ describe("buildHistoryEvents", () => {
     const ids = events.map((e) => e.id);
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids).toEqual(expect.arrayContaining(["apple-1", "strava-1"]));
+
+    const apple = events.find((e) => e.id === "apple-1");
+    const strava = events.find((e) => e.id === "strava-1");
+    expect(apple).toBeDefined();
+    expect(strava).toBeDefined();
+    expect(apple!.navigateTo).not.toBe(strava!.navigateTo);
+    expect(apple!.navigateTo).toContain("source=apple_health");
+    expect(strava!.navigateTo).toContain("source=strava");
   });
 
   it("falls back to an 'activity-' prefix for legacy rows missing a source", () => {
