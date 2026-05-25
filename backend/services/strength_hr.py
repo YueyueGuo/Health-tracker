@@ -1,33 +1,36 @@
-"""Map manual strength sets to HR samples recorded by a linked Strava activity.
+"""Map manual strength sets to HR samples recorded by a linked device workout.
 
-A strength session is linked to a Strava WeightTraining activity via
-``strength_sets.activity_id``. That activity's ``activity_streams`` rows
-(populated lazily by ``GET /api/activities/{id}/streams``) contain a
-``time`` array (seconds since activity start) and a ``heartrate`` array
-(bpm) of equal length. Each set carries an optional ``performed_at``
-naive-local timestamp — the moment the user tapped "Log set". We compute
-``(performed_at - activity.start_date_local)`` → seconds offset, then
-slice a ``[offset - window_sec, offset]`` window out of the HR array to
-get the working-HR for that set.
+Replaces the legacy timestamp-driven slicer with an HR-stream
+**segmentation**-driven approach. The "linked workout HR sets" feature
+(``docs/specs/linked-workout-hr-sets.md``) introduces an explicit
+``strength_session_links`` row that links one strength session date to
+exactly one device workout (Strava activity or Apple Health workout).
+Once a link exists, the segmentation service
+(``backend/services/strength_segmentation.py``) infers per-set HR
+windows from peaks/valleys in the smoothed HR curve, rather than
+depending on each set's ``performed_at``.
 
-Invariant: this module is read-only against ``activity_streams``. If
-streams aren't cached, we return empty / None — we never trigger a
-Strava fetch. Keeps the session_summary endpoint cheap.
+Invariant: this module is read-only against ``activity_streams`` — the
+caller (``strength_link.ensure_streams_loaded``) is responsible for any
+on-demand fetch. Keeps ``session_summary`` cheap on the no-link path.
+
+The legacy ``_slice_hr_for_set`` helper is preserved as a private
+fallback invoked only when (a) segmentation returned ``flat`` / ``error``
+AND (b) every set carries a ``performed_at`` timestamp. Removed in v2.
 """
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from backend.models import Activity, ActivityStream, StrengthSet
-
+from backend.models import StrengthSet
+from backend.services.strength_segmentation import SegmentationResult
 
 # User taps "Log set" at the end of the set, so we look backward N seconds
 # to capture the working HR during the lift. 45s comfortably covers a
 # typical compound set (10 reps @ ~3-4s/rep).
+#
+# LEGACY: only used by the timestamp-driven fallback path below.
 DEFAULT_WINDOW_SEC = 45
 
 # Raw streams are ~1Hz so a 60-min workout is ~3600 points — too many for
@@ -43,10 +46,18 @@ def _slice_hr_for_set(
     hr_stream: list,
     window_sec: int = DEFAULT_WINDOW_SEC,
 ) -> tuple[float | None, float | None]:
-    """Return ``(avg_hr, max_hr)`` for the window ending at ``performed_at``.
+    """LEGACY: timestamp-driven per-set HR window.
 
-    Returns ``(None, None)`` if the window falls outside the stream, or
-    if every HR sample in the window is zero / None (dropout).
+    Kept as a private fallback for sessions where every set has
+    ``performed_at`` populated AND segmentation returned ``flat`` /
+    ``error``. The segmentation path is the primary mechanism going
+    forward — this exists purely for back-compat with sessions logged
+    before the link feature shipped.
+
+    Returns ``(avg_hr, max_hr)`` for the window ending at
+    ``performed_at``. Returns ``(None, None)`` if the window falls
+    outside the stream, or if every HR sample in the window is zero /
+    None (dropout).
     """
     if not time_stream or not hr_stream:
         return (None, None)
@@ -102,72 +113,100 @@ def _decimate(
     return out
 
 
-async def attach_hr_to_sets(
-    db: AsyncSession,
-    activity_id: int,
+def attach_hr_to_sets(
     sets: list[StrengthSet],
-    window_sec: int = DEFAULT_WINDOW_SEC,
+    segmentation: SegmentationResult,
+    time_stream: list | None,
+    hr_stream: list | None,
+    activity_start: datetime | None,
 ) -> dict[str, Any]:
-    """Compute per-set HR stats + a decimated curve for a session.
+    """Compute per-set HR + a decimated session-wide curve from a segmentation.
 
-    Reads cached ``activity_streams`` rows only — never triggers a Strava
-    fetch. Returns an empty dict when:
+    Pure-ish (reads no DB) — the caller passes the streams already
+    loaded by ``strength_link.ensure_streams_loaded``. ``sets`` is the
+    session's set list in *logged order*; segments are mapped to sets
+    1:1 in that order (set 1 → segment 1, set 2 → segment 2, ...).
+    When ``segmentation.detected_count < len(sets)`` the trailing sets
+    are left without HR — the UI surfaces this via the segmentation
+    status. When ``detected_count > target_count`` the segmentation
+    service has already trimmed to the top-N by prominence; we re-check
+    here defensively.
 
-    * No sets have ``performed_at`` (nothing to map).
-    * Activity has no cached ``time`` or ``heartrate`` stream.
-    * Activity row missing (stale FK).
-
-    Otherwise returns::
+    Returns::
 
         {
           "hr_by_set_id": {set_id: {"avg_hr": 145.2, "max_hr": 160.0}, ...},
           "hr_curve": [[offset_sec, bpm], ...],
-          "activity_start_iso": "2026-04-21T09:00:00",
+          "segment_markers": [{set_number, start_sec, end_sec}, ...],
+          "activity_start_iso": "2026-04-21T09:00:00" | None,
         }
+
+    Returns an empty dict when there's nothing useful to attach (no
+    stream, segmentation said flat, etc.). The legacy timestamp-driven
+    fallback is engaged only when:
+
+    * ``segmentation.status in {"flat", "error"}`` AND
+    * every set has a non-null ``performed_at``.
     """
-    if not any(s.performed_at is not None for s in sets):
+    if not sets:
         return {}
 
-    activity = (
-        await db.execute(select(Activity).where(Activity.id == activity_id))
-    ).scalar_one_or_none()
-    if activity is None:
-        return {}
-    start = activity.start_date_local or activity.start_date
-    if start is None:
-        return {}
-
-    stream_rows = (
-        (
-            await db.execute(
-                select(ActivityStream).where(
-                    ActivityStream.activity_id == activity_id,
-                    ActivityStream.stream_type.in_(("time", "heartrate")),
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    by_type = {r.stream_type: r.data for r in stream_rows}
-    time_stream = by_type.get("time")
-    hr_stream = by_type.get("heartrate")
-    if not time_stream or not hr_stream:
-        return {}
+    # Defensive trim — segmentation service is supposed to have already
+    # trimmed to target_count, but we keep this guard in case of test
+    # fakes or future algorithm variations.
+    segments = list(segmentation.segments)
+    if len(segments) > len(sets):
+        segments = sorted(segments, key=lambda s: s.prominence, reverse=True)[
+            : len(sets)
+        ]
+        segments.sort(key=lambda s: s.peak_sec)
 
     hr_by_set_id: dict[int, dict[str, float]] = {}
-    for s in sets:
-        if s.performed_at is None or s.id is None:
+    segment_markers: list[dict[str, Any]] = []
+    for set_obj, seg in zip(sets, segments):
+        if set_obj.id is None:
             continue
-        avg, mx = _slice_hr_for_set(
-            s.performed_at, start, time_stream, hr_stream, window_sec=window_sec
+        hr_by_set_id[set_obj.id] = {
+            "avg_hr": round(seg.avg_hr, 1),
+            "max_hr": round(seg.max_hr, 1),
+        }
+        segment_markers.append(
+            {
+                "set_number": set_obj.set_number,
+                "start_sec": round(seg.start_sec, 1),
+                "end_sec": round(seg.end_sec, 1),
+            }
         )
-        if avg is None:
-            continue
-        hr_by_set_id[s.id] = {"avg_hr": avg, "max_hr": mx}
+
+    # Legacy timestamp fallback: only engage when segmentation failed
+    # AND every set has a timestamp. Removed in v2.
+    fallback_engaged = False
+    if (
+        not hr_by_set_id
+        and segmentation.status in {"flat", "error"}
+        and all(s.performed_at is not None for s in sets)
+        and activity_start is not None
+        and time_stream
+        and hr_stream
+    ):
+        fallback_engaged = True
+        for s in sets:
+            if s.id is None or s.performed_at is None:
+                continue
+            avg, mx = _slice_hr_for_set(
+                s.performed_at, activity_start, time_stream, hr_stream
+            )
+            if avg is None:
+                continue
+            hr_by_set_id[s.id] = {"avg_hr": avg, "max_hr": mx}
+
+    hr_curve = _decimate(time_stream or [], hr_stream or [])
+    if not hr_curve and not hr_by_set_id and not fallback_engaged:
+        return {}
 
     return {
         "hr_by_set_id": hr_by_set_id,
-        "hr_curve": _decimate(time_stream, hr_stream),
-        "activity_start_iso": start.isoformat(),
+        "hr_curve": hr_curve,
+        "segment_markers": segment_markers,
+        "activity_start_iso": activity_start.isoformat() if activity_start else None,
     }

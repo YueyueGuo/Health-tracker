@@ -336,7 +336,16 @@ async def get_activity_streams(activity_id: int, db: AsyncSession = Depends(get_
     from ``heartRateData``; ``velocity_smooth`` is added only when HAE
     ships per-sample speed in the ``route`` array. No Strava call is
     made for Apple ids, ever.
+
+    Stream load itself is delegated to
+    ``backend.services.strava_streams.load_streams_for_activity`` so the
+    strength-link service can share the same lazy-fetch + cache path.
     """
+    from backend.services.strava_streams import (
+        StravaStreamFetchError,
+        load_streams_for_activity,
+    )
+
     activity = (
         await db.execute(select(Activity).where(Activity.id == activity_id))
     ).scalar_one_or_none()
@@ -346,37 +355,13 @@ async def get_activity_streams(activity_id: int, db: AsyncSession = Depends(get_
             return apple_streams
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    cached = (
-        (await db.execute(select(ActivityStream).where(ActivityStream.activity_id == activity_id)))
-        .scalars()
-        .all()
-    )
-    if cached:
-        return {s.stream_type: s.data for s in cached}
-
-    # Fetch + cache
-    from backend.clients.strava import StravaClient
-
-    client = StravaClient()
     try:
-        streams = await client.get_activity_streams(activity.strava_id)
-    except Exception as e:
+        return await load_streams_for_activity(db, activity)
+    except StravaStreamFetchError as e:
         logger.warning(f"Streams fetch failed for activity {activity_id}: {e}")
-        raise HTTPException(status_code=502, detail=f"Strava streams fetch failed: {e}")
-    finally:
-        await client.close()
-
-    for stream_type, data in streams.items():
-        if data:
-            db.add(
-                ActivityStream(
-                    activity_id=activity_id,
-                    stream_type=stream_type,
-                    data=data,
-                )
-            )
-    await db.commit()
-    return streams
+        raise HTTPException(
+            status_code=502, detail=f"Strava streams fetch failed: {e}"
+        )
 
 
 def _activity_summary(a: Activity) -> dict:

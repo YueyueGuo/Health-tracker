@@ -62,7 +62,7 @@ first GET against the session triggers segmentation. If no
 is a no-op.
 
 Revision ID: e1a3b7d2c9f4
-Revises: 37d57cfdb27d
+Revises: f2a8d3c1e9b4
 Create Date: 2026-05-25
 """
 from __future__ import annotations
@@ -74,7 +74,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "e1a3b7d2c9f4"
-down_revision: Union[str, None] = "37d57cfdb27d"
+down_revision: Union[str, None] = "f2a8d3c1e9b4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

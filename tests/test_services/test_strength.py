@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.database import Base
-from backend.models import Activity, ActivityStream, StrengthSet
+from backend.models import Activity, ActivityStream, StrengthSessionLink, StrengthSet
 from backend.services.strength import (
     estimate_1rm,
     list_sessions,
@@ -91,9 +91,49 @@ async def test_list_sessions_groups_by_date_newest_first(db: AsyncSession):
     assert sessions[0]["exercise_count"] == 2
     assert sessions[0]["total_sets"] == 2
     assert sessions[0]["total_volume_kg"] == pytest.approx(5 * 80 + 10 * 60)
+    # No link rows yet → hr_linked False on every row.
+    assert sessions[0]["hr_linked"] is False
     assert sessions[1]["exercise_count"] == 1
     assert sessions[1]["total_sets"] == 2
     assert sessions[1]["total_volume_kg"] == pytest.approx(2 * 5 * 100)
+    assert sessions[1]["hr_linked"] is False
+
+
+async def test_list_sessions_flags_hr_linked(db: AsyncSession):
+    """A ``strength_session_links`` row flips ``hr_linked`` to True for
+    that date — used by the history list HR-linked indicator."""
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    start = datetime(today.year, today.month, today.day, 9, 0, 0)
+    activity = Activity(
+        strava_id=42_001,
+        name="Lift",
+        sport_type="WeightTraining",
+        start_date=start,
+        start_date_local=start,
+    )
+    db.add(activity)
+    await db.flush()
+    await _seed(
+        db,
+        [
+            StrengthSet(date=today, exercise_name="Squat", set_number=1, reps=5, weight_kg=100),
+            StrengthSet(date=yesterday, exercise_name="Bench", set_number=1, reps=5, weight_kg=80),
+        ],
+    )
+    db.add(
+        StrengthSessionLink(
+            session_date=today,
+            source="strava",
+            activity_id=activity.id,
+            segmentation_status="ok",
+        )
+    )
+    await db.commit()
+    sessions = await list_sessions(db, limit=10)
+    by_date = {s["date"]: s for s in sessions}
+    assert by_date[today.isoformat()]["hr_linked"] is True
+    assert by_date[yesterday.isoformat()]["hr_linked"] is False
 
 
 async def test_session_summary_groups_by_exercise(db: AsyncSession):
@@ -184,10 +224,12 @@ async def test_session_summary_round_trips_performed_at(db: AsyncSession):
     assert stamps == [stamped.isoformat(), None]
 
 
-async def test_session_summary_merges_hr_when_streams_cached(db: AsyncSession):
-    """When a linked activity has cached time + heartrate streams, each
-    set with ``performed_at`` gets ``avg_hr``/``max_hr`` merged in and the
-    top-level payload carries ``hr_curve`` + ``activity_start_iso``."""
+async def test_session_summary_merges_hr_via_link_with_segmentation(db: AsyncSession):
+    """When a ``strength_session_links`` row exists pointing at a Strava
+    activity whose streams are cached, segmentation runs lazily on the
+    first GET and the payload carries the ``link`` / ``segmentation`` /
+    ``hr_curve`` / ``segment_markers`` blocks plus per-set ``avg_hr`` /
+    ``max_hr``."""
     today = date.today()
     start = datetime(today.year, today.month, today.day, 9, 0, 0)
     activity = Activity(
@@ -199,8 +241,38 @@ async def test_session_summary_merges_hr_when_streams_cached(db: AsyncSession):
     )
     db.add(activity)
     await db.flush()
-    time_stream = list(range(0, 600))
-    hr_stream = [140 + (t // 120) * 5 for t in time_stream]
+    # Synthetic HR trace with 2 clean peaks separated by 120s of rest.
+    time_stream: list[int] = []
+    hr_stream: list[float] = []
+    import math as _math
+    t = 0
+    for _ in range(60):
+        time_stream.append(t)
+        hr_stream.append(110.0)
+        t += 1
+    for k in range(30):
+        x = t + k
+        center = t + 15
+        d = (x - center) / 7.5
+        hr_stream.append(110.0 + 50.0 * _math.exp(-(d * d) / 2))
+        time_stream.append(x)
+    t += 30
+    for _ in range(120):
+        time_stream.append(t)
+        hr_stream.append(110.0)
+        t += 1
+    for k in range(30):
+        x = t + k
+        center = t + 15
+        d = (x - center) / 7.5
+        hr_stream.append(110.0 + 50.0 * _math.exp(-(d * d) / 2))
+        time_stream.append(x)
+    t += 30
+    for _ in range(60):
+        time_stream.append(t)
+        hr_stream.append(110.0)
+        t += 1
+
     db.add(ActivityStream(activity_id=activity.id, stream_type="time", data=time_stream))
     db.add(
         ActivityStream(activity_id=activity.id, stream_type="heartrate", data=hr_stream)
@@ -214,8 +286,6 @@ async def test_session_summary_merges_hr_when_streams_cached(db: AsyncSession):
                 set_number=1,
                 reps=5,
                 weight_kg=100,
-                performed_at=datetime(today.year, today.month, today.day, 9, 2, 0),
-                activity_id=activity.id,
             ),
             StrengthSet(
                 date=today,
@@ -223,39 +293,43 @@ async def test_session_summary_merges_hr_when_streams_cached(db: AsyncSession):
                 set_number=2,
                 reps=5,
                 weight_kg=100,
-                performed_at=None,
-                activity_id=activity.id,
             ),
         ],
     )
+    # The link table is the source of truth for the link target now.
+    db.add(
+        StrengthSessionLink(
+            session_date=today,
+            source="strava",
+            activity_id=activity.id,
+            segmentation_status="pending",
+        )
+    )
+    await db.commit()
 
     summary = await session_summary(db, today)
     assert summary is not None
-    assert summary["activity_start_iso"] == start.isoformat()
+    # Back-compat: activity_id still exposed for the Strava source.
+    assert summary["activity_id"] == activity.id
+    assert summary["link"] is not None
+    assert summary["link"]["source"] == "strava"
+    assert summary["link"]["ref_id"] == activity.id
+    assert summary["segmentation"] is not None
+    assert summary["segmentation"]["status"] in {"ok", "too_few", "too_many"}
+    assert summary["segmentation"]["target_count"] == 2
     assert isinstance(summary["hr_curve"], list) and summary["hr_curve"]
-    logged = next(s for s in summary["sets"] if s["performed_at"] is not None)
-    unlogged = next(s for s in summary["sets"] if s["performed_at"] is None)
-    assert "avg_hr" in logged and "max_hr" in logged
-    assert logged["avg_hr"] <= logged["max_hr"]
-    assert "avg_hr" not in unlogged
-    # And also merged into the per-exercise breakdown.
-    ex_sets = summary["exercises"][0]["sets"]
-    assert any("avg_hr" in s for s in ex_sets)
+    assert summary["activity_start_iso"] == start.isoformat()
+    assert summary["segment_markers"]
+    # Each detected set carries avg/max HR.
+    detected_count = summary["segmentation"]["detected_count"]
+    sets_with_hr = [s for s in summary["sets"] if "avg_hr" in s]
+    assert len(sets_with_hr) == detected_count
 
 
-async def test_session_summary_no_hr_when_streams_missing(db: AsyncSession):
-    """No cached streams → payload has no ``hr_curve`` / ``activity_start_iso``."""
+async def test_session_summary_no_link_returns_empty_link_blocks(db: AsyncSession):
+    """No ``strength_session_links`` row → ``link`` / ``segmentation`` /
+    ``hr_curve`` / ``activity_start_iso`` all None."""
     today = date.today()
-    start = datetime(today.year, today.month, today.day, 9, 0, 0)
-    activity = Activity(
-        strava_id=999_002,
-        name="Lift",
-        sport_type="WeightTraining",
-        start_date=start,
-        start_date_local=start,
-    )
-    db.add(activity)
-    await db.flush()
     await _seed(
         db,
         [
@@ -266,14 +340,15 @@ async def test_session_summary_no_hr_when_streams_missing(db: AsyncSession):
                 reps=5,
                 weight_kg=100,
                 performed_at=datetime(today.year, today.month, today.day, 9, 2, 0),
-                activity_id=activity.id,
             ),
         ],
     )
     summary = await session_summary(db, today)
     assert summary is not None
-    assert "hr_curve" not in summary
-    assert "activity_start_iso" not in summary
+    assert summary["link"] is None
+    assert summary["segmentation"] is None
+    assert summary["hr_curve"] is None
+    assert summary["activity_start_iso"] is None
     assert "avg_hr" not in summary["sets"][0]
 
 
