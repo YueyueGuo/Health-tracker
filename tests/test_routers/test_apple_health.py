@@ -143,6 +143,55 @@ async def test_workouts_logs_batch_receipt_and_summary(client, caplog):
     )
 
 
+async def test_workouts_accepts_series_shape_metric(client, db):
+    """Regression: HAE sends declared metric fields as time-series
+    arrays (``[{date, qty, units, source}, ...]``) when "Aggregate
+    workout data" is off in HAE. Pre-fix this 422'd the whole batch.
+    Now we accept it, land the row, and preserve the series in
+    ``raw_payload``."""
+    body = {
+        "data": {
+            "workouts": [
+                {
+                    "id": "apple-series-1",
+                    "name": "Walking",
+                    "start": "2026-05-23 17:00:00 -0400",
+                    "end": "2026-05-23 18:00:00 -0400",
+                    "duration": 3600.0,
+                    "stepCount": [
+                        {
+                            "date": "2026-05-23 17:22:14 -0400",
+                            "qty": 17.93,
+                            "source": "phone",
+                            "units": "steps",
+                        },
+                        {
+                            "date": "2026-05-23 17:23:14 -0400",
+                            "qty": 17.07,
+                            "source": "phone",
+                            "units": "steps",
+                        },
+                    ],
+                }
+            ]
+        }
+    }
+    resp = await client.post(
+        "/api/ingest/apple-health/workouts",
+        json=body,
+        headers={"X-Apple-Health-Token": _TOKEN},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["results"][0]["status"] == "created"
+
+    hdp = (await db.execute(select(HealthDataPoint))).scalar_one()
+    assert hdp.external_id == "apple-series-1"
+    # Series rides along in raw_payload — no data loss even though the
+    # typed scalar columns are None for this workout.
+    assert isinstance(hdp.raw_payload["stepCount"], list)
+    assert len(hdp.raw_payload["stepCount"]) == 2
+
+
 async def test_workouts_replay_returns_updated(client):
     """Second POST of the same external_id reports ``updated``."""
     body = _payload()
