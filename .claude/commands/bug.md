@@ -57,25 +57,37 @@ Commit each agent's changes separately: `fix(backend): ...`,
 Spawn `test-runner`. Loop up to 3 times on failure (same rules as
 `/feature` Step 4).
 
-### Step 4 — Review, QA, security, performance (parallel)
+### Step 4 — Review (parallel, scoped)
+
+**Scope analysis.** Before spawning, run the same diff pre-check as
+`/feature` Step 5 and post one line announcing which agents will run
+and the one-phrase reason for each skip, e.g.:
+> Review: code-reviewer + qa-verifier. Skipping security (test-only diff), perf-sentinel (no perf signals), migration-safety (no revision).
+
+Agents and triggers (same rules as `/feature` Step 5 — kept in sync):
+
+- `code-reviewer` — **always**. Pass the diagnosis. Confirm the
+  regression test exists and exercises the fixed path.
+- `qa-verifier` — **run if** the bug had user-visible symptoms
+  (broken page, wrong data on dashboard, save flow failing). Skip
+  for non-user-visible bugs (scheduler logging bug, internal data
+  drift). Pass the diagnosis so QA targets the exact failing
+  scenario.
+- `security-reviewer` — **skip only** for doc-only or test-only
+  diffs. Auth / token / injection-related bugs must run it.
+- `performance-sentinel` — **run if** the diff touches any of:
+  `backend/scheduler.py`, `backend/services/*sync*.py`,
+  `backend/services/insights.py` / `llm_providers.py` /
+  `insight_prompts.py`, `backend/clients/`, `frontend/package.json`,
+  or non-test diff > 500 lines added. Otherwise skip.
+- `migration-safety-checker` — **run if** new revisions exist under
+  `alembic/versions/` *and* they aren't new-table-only (same rule
+  as `/feature` Step 2: skip when every op targets a table also
+  created in these revisions, no alter/execute/drop/rename, planner
+  said `Risk: trivial`).
+
 Spawn the applicable agents **in a single message** with multiple
-Agent tool uses so they run concurrently:
-- `code-reviewer` — always. Pass the diagnosis. Reviewer should
-  confirm the regression test exists and exercises the fixed path.
-- `qa-verifier` — **only if** the bug had user-visible symptoms
-  (broken page, wrong data on dashboard, save flow failing, etc.).
-  Skip QA for non-user-visible bugs (a scheduler logging bug, an
-  internal data-migration drift). Pass the diagnosis so QA targets
-  the exact failing scenario the user reported.
-- `security-reviewer` — run unless the fix is doc-only or a pure
-  test-file change. Security-relevant bugs (auth, tokens, injection)
-  must run it.
-- `performance-sentinel` — run if the fix touches a hot path
-  (router, sync engine, scheduler, dashboard component). Skip for
-  isolated logic bugs in pure utilities.
-- `migration-safety-checker` — **only if** the fix added a new
-  Alembic revision (rare for bugs, but happens when the bug is a
-  schema mismatch).
+Agent tool uses so they run concurrently.
 
 Merge findings, route by the `Owner:` tag. On `REQUEST_CHANGES` /
 `FAIL` / `UNSAFE` / `CONCERNS`: spawn owners **in parallel** in a

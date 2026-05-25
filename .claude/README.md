@@ -41,19 +41,39 @@ multiple `Agent` tool uses**. Real parallelism points:
 
 - **Phase 1**: `integration-researcher` ∥ `db-migrator` (only when
   the plan calls for both). `migration-safety-checker` then runs
-  *sequentially* after `db-migrator` (it audits work that just landed).
+  *sequentially* after `db-migrator`, **but only when the migration
+  is nontrivial** (see triggering rules below).
 - **Phase 2**: `backend-engineer` ∥ `frontend-engineer` (whenever the
   plan touches both surfaces).
-- **Review**: `code-reviewer` ∥ `security-reviewer` ∥
-  `performance-sentinel` ∥ `qa-verifier` ∥ `migration-safety-checker`
-  — all read-only, all safely concurrent. Run unconditionally except:
-  `qa-verifier` only when the change is user-visible,
-  `migration-safety-checker` only when migrations exist in the diff,
-  and the security/perf agents skip for doc-only diffs (see `/feature`
-  Step 5 for the full rule).
+- **Review**: `code-reviewer` ∥ `qa-verifier` ∥ `security-reviewer`
+  ∥ `performance-sentinel` ∥ `migration-safety-checker` — all
+  read-only, all safely concurrent, but each is *individually gated*
+  by trigger rules. The orchestrator posts a one-line scope-analysis
+  preamble before spawning, naming the agents that will run and the
+  reason for any skip.
 
-Sequential by design: planner → phase 1 (incl. migration audit) →
-phase 2 → tests → review (multi-agent parallel) → PR → subscribe.
+Sequential by design: planner → phase 1 (incl. migration audit when
+warranted) → phase 2 → tests → review (multi-agent parallel) → PR →
+subscribe.
+
+## Triggering rules (when each review-phase agent runs)
+
+The orchestrator runs the **minimum set of agents** needed for the
+diff. Don't blanket-spawn — articulate the choice in the scope
+preamble.
+
+| Agent | Runs when | Skips when |
+|-------|-----------|------------|
+| `code-reviewer` | Always | Never |
+| `qa-verifier` | Diff touches user-visible surface: `frontend/`, new/changed `backend/routers/`, sync engine that feeds the dashboard, or plan's "Affected surfaces" lists a user-facing surface | Pure refactors, infra-only, migration-only PRs |
+| `security-reviewer` | Any non-doc, non-test diff | Doc-only or test-only diffs |
+| `performance-sentinel` | Diff touches `backend/scheduler.py`, `backend/services/*sync*.py`, `backend/services/insights.py` / `llm_providers.py` / `insight_prompts.py`, `backend/clients/`, `frontend/package.json`, or non-test diff > 500 lines added | All other diffs (most CRUD / page work) |
+| `migration-safety-checker` | New revisions exist under `alembic/versions/` **and** any of: `op.alter_column`, `op.execute`, `op.drop_*`, `op.rename_*`, an op targeting a table that already exists on `main`, or planner flagged `Risk: nontrivial` | New-table-only migrations (everything operates on tables also being created in this same set of revisions) — `Risk: trivial` from the planner |
+
+For `migration-safety-checker`, the orchestrator's pre-spawn check
+greps the new alembic revisions for op-call names and cross-checks
+against the planner's `Risk:` line. See `/feature` Step 2 for the
+exact bash snippet.
 
 ## Adding a new agent
 

@@ -1,6 +1,6 @@
 ---
 name: performance-sentinel
-description: Performance auditor. Inspects the diff for likely N+1 queries, missing indexes on new filters, unbounded loops, sync (blocking) I/O in async paths, and frontend bundle bloat / heavy re-renders. Use in parallel with code-reviewer in the review phase. Read-only.
+description: Performance auditor. Inspects the diff for likely N+1 queries, missing indexes on new filters, unbounded loops, sync (blocking) I/O in async paths, and frontend bundle bloat / heavy re-renders. Triggered only when the diff touches perf-relevant surfaces — scheduler, sync services, insights/LLM, backend clients, frontend package manifests, or non-test diff > 500 lines. Use in parallel with code-reviewer in the review phase. Read-only.
 tools: Read, Grep, Glob, Bash
 model: opus
 memory: project

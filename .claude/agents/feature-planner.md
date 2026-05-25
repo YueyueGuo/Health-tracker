@@ -60,6 +60,19 @@ Migration revision name(s), parent revision (current head), columns/
 tables added, whether SQLite-safe (prefer `op.add_column` over
 `batch_alter_table` per `AGENTS.md`).
 
+Include a required line: **`Risk: trivial | nontrivial`**.
+- `trivial` — only new tables, or new columns / indexes / FKs whose
+  target tables are also being created in this same plan. No backfill,
+  no alter on existing populated tables, no drops, no raw SQL.
+- `nontrivial` — anything touching data already in production: column
+  alter, NOT NULL add on a populated table, type change, rename,
+  drop, backfill, raw `op.execute()`, or an index on a populated
+  table. When in doubt, mark `nontrivial`.
+
+The orchestrator uses this hint to decide whether to spawn
+`migration-safety-checker`. Be honest — flagging trivial when it's
+not is a worse failure mode than the reverse.
+
 ### 8. Tests to add
 List by file. Use existing test layout (`tests/test_clients/`,
 `tests/test_routers/`, `tests/test_services/`).
