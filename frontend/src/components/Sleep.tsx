@@ -14,7 +14,9 @@ export default function Sleep() {
   // semantics by leaving `dateParam` undefined. See
   // docs/bugs/sleep-detail-date-scope.md.
   const [searchParams] = useSearchParams();
-  const dateParam = searchParams.get("date") ?? undefined;
+  // Normalize empty-string (`/sleep?date=`) to undefined so the fetcher omits
+  // `on_or_before=` rather than sending an empty value (backend 422).
+  const dateParam = searchParams.get("date") || undefined;
 
   const { data: sessions, loading: sessionsLoading } = useApi(
     ["sleep", "sessions", 30],
@@ -52,14 +54,27 @@ export default function Sleep() {
     return <div className="loading">Loading sleep data...</div>;
   }
 
-  // Merge list + latest endpoints so a row that only exists on /latest is still
-  // visible to the pairing pass (edge race with sync timing).
-  const sessionPool = mergeSleepSessions(sessions, latestWhoop, latestEight);
-  const { whoopSleep: cardWhoop, eightSleep: cardEight } = resolveSleepPairForCard(
-    sessionPool,
-    latestWhoop,
-    latestEight,
-  );
+  // When deep-linked to a specific night (`?date=`), the date-scoped
+  // `/sleep/latest?on_or_before=…` responses already describe that night for
+  // each provider, so use them directly. Walking the pool newest-first would
+  // hand back the newest pair instead — see issue #51 / qa-verifier round 2.
+  //
+  // Without `dateParam` (dashboard entry point) we keep the pairing pass so
+  // WHOOP+Eight rows that label the same night with ±1 calendar days still
+  // line up.
+  let cardWhoop: SleepSession | null;
+  let cardEight: SleepSession | null;
+  if (dateParam) {
+    cardWhoop = latestWhoop ?? null;
+    cardEight = latestEight ?? null;
+  } else {
+    // Merge list + latest endpoints so a row that only exists on /latest is
+    // still visible to the pairing pass (edge race with sync timing).
+    const sessionPool = mergeSleepSessions(sessions, latestWhoop, latestEight);
+    const pair = resolveSleepPairForCard(sessionPool, latestWhoop, latestEight);
+    cardWhoop = pair.whoopSleep;
+    cardEight = pair.eightSleep;
+  }
   const cardRecovery = pickRecoveryForSleeps(
     recoveryRows,
     cardWhoop?.date,

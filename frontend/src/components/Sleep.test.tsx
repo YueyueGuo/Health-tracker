@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
-import { screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
-import { renderWithQuery } from "../test/renderWithQuery";
+import {
+  createTestQueryClient,
+  renderWithQuery,
+} from "../test/renderWithQuery";
 import type { SleepSession } from "../api/sleep";
 import type { RecoveryRecord } from "../api/recovery";
 
@@ -86,13 +90,23 @@ vi.mock("../api/recovery", () => ({
 }));
 
 import Sleep from "./Sleep";
-import { fetchLatestSleep } from "../api/sleep";
+import { fetchLatestSleep, fetchSleepSessions } from "../api/sleep";
 import { fetchRecovery } from "../api/recovery";
 
 describe("Sleep page", () => {
   beforeEach(() => {
-    vi.mocked(fetchLatestSleep).mockClear();
-    vi.mocked(fetchRecovery).mockClear();
+    vi.mocked(fetchLatestSleep).mockReset();
+    vi.mocked(fetchSleepSessions).mockReset();
+    vi.mocked(fetchRecovery).mockReset();
+
+    // Default mocks — match the legacy fixtures so existing tests keep their
+    // shape. Individual tests can override with `mockImplementation` /
+    // `mockResolvedValue` to exercise date-specific responses.
+    vi.mocked(fetchSleepSessions).mockResolvedValue([whoopRow, eightRow]);
+    vi.mocked(fetchLatestSleep).mockImplementation((opts) =>
+      Promise.resolve(opts?.source === "whoop" ? whoopRow : eightRow),
+    );
+    vi.mocked(fetchRecovery).mockResolvedValue([recoveryRow]);
   });
 
   it("renders the detail card inside an AppShell-style container", async () => {

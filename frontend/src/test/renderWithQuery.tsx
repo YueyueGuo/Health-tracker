@@ -2,11 +2,8 @@ import { render, type RenderOptions } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement, ReactNode } from "react";
 
-export function renderWithQuery(
-  ui: ReactElement,
-  options?: Omit<RenderOptions, "wrapper">,
-) {
-  const queryClient = new QueryClient({
+export function createTestQueryClient(): QueryClient {
+  return new QueryClient({
     defaultOptions: {
       queries: {
         retry: false,
@@ -15,6 +12,22 @@ export function renderWithQuery(
       },
     },
   });
+}
+
+export interface RenderWithQueryOptions extends Omit<RenderOptions, "wrapper"> {
+  /**
+   * Optional shared `QueryClient` so multiple renders in the same test can
+   * exercise cache behavior. When omitted a fresh client is created per call.
+   */
+  queryClient?: QueryClient;
+}
+
+export function renderWithQuery(
+  ui: ReactElement,
+  options?: RenderWithQueryOptions,
+) {
+  const { queryClient: injected, ...renderOptions } = options ?? {};
+  const queryClient = injected ?? createTestQueryClient();
 
   function Wrapper({ children }: { children: ReactNode }) {
     return (
@@ -22,5 +35,5 @@ export function renderWithQuery(
     );
   }
 
-  return render(ui, { wrapper: Wrapper, ...options });
+  return render(ui, { wrapper: Wrapper, ...renderOptions });
 }
