@@ -273,6 +273,30 @@ def test_flatten_converts_imperial_speed_mph_to_mps():
     assert parsed.avg_speed_mps == pytest.approx(4.4704, rel=1e-12)
 
 
+def test_flatten_accepts_hae_mi_alias_for_speed():
+    """HAE's JSON export truncates speed units to ``mi`` (its CSV column
+    header for the same field shows ``mi/hr``). Treat ``mi`` and the
+    less-truncated ``mi/hr`` as aliases for ``mph``."""
+    w_mi = HAEWorkout(
+        id="x",
+        name="Running",
+        start="2026-05-24 12:00:00 +0000",
+        end="2026-05-24 12:30:00 +0000",
+        duration=1800.0,
+        avgSpeed=HAEQty(qty=10.0, units="mi"),
+    )
+    w_mihr = HAEWorkout(
+        id="y",
+        name="Running",
+        start="2026-05-24 12:00:00 +0000",
+        end="2026-05-24 12:30:00 +0000",
+        duration=1800.0,
+        avgSpeed=HAEQty(qty=10.0, units="mi/hr"),
+    )
+    assert flatten_hae_workout(w_mi).avg_speed_mps == pytest.approx(4.4704, rel=1e-12)
+    assert flatten_hae_workout(w_mihr).avg_speed_mps == pytest.approx(4.4704, rel=1e-12)
+
+
 def test_flatten_converts_imperial_elevation_ft_to_m():
     w = HAEWorkout(
         id="x",
