@@ -7,7 +7,6 @@ computed on read (no stored counter); see
 
 from __future__ import annotations
 
-import logging
 from datetime import date, datetime, timezone
 from typing import Literal
 
@@ -24,7 +23,6 @@ from backend.services.shoe_mileage import (
     percent_used,
 )
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -199,15 +197,19 @@ async def update_shoe(
 ):
     shoe = await _load_shoe_or_404(db, shoe_id)
 
-    # ``exclude_unset=True`` so omitted keys stay untouched, but we
-    # still need to skip explicit None values for "set to null" except
-    # on the optional-and-nullable fields (notes, brand, etc.). The
-    # plan calls out: "only update fields where the patch field is
-    # != None via model_dump(exclude_unset=True)" — so honor that.
+    # ``exclude_unset=True`` already gates on "the field was present in
+    # the request body", so we honor explicit ``null`` clears for the
+    # nullable columns (``brand``, ``model``, ``notes``,
+    # ``total_usable_distance_m``, ``purchased_on``). Pydantic's
+    # ``min_length`` / ``pattern`` validators do NOT reject ``None`` when
+    # the field type is ``str | None``, so we must guard the two
+    # non-nullable model columns (``name`` and ``shoe_type``) explicitly.
     updates = payload.model_dump(exclude_unset=True)
     for field, value in updates.items():
-        if value is None:
-            continue
+        if value is None and field in {"name", "shoe_type"}:
+            raise HTTPException(
+                status_code=422, detail=f"{field} cannot be null"
+            )
         setattr(shoe, field, value)
 
     await db.commit()

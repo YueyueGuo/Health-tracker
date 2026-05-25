@@ -474,6 +474,149 @@ async def test_existing_tag_to_retired_shoe_is_preserved(
 # ── List activities for a shoe ──────────────────────────────────────
 
 
+async def test_patch_shoe_clear_nullable_via_null(client):
+    """PATCH with explicit ``null`` must clear the nullable columns.
+    Regression: a prior ``if value is None: continue`` loop silently
+    dropped these clears."""
+    created = (
+        await client.post(
+            "/api/shoes",
+            json={
+                "name": "Clearable",
+                "brand": "Nike",
+                "model": "Pegasus",
+                "total_usable_distance_m": 800000.0,
+                "purchased_on": date.today().isoformat(),
+                "notes": "abc",
+            },
+        )
+    ).json()
+    shoe_id = created["id"]
+
+    # Sanity: everything is present after create.
+    assert created["brand"] == "Nike"
+    assert created["model"] == "Pegasus"
+    assert created["total_usable_distance_m"] == 800000.0
+    assert created["purchased_on"] == date.today().isoformat()
+    assert created["notes"] == "abc"
+
+    resp = await client.patch(
+        f"/api/shoes/{shoe_id}",
+        json={
+            "notes": None,
+            "brand": None,
+            "model": None,
+            "total_usable_distance_m": None,
+            "purchased_on": None,
+        },
+    )
+    assert resp.status_code == 200
+
+    detail = await client.get(f"/api/shoes/{shoe_id}")
+    body = detail.json()
+    assert body["notes"] is None
+    assert body["brand"] is None
+    assert body["model"] is None
+    assert body["total_usable_distance_m"] is None
+    assert body["purchased_on"] is None
+
+
+async def test_patch_shoe_null_name_rejected(client):
+    """``name`` is non-nullable on the model; PATCHing ``{"name": null}``
+    must come back as 422 rather than silently no-oping or 500-ing."""
+    created = (
+        await client.post("/api/shoes", json={"name": "Keep me"})
+    ).json()
+    resp = await client.patch(
+        f"/api/shoes/{created['id']}", json={"name": None}
+    )
+    assert resp.status_code == 422
+
+
+async def test_patch_shoe_null_shoe_type_rejected(client):
+    """``shoe_type`` is non-nullable on the model. Pydantic's pattern
+    validator does NOT reject ``None`` against ``str | None``, so the
+    handler must guard it."""
+    created = (
+        await client.post("/api/shoes", json={"name": "Type test"})
+    ).json()
+    resp = await client.patch(
+        f"/api/shoes/{created['id']}", json={"shoe_type": None}
+    )
+    assert resp.status_code == 422
+
+
+async def test_unretire_is_idempotent(client):
+    """Calling unretire twice on a never-retired shoe must stay 200 +
+    active + retired_at=None on both calls."""
+    created = (
+        await client.post("/api/shoes", json={"name": "Never retired"})
+    ).json()
+    r1 = await client.post(f"/api/shoes/{created['id']}/unretire")
+    r2 = await client.post(f"/api/shoes/{created['id']}/unretire")
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    for body in (r1.json(), r2.json()):
+        assert body["status"] == "active"
+        assert body["retired_at"] is None
+
+
+async def test_tag_activity_id_collision_strava_wins(
+    combined_client, db_and_sessionmaker
+):
+    """When a Strava ``Activity`` and an Apple ``HealthDataPoint`` share
+    the same id, the dual-resolution lookup picks Strava first. Pin the
+    precedence so a future refactor can't silently flip it."""
+    _, Session = db_and_sessionmaker
+    collision_id = 777
+    async with Session() as db:
+        # Seed Apple first so we can force the HDP id, then seed a
+        # Strava Activity with the same numeric id via direct insert.
+        dp = HealthDataPoint(
+            id=collision_id,
+            source="apple_health",
+            data_type="workout",
+            external_id="apple-collision",
+            start_time=utc_now_naive() - timedelta(days=1),
+        )
+        db.add(dp)
+        await db.flush()
+        w = Workout(
+            id=dp.id,
+            activity_type="run",
+            duration_s=1800,
+            distance_m=1111.0,
+        )
+        db.add(w)
+
+        start = utc_now_naive() - timedelta(days=1)
+        a = Activity(
+            id=collision_id,
+            strava_id=99999,
+            name="strava-collision",
+            sport_type="Run",
+            start_date=start,
+            start_date_local=start,
+            distance=2222.0,
+            enrichment_status="complete",
+        )
+        db.add(a)
+        await db.commit()
+
+    create = await combined_client.post(
+        "/api/shoes", json={"name": "Collision shoe"}
+    )
+    shoe_id = create.json()["id"]
+
+    resp = await combined_client.patch(
+        f"/api/activities/{collision_id}/shoe", json={"shoe_id": shoe_id}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "strava"
+    assert body["shoe_id"] == shoe_id
+
+
 async def test_list_activities_for_shoe(client, db):
     shoe = Shoe(name="Listing shoe")
     db.add(shoe)
