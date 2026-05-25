@@ -804,11 +804,55 @@ async def test_create_sets_with_activity_id_seeds_link_row(client, db):
     assert link is not None
     assert link.source == "strava"
     assert link.activity_id == activity.id
-    # The bulk-insert path was supposed to skip inline segmentation, but
-    # the response body's ``session`` is built via ``session_summary``,
-    # which fires the lazy resegment on a ``pending`` link. Either
-    # outcome (still pending, or already segmented) is acceptable here;
-    # the regression we care about is the link row existing.
-    assert link.segmentation_status in {
-        "pending", "ok", "too_few", "too_many", "flat", "no_stream", "no_curve", "error",
+    # Performance-sentinel finding #5: the bulk POST must leave the link
+    # in ``pending`` — the request must not fire the lazy Strava
+    # stream fetch. The response's ``session`` block is built with
+    # ``lazy_resegment=False``, so the status stays ``pending`` until
+    # the next ``GET /session/{date}``.
+    assert link.segmentation_status == "pending"
+    assert resp.json()["session"]["segmentation"]["status"] == "pending"
+
+
+async def test_create_sets_with_activity_id_does_not_fire_strava_fetch(
+    client, db, monkeypatch
+):
+    """Performance-sentinel finding #5 regression gate.
+
+    ``POST /strength/sets`` with ``activity_id`` writes the link row in
+    ``pending`` state, and the response uses ``lazy_resegment=False`` —
+    so the lazy Strava stream fetch path must never be invoked from
+    this request. If anything calls into ``strava_streams`` during the
+    POST, the monkey-patched stub raises, failing the test.
+    """
+    activity = await _seed_strava(
+        db, start_utc=datetime(2026, 5, 19, 9, 0, 0, tzinfo=timezone.utc)
+    )
+
+    from backend.services import strava_streams as ss
+
+    fetch_calls: list[int] = []
+
+    async def _explode(db, activity):  # pragma: no cover - failure path
+        fetch_calls.append(activity.id)
+        raise AssertionError(
+            "POST /strength/sets must not trigger a Strava stream fetch; "
+            "lazy_resegment=False is supposed to keep the request cheap."
+        )
+
+    monkeypatch.setattr(ss, "load_streams_for_activity", _explode)
+
+    payload = {
+        "date": "2026-05-19",
+        "activity_id": activity.id,
+        "sets": [
+            {"exercise_name": "Squat", "set_number": 1, "reps": 5, "weight_kg": 100.0},
+            {"exercise_name": "Squat", "set_number": 2, "reps": 5, "weight_kg": 100.0},
+        ],
     }
+    resp = await client.post("/api/strength/sets", json=payload)
+    assert resp.status_code == 201
+    assert fetch_calls == []
+    # The follow-up GET is allowed to fetch; pre-seed streams so the
+    # later test session is fully consistent if someone extends this.
+    body = resp.json()
+    assert body["session"]["segmentation"]["status"] == "pending"

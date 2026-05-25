@@ -76,7 +76,14 @@ DECIMATE_TARGET_POINTS: int = 300
 
 
 SegmentationStatus = Literal[
-    "ok", "too_few", "too_many", "flat", "no_stream", "error"
+    "ok",
+    "too_few",
+    "too_many",
+    "flat",
+    "no_stream",
+    "no_curve",
+    "pending",
+    "error",
 ]
 
 
@@ -405,10 +412,18 @@ def segment_hr_stream(
             status="flat", target_count=target_count, detected_count=0
         )
 
-    if over_target:
-        status: SegmentationStatus = "too_many"
-    elif detected_count < target_count:
-        status = "too_few"
+    # Recompute the final status from the surviving segment count. When
+    # ``over_target`` was true pre-build but zero-sample windows dropped
+    # us below ``target_count``, surface ``too_few`` rather than the
+    # stale ``too_many`` — code-reviewer finding (optional). When
+    # trimming brought us exactly to target, ``too_many`` still wins so
+    # the UI can tell the user we discarded extras.
+    if detected_count < target_count:
+        status: SegmentationStatus = "too_few"
+    elif over_target:
+        status = "too_many"
+    elif detected_count > target_count:
+        status = "too_many"
     else:
         status = "ok"
 

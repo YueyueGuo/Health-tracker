@@ -123,9 +123,15 @@ def attach_hr_to_sets(
     """Compute per-set HR + a decimated session-wide curve from a segmentation.
 
     Pure-ish (reads no DB) — the caller passes the streams already
-    loaded by ``strength_link.ensure_streams_loaded``. ``sets`` is the
-    session's set list in *logged order*; segments are mapped to sets
-    1:1 in that order (set 1 → segment 1, set 2 → segment 2, ...).
+    loaded by ``strength_link.ensure_streams_loaded``. ``sets`` MUST be
+    the session's set list in **chronological logged order** (sort by
+    ``performed_at ASC NULLS LAST, id ASC``); segments are mapped to
+    sets 1:1 in that order (segment 1 → first logged set, segment 2 →
+    second logged set, ...). The caller merges the returned
+    ``hr_by_set_id`` back into its display-ordered payloads by set id,
+    so the alphabetical-by-exercise grouping used in
+    ``session_summary`` stays correct.
+
     When ``segmentation.detected_count < len(sets)`` the trailing sets
     are left without HR — the UI surfaces this via the segmentation
     status. When ``detected_count > target_count`` the segmentation
@@ -137,7 +143,16 @@ def attach_hr_to_sets(
         {
           "hr_by_set_id": {set_id: {"avg_hr": 145.2, "max_hr": 160.0}, ...},
           "hr_curve": [[offset_sec, bpm], ...],
-          "segment_markers": [{set_number, start_sec, end_sec}, ...],
+          "segment_markers": [
+              {
+                "set_number": int,                # 1..N session-wide ordinal
+                "exercise_name": str,
+                "per_exercise_set_number": int,   # original set.set_number
+                "start_sec": float,
+                "end_sec": float,
+              },
+              ...
+          ],
           "activity_start_iso": "2026-04-21T09:00:00" | None,
         }
 
@@ -163,16 +178,23 @@ def attach_hr_to_sets(
 
     hr_by_set_id: dict[int, dict[str, float]] = {}
     segment_markers: list[dict[str, Any]] = []
-    for set_obj, seg in zip(sets, segments):
+    for session_ordinal, (set_obj, seg) in enumerate(zip(sets, segments), start=1):
         if set_obj.id is None:
             continue
         hr_by_set_id[set_obj.id] = {
             "avg_hr": round(seg.avg_hr, 1),
             "max_hr": round(seg.max_hr, 1),
         }
+        # The frontend renders ``Set {set_number}`` on the band label;
+        # because ``sets`` is in chronological logged order this ordinal
+        # is session-wide (1..N over the whole session), not per-
+        # exercise. ``per_exercise_set_number`` is preserved for
+        # tooltips that want to show "Squat #2" rather than "Set 4".
         segment_markers.append(
             {
-                "set_number": set_obj.set_number,
+                "set_number": session_ordinal,
+                "exercise_name": set_obj.exercise_name,
+                "per_exercise_set_number": set_obj.set_number,
                 "start_sec": round(seg.start_sec, 1),
                 "end_sec": round(seg.end_sec, 1),
             }

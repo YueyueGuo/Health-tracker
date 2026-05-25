@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import date as date_type, timedelta
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +21,11 @@ from backend.services.strength_link import (
     link_summary_dict,
     run_segmentation_for_link,
 )
-from backend.services.strength_segmentation import Segment, SegmentationResult
+from backend.services.strength_segmentation import (
+    Segment,
+    SegmentationResult,
+    SegmentationStatus,
+)
 
 
 # ── 1RM estimation ──────────────────────────────────────────────────
@@ -114,7 +118,10 @@ async def list_sessions(
 
 
 async def session_summary(
-    db: AsyncSession, target: date_type
+    db: AsyncSession,
+    target: date_type,
+    *,
+    lazy_resegment: bool = True,
 ) -> dict[str, Any] | None:
     """Full detail for one session (a single `date`).
 
@@ -164,6 +171,11 @@ async def session_summary(
     ``strength_session_links`` row exists, segmentation runs lazily on
     first GET if the link is in ``pending`` state (the bulk-insert
     POST writes ``pending`` rather than running segmentation inline).
+    Callers that explicitly do not want to pay for that lazy run (e.g.
+    ``POST /strength/sets`` building its response) can pass
+    ``lazy_resegment=False`` — the segmentation block will surface as
+    ``status="pending"`` and the next GET will trigger the real run.
+
     The chronological set→segment mapping used for HR attachment is a
     **separate concern** from the alphabetical-then-order_index
     display ordering: sets are re-sorted chronologically
@@ -176,6 +188,8 @@ async def session_summary(
     older consumers (e.g. ``ExercisesTable.tsx``,
     ``ActivityDetailStrength.tsx``) keep working.
     """
+    # Display order (alphabetical-by-exercise, then set_number) drives
+    # ``sets_payload`` and ``exercises`` — the public response shape.
     stmt = (
         select(StrengthSet)
         .where(StrengthSet.date == target)
@@ -315,8 +329,12 @@ async def session_summary(
         return payload
 
     # Lazy resegment on first GET when the bulk POST left it pending.
-    if link.segmentation_status == "pending":
-        await run_segmentation_for_link(db, link)
+    # ``run_segmentation_for_link`` now returns the streams it loaded,
+    # so we reuse them below instead of re-parsing the payload — see
+    # performance-sentinel finding #4.
+    cached_streams: dict[str, Any] | None = None
+    if link.segmentation_status == "pending" and lazy_resegment:
+        _result, cached_streams = await run_segmentation_for_link(db, link)
         await db.commit()
         await db.refresh(link)
 
@@ -327,21 +345,41 @@ async def session_summary(
         "target_count": link.segmentation_target_count or 0,
     }
 
-    # Attach HR to sets when segmentation produced segments. We need
-    # streams again here for the decimated curve; ``ensure_streams_loaded``
-    # is cheap on the second call (Strava streams are now cached;
-    # Apple parsing is in-process).
+    # Attach HR to sets when segmentation produced segments. Reuse the
+    # streams loaded above when available; only fall back to a fresh
+    # load when this GET skipped the lazy resegment (status was already
+    # ok/too_few/too_many before this call).
     if link.segmentation_status in {"ok", "too_few", "too_many"}:
-        streams = await ensure_streams_loaded(db, link)
+        if cached_streams is None:
+            cached_streams = await ensure_streams_loaded(db, link)
+        streams = cached_streams
         segments = _segments_from_payload(link.segmentation_payload)
         result = SegmentationResult(
-            status=link.segmentation_status,  # type: ignore[arg-type]
+            status=cast(SegmentationStatus, link.segmentation_status),
             target_count=link.segmentation_target_count or 0,
             detected_count=link.segmentation_detected_count or 0,
             segments=segments,
         )
+        # Segments are in chronological order; map them to sets in the
+        # same chronological logged order to match (code-reviewer
+        # finding #1). Two passes so we never compare a ``datetime`` to
+        # ``None``: dated rows sort by ``(performed_at, id)``, undated
+        # rows sort by ``id`` alone. Concatenating dated+undated keeps
+        # the dated rows in the lead and falls back to insert order
+        # (id is monotonic with insertion) for the rest — which is the
+        # right behaviour for bulk-logged sessions where every
+        # ``performed_at`` is null.
+        dated = sorted(
+            (s for s in rows if s.performed_at is not None),
+            key=lambda s: (s.performed_at, s.id or 0),
+        )
+        undated = sorted(
+            (s for s in rows if s.performed_at is None),
+            key=lambda s: s.id or 0,
+        )
+        chronological = [*dated, *undated]
         hr = attach_hr_to_sets(
-            list(rows),
+            chronological,
             result,
             streams["time_stream"],
             streams["hr_stream"],
@@ -349,6 +387,9 @@ async def session_summary(
         )
         if hr:
             by_id = hr.get("hr_by_set_id") or {}
+            # Merge per-set HR back into the alphabetical
+            # ``sets_payload`` / ``exercises`` by id, not iteration
+            # order — finishing the fix for #1.
             for s in sets_payload:
                 stats = by_id.get(s["id"])
                 if stats:

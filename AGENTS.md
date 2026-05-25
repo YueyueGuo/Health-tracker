@@ -48,7 +48,7 @@ cd frontend && npm install && npm run dev
 ## Migrations
 
 - History has **merge revisions**; do not assume a single linear chain.
-- **Current head** (last verified with doc update): `c2f7a4e91b85`. Confirm anytime: `alembic heads`.
+- **Current head** (last verified with doc update): `e1a3b7d2c9f4`. Confirm anytime: `alembic heads`.
 - Prefer `op.add_column` for new nullable SQLite columns (not `batch_alter_table`) so running migrations alongside the scheduler is safe.
 
 ## Integrations (pointers)

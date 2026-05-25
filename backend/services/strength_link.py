@@ -409,7 +409,14 @@ async def _validate_candidate_exists(
 async def _existing_link_for_target(
     db: AsyncSession, source: str, ref_id: int
 ) -> StrengthSessionLink | None:
-    """Find any link row that already owns this device workout."""
+    """Find any link row that already owns this device workout.
+
+    Returns the row even when it belongs to the *same* ``session_date``
+    the caller is about to write — :func:`set_link` is responsible for
+    distinguishing idempotent re-link (same date) from a real conflict
+    (different date), so this helper deliberately doesn't scope by
+    ``session_date``.
+    """
     if source == "strava":
         stmt = select(StrengthSessionLink).where(
             StrengthSessionLink.source == "strava",
@@ -502,6 +509,7 @@ async def set_link(
     return link
 
 
+
 async def clear_link(db: AsyncSession, session_date: date_type) -> bool:
     """Delete any link row for the given session date.
 
@@ -530,18 +538,28 @@ async def _count_logged_sets(
 
 
 async def run_segmentation_for_link(
-    db: AsyncSession, link: StrengthSessionLink
-) -> SegmentationResult | None:
-    """Load streams, run segmentation, persist the result on ``link``.
+    db: AsyncSession,
+    link: StrengthSessionLink,
+    *,
+    streams: dict[str, Any] | None = None,
+) -> tuple[SegmentationResult | None, dict[str, Any]]:
+    """Load streams (if not provided), run segmentation, persist on ``link``.
 
-    Mutates ``link`` in-place (caller commits). Returns the result for
-    convenience — the persisted payload is also accessible via
-    ``link.segmentation_payload``.
+    Mutates ``link`` in-place (caller commits). Returns a tuple of
+    ``(SegmentationResult | None, streams)`` so callers that need the
+    streams immediately afterwards (e.g. ``session_summary`` building
+    the decimated ``hr_curve``) can reuse them without re-parsing the
+    raw payload a second time — performance-sentinel finding #4.
 
-    Returns ``None`` only when the link source is malformed; in every
-    other case ``segmentation_status`` is updated.
+    Pass ``streams=`` to skip the inline ``ensure_streams_loaded`` call
+    and reuse a previously-loaded result.
+
+    The first tuple element is ``None`` only when the link source is
+    malformed or streams are missing; ``segmentation_status`` is still
+    updated on the link in those cases.
     """
-    streams = await ensure_streams_loaded(db, link)
+    if streams is None:
+        streams = await ensure_streams_loaded(db, link)
     target_count = await _count_logged_sets(db, link.session_date)
 
     ref_id = link.activity_id if link.source == "strava" else link.workout_id
@@ -563,7 +581,7 @@ async def run_segmentation_for_link(
             status,
             target_count,
         )
-        return None
+        return None, streams
 
     result = segment_hr_stream(
         streams["time_stream"], streams["hr_stream"], target_count
@@ -582,7 +600,7 @@ async def run_segmentation_for_link(
         result.detected_count,
         result.target_count,
     )
-    return result
+    return result, streams
 
 
 # ── Helpers for session_summary ──────────────────────────────────

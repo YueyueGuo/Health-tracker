@@ -168,6 +168,12 @@ async def create_sets(
     ``GET /session/{date}`` (or an explicit ``POST /resegment``) fires
     the actual segmentation run — keeps this POST cheap and avoids
     blocking the request on a lazy Strava stream fetch.
+
+    Performance-sentinel finding #5: this handler explicitly passes
+    ``lazy_resegment=False`` to :func:`session_summary` so the response
+    never fires a Strava round-trip on the POST. The returned summary
+    will surface ``segmentation.status="pending"`` for newly-seeded
+    links; the next ``GET /session/{date}`` does the real work.
     """
     if not payload.sets:
         raise HTTPException(status_code=400, detail="At least one set required")
@@ -227,7 +233,7 @@ async def create_sets(
                 e,
             )
 
-    summary = await session_summary(db, payload.date)
+    summary = await session_summary(db, payload.date, lazy_resegment=False)
     return {
         "created": len(created),
         "session": summary,

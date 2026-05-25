@@ -326,6 +326,140 @@ async def test_session_summary_merges_hr_via_link_with_segmentation(db: AsyncSes
     assert len(sets_with_hr) == detected_count
 
 
+async def test_session_summary_maps_segments_to_chronological_logged_order(
+    db: AsyncSession,
+):
+    """Regression for code-reviewer finding #1.
+
+    An alternating Squat/Bench/Squat/Bench session: alphabetical display
+    order is ``[Bench#1, Bench#2, Squat#1, Squat#2]`` but the
+    chronologically logged order is
+    ``[Squat#1, Bench#1, Squat#2, Bench#2]``. Segments come out of
+    segmentation in chronological order — they must map to the logged
+    order, not the alphabetical display order.
+
+    Setup: four Gaussian peaks with strictly ascending magnitudes (so
+    each peak has a unique max HR). The test asserts that ``Squat #1``
+    (logged first) gets the lowest peak and ``Bench #2`` (logged last)
+    gets the highest peak. Before the fix, alphabetical iteration order
+    would have caused ``Bench #1`` to receive the lowest peak.
+    """
+    import math as _math
+
+    today = date.today()
+    start = datetime(today.year, today.month, today.day, 9, 0, 0)
+    activity = Activity(
+        strava_id=999_002,
+        name="Alternating block",
+        sport_type="WeightTraining",
+        start_date=start,
+        start_date_local=start,
+    )
+    db.add(activity)
+    await db.flush()
+
+    # 4 peaks at t=30, 150, 270, 390 with peak magnitudes 160, 170, 180, 190.
+    time_stream: list[int] = []
+    hr_stream: list[float] = []
+    peak_centers = [30, 150, 270, 390]
+    peak_magnitudes = [50.0, 60.0, 70.0, 80.0]  # baseline 110 → 160/170/180/190
+    duration = 480
+    for t in range(duration):
+        baseline = 110.0
+        hr = baseline
+        # Add the contribution of every nearby peak (they're well
+        # separated so cross-talk is negligible).
+        for c, m in zip(peak_centers, peak_magnitudes):
+            d = (t - c) / 7.5
+            hr += m * _math.exp(-(d * d) / 2)
+        time_stream.append(t)
+        hr_stream.append(hr)
+    db.add(ActivityStream(activity_id=activity.id, stream_type="time", data=time_stream))
+    db.add(
+        ActivityStream(activity_id=activity.id, stream_type="heartrate", data=hr_stream)
+    )
+
+    # Logged in chronological order Squat/Bench/Squat/Bench, each tagged
+    # with the ``performed_at`` of the corresponding peak so the sort
+    # key is unambiguous (no tie-breaking on id alone).
+    base = datetime(today.year, today.month, today.day, 9, 0, 0)
+    squat1 = StrengthSet(
+        date=today,
+        exercise_name="Squat",
+        set_number=1,
+        reps=5,
+        weight_kg=100,
+        performed_at=base + timedelta(seconds=30),
+    )
+    bench1 = StrengthSet(
+        date=today,
+        exercise_name="Bench",
+        set_number=1,
+        reps=5,
+        weight_kg=80,
+        performed_at=base + timedelta(seconds=150),
+    )
+    squat2 = StrengthSet(
+        date=today,
+        exercise_name="Squat",
+        set_number=2,
+        reps=5,
+        weight_kg=100,
+        performed_at=base + timedelta(seconds=270),
+    )
+    bench2 = StrengthSet(
+        date=today,
+        exercise_name="Bench",
+        set_number=2,
+        reps=5,
+        weight_kg=80,
+        performed_at=base + timedelta(seconds=390),
+    )
+    await _seed(db, [squat1, bench1, squat2, bench2])
+
+    db.add(
+        StrengthSessionLink(
+            session_date=today,
+            source="strava",
+            activity_id=activity.id,
+            segmentation_status="pending",
+        )
+    )
+    await db.commit()
+
+    summary = await session_summary(db, today)
+    assert summary is not None
+    # Segmentation should find all 4 peaks.
+    assert summary["segmentation"]["status"] in {"ok", "too_few", "too_many"}
+    assert summary["segmentation"]["detected_count"] == 4
+    assert summary["segmentation"]["target_count"] == 4
+
+    sets_by_key = {(s["exercise_name"], s["set_number"]): s for s in summary["sets"]}
+    # Chronologically first set (Squat #1) gets the lowest peak (~160);
+    # chronologically last (Bench #2) gets the highest (~190).
+    assert sets_by_key[("Squat", 1)]["max_hr"] == pytest.approx(160.0, abs=2.0)
+    assert sets_by_key[("Bench", 1)]["max_hr"] == pytest.approx(170.0, abs=2.0)
+    assert sets_by_key[("Squat", 2)]["max_hr"] == pytest.approx(180.0, abs=2.0)
+    assert sets_by_key[("Bench", 2)]["max_hr"] == pytest.approx(190.0, abs=2.0)
+
+    # ``segment_markers`` must carry session-wide ordinals (1..4) over
+    # chronological order — code-reviewer finding #2. The picker label
+    # in ``SessionHRCurve`` reads ``set_number`` directly, so the
+    # ordinal sequence must be 1, 2, 3, 4 — not a per-exercise repeat
+    # like 1, 1, 2, 2.
+    markers = summary["segment_markers"]
+    assert [m["set_number"] for m in markers] == [1, 2, 3, 4]
+    # ``per_exercise_set_number`` is preserved for tooltip captions.
+    # Chronological exercise sequence: Squat / Bench / Squat / Bench.
+    assert [m["exercise_name"] for m in markers] == [
+        "Squat",
+        "Bench",
+        "Squat",
+        "Bench",
+    ]
+    assert [m["per_exercise_set_number"] for m in markers] == [1, 1, 2, 2]
+
+
 async def test_session_summary_no_link_returns_empty_link_blocks(db: AsyncSession):
     """No ``strength_session_links`` row → ``link`` / ``segmentation`` /
     ``hr_curve`` / ``activity_start_iso`` all None."""
