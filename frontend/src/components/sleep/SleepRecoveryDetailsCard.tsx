@@ -27,6 +27,19 @@ const SOURCE_LABEL: Record<string, string> = {
   manual: "Manual",
 };
 
+type StageKey = "deep" | "rem" | "light" | "awake";
+
+const STAGE_SEGMENTS: ReadonlyArray<{
+  key: StageKey;
+  label: string;
+  bg: string;
+}> = [
+  { key: "deep", label: "Deep", bg: "bg-sky-900" },
+  { key: "rem", label: "REM", bg: "bg-sky-600" },
+  { key: "light", label: "Light", bg: "bg-sky-300" },
+  { key: "awake", label: "Awake", bg: "bg-slate-700" },
+];
+
 type DiffTone = "positive" | "negative" | "neutral";
 
 export interface SleepRecoveryDetailsCardProps {
@@ -274,31 +287,47 @@ export function SleepRecoveryDetailsCard({
 
           <div className="space-y-4 mb-5">
             <div>
-              <div className="flex justify-between text-[10px] font-bold text-slate-300 mb-1.5">
-                <span>{whoopColumnLabel}</span>
+              <div className="flex justify-between items-baseline mb-1.5">
+                <span className="text-[10px] font-bold text-slate-300">
+                  {whoopColumnLabel}
+                </span>
+                {(() => {
+                  const summary = formatBarHeaderSummary(whoopSleep);
+                  return summary ? (
+                    <span
+                      data-testid="whoop-bar-summary"
+                      className="text-[10px] tabular-nums text-slate-400"
+                    >
+                      {summary}
+                    </span>
+                  ) : null;
+                })()}
               </div>
               {hasWhoopStages && whoopStages ? (
-                <div className="h-4 w-full flex rounded-full overflow-hidden gap-0.5">
-                  <div
-                    className="bg-sky-900 h-full min-w-[2px]"
-                    style={{ width: `${whoopStages.pct.deep}%` }}
-                  />
-                  <div
-                    className="bg-sky-600 h-full min-w-[2px]"
-                    style={{ width: `${whoopStages.pct.rem}%` }}
-                  />
-                  <div
-                    className="bg-sky-300 h-full min-w-[2px]"
-                    style={{ width: `${whoopStages.pct.light}%` }}
-                  />
-                  <div
-                    className="bg-slate-700 h-full min-w-[2px]"
-                    style={{ width: `${whoopStages.pct.awake}%` }}
-                  />
+                <div className="h-5 w-full flex rounded-full overflow-hidden gap-0.5">
+                  {STAGE_SEGMENTS.map((seg) => {
+                    const pct = whoopStages.pct[seg.key];
+                    const label = `${seg.label} ${pct}%`;
+                    return (
+                      <div
+                        key={seg.key}
+                        className={`${seg.bg} h-full min-w-[2px] flex items-center justify-center`}
+                        style={{ width: `${pct}%` }}
+                        title={label}
+                        aria-label={label}
+                      >
+                        {pct >= 8 ? (
+                          <span className="text-[10px] tabular-nums font-semibold text-white leading-none">
+                            {pct}%
+                          </span>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <>
-                  <div className="h-4 w-full rounded-full bg-slate-800/60 border border-cardBorder/30" />
+                  <div className="h-5 w-full rounded-full bg-slate-800/60 border border-cardBorder/30" />
                   <p className="text-[10px] text-slate-500 mt-1">
                     No stage breakdown for this source.
                   </p>
@@ -307,30 +336,46 @@ export function SleepRecoveryDetailsCard({
             </div>
 
             <div>
-              <div className="flex justify-between text-[10px] font-bold text-sky-400 mb-1.5">
-                <span>{eightSleepColumnLabel}</span>
+              <div className="flex justify-between items-baseline mb-1.5">
+                <span className="text-[10px] font-bold text-sky-400">
+                  {eightSleepColumnLabel}
+                </span>
+                {(() => {
+                  const summary = formatBarHeaderSummary(eightSleep);
+                  return summary ? (
+                    <span
+                      data-testid="eight-bar-summary"
+                      className="text-[10px] tabular-nums text-slate-400"
+                    >
+                      {summary}
+                    </span>
+                  ) : null;
+                })()}
               </div>
               {hasEightStages && eightStages ? (
-                <div className="h-4 w-full flex rounded-full overflow-hidden gap-0.5">
-                  <div
-                    className="bg-sky-900 h-full min-w-[2px]"
-                    style={{ width: `${eightStages.pct.deep}%` }}
-                  />
-                  <div
-                    className="bg-sky-600 h-full min-w-[2px]"
-                    style={{ width: `${eightStages.pct.rem}%` }}
-                  />
-                  <div
-                    className="bg-sky-300 h-full min-w-[2px]"
-                    style={{ width: `${eightStages.pct.light}%` }}
-                  />
-                  <div
-                    className="bg-slate-700 h-full min-w-[2px]"
-                    style={{ width: `${eightStages.pct.awake}%` }}
-                  />
+                <div className="h-5 w-full flex rounded-full overflow-hidden gap-0.5">
+                  {STAGE_SEGMENTS.map((seg) => {
+                    const pct = eightStages.pct[seg.key];
+                    const label = `${seg.label} ${pct}%`;
+                    return (
+                      <div
+                        key={seg.key}
+                        className={`${seg.bg} h-full min-w-[2px] flex items-center justify-center`}
+                        style={{ width: `${pct}%` }}
+                        title={label}
+                        aria-label={label}
+                      >
+                        {pct >= 8 ? (
+                          <span className="text-[10px] tabular-nums font-semibold text-white leading-none">
+                            {pct}%
+                          </span>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
-                <div className="h-4 w-full rounded-full bg-slate-800/60 border border-cardBorder/30" />
+                <div className="h-5 w-full rounded-full bg-slate-800/60 border border-cardBorder/30" />
               )}
             </div>
           </div>
@@ -401,28 +446,18 @@ export function SleepRecoveryDetailsCard({
                     </div>
                     <div className="text-right">
                       {hasWhoopStages && whoopStages ? (
-                        <>
-                          <span className="text-xs font-bold text-white">
-                            {formatStageCell(whoopStages.minutes[row.key])}
-                          </span>
-                          <span className="text-[10px] text-slate-500 ml-1">
-                            ({whoopStages.pct[row.key]}%)
-                          </span>
-                        </>
+                        <span className="text-xs font-bold text-white">
+                          {formatStageCell(whoopStages.minutes[row.key])}
+                        </span>
                       ) : (
                         <span className="text-xs text-slate-500">—</span>
                       )}
                     </div>
                     <div className="text-right">
                       {hasEightStages && eightStages ? (
-                        <>
-                          <span className="text-xs font-bold text-white">
-                            {formatStageCell(eightStages.minutes[row.key])}
-                          </span>
-                          <span className="text-[10px] text-slate-500 ml-1">
-                            ({eightStages.pct[row.key]}%)
-                          </span>
-                        </>
+                        <span className="text-xs font-bold text-white">
+                          {formatStageCell(eightStages.minutes[row.key])}
+                        </span>
                       ) : (
                         <span className="text-xs text-slate-500">—</span>
                       )}
@@ -641,6 +676,39 @@ function formatLatency(latencySec?: number | null): string {
   if (latencySec == null) return "—";
   const m = Math.round(latencySec / 60);
   return `${m}m`;
+}
+
+function formatClockTime(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatBedWakeRange(session: SleepSession | null): string | null {
+  if (!session) return null;
+  const bed = formatClockTime(session.bed_time);
+  const wake = formatClockTime(session.wake_time);
+  if (!bed || !wake) return null;
+  return `${bed} ─── ${wake}`;
+}
+
+function formatBarHeaderSummary(session: SleepSession | null): string | null {
+  if (!session) return null;
+  const parts: string[] = [];
+  const total = session.total_duration;
+  if (total != null) {
+    parts.push(formatDurationMinutes(total));
+  }
+  const range = formatBedWakeRange(session);
+  if (range) {
+    parts.push(range);
+  }
+  if (parts.length === 0) return null;
+  return parts.join(" · ");
 }
 
 function formatStageCell(minutes: number): string {
