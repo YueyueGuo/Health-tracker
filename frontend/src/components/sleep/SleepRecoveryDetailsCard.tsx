@@ -29,15 +29,20 @@ const SOURCE_LABEL: Record<string, string> = {
 
 type StageKey = "deep" | "rem" | "light" | "awake";
 
+// Per-segment text colors are picked for WCAG AA contrast (≥ 4.5:1) against
+// each bar color. sky-300 is pale enough that white text on it drops to ~1.5:1
+// — use a near-black sky-950 there instead. sky-600 was too midtone to safely
+// pair with white text (≈ 4:1), so REM darkens one step to sky-700 (~5.8:1).
 const STAGE_SEGMENTS: ReadonlyArray<{
   key: StageKey;
   label: string;
   bg: string;
+  text: string;
 }> = [
-  { key: "deep", label: "Deep", bg: "bg-sky-900" },
-  { key: "rem", label: "REM", bg: "bg-sky-600" },
-  { key: "light", label: "Light", bg: "bg-sky-300" },
-  { key: "awake", label: "Awake", bg: "bg-slate-700" },
+  { key: "deep", label: "Deep", bg: "bg-sky-900", text: "text-white" },
+  { key: "rem", label: "REM", bg: "bg-sky-700", text: "text-white" },
+  { key: "light", label: "Light", bg: "bg-sky-300", text: "text-sky-950" },
+  { key: "awake", label: "Awake", bg: "bg-slate-700", text: "text-white" },
 ];
 
 type DiffTone = "positive" | "negative" | "neutral";
@@ -317,7 +322,9 @@ export function SleepRecoveryDetailsCard({
                         aria-label={label}
                       >
                         {pct >= 8 ? (
-                          <span className="text-[10px] tabular-nums font-semibold text-white leading-none">
+                          <span
+                            className={`text-[10px] tabular-nums font-semibold leading-none ${seg.text}`}
+                          >
                             {pct}%
                           </span>
                         ) : null}
@@ -363,7 +370,9 @@ export function SleepRecoveryDetailsCard({
                         aria-label={label}
                       >
                         {pct >= 8 ? (
-                          <span className="text-[10px] tabular-nums font-semibold text-white leading-none">
+                          <span
+                            className={`text-[10px] tabular-nums font-semibold leading-none ${seg.text}`}
+                          >
                             {pct}%
                           </span>
                         ) : null}
@@ -406,7 +415,7 @@ export function SleepRecoveryDetailsCard({
                   {
                     key: "rem" as const,
                     label: "REM",
-                    dot: "bg-sky-600",
+                    dot: "bg-sky-700",
                     lowerIsBetter: false,
                   },
                   {
