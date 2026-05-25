@@ -28,6 +28,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# Boot-time misconfig signal: if the server-side ingest_token is blank,
+# every POST to this router will 503 before the body is parsed. Surface
+# that loudly at import so it's a single grep in Railway logs at deploy
+# time rather than a per-request mystery.
+if not settings.apple_health.ingest_token:
+    logger.warning(
+        "apple_health.ingest_token is blank — POSTs to "
+        "/api/ingest/apple-health/* will return 503 until "
+        "APPLE_HEALTH_INGEST_TOKEN is set"
+    )
+
+
 def verify_apple_health_token(
     x_apple_health_token: str | None = Header(default=None),
 ) -> None:
@@ -60,7 +72,33 @@ async def ingest_apple_health_workouts(
     _: None = Depends(verify_apple_health_token),
 ):
     """Ingest an HAE batch of workouts. Returns one result per workout."""
+    # Batch-receipt log — confirms HAE is actually reaching us and gives
+    # a grep-friendly handle on the first workout for log spelunking.
+    count = len(batch.data.workouts)
+    first = batch.data.workouts[0] if count else None
+    first_id = getattr(first, "id", None) if first is not None else None
+    first_start = getattr(first, "start", None) if first is not None else None
+    logger.info(
+        "apple_health.ingest received workouts=%d first_id=%s first_start=%s",
+        count,
+        first_id,
+        first_start,
+    )
+
     results = await ingest_workouts(db, batch)
+
+    # Summary log — tallies by status so a 200-OK-with-all-errors batch
+    # is obvious from a single grep instead of a per-workout dive.
+    created = sum(1 for r in results if r.get("status") == "created")
+    updated = sum(1 for r in results if r.get("status") == "updated")
+    errors = sum(1 for r in results if r.get("status") == "error")
+    logger.info(
+        "apple_health.ingest summary created=%d updated=%d errors=%d",
+        created,
+        updated,
+        errors,
+    )
+
     return {"results": results}
 
 

@@ -1,11 +1,15 @@
 """Tests for the Apple Health (HAE) ingestion router."""
 from __future__ import annotations
 
+import importlib
+import logging
+
 import pytest
 from sqlalchemy import select
 
 from backend.config import settings
 from backend.models import HealthDataPoint, Workout
+from backend.routers import apple_health as apple_health_module
 from backend.routers.apple_health import router as apple_router
 
 from .conftest import make_client
@@ -93,6 +97,50 @@ async def test_workouts_happy_path_creates_and_returns_result(client, db):
     assert hdp.external_id == "apple-1"
     workout = (await db.execute(select(Workout))).scalar_one()
     assert workout.activity_type == "run"
+
+
+# ── observability (regression for silent ingest failures) ───────────
+
+
+def test_blank_token_warns_at_boot(monkeypatch, caplog):
+    """Reloading the router module with a blank token should emit a
+    one-shot WARNING that mentions both ``ingest_token`` and ``503`` so
+    operators can grep Railway logs for the misconfig."""
+    monkeypatch.setattr(settings.apple_health, "ingest_token", "", raising=False)
+    with caplog.at_level(logging.WARNING, logger="backend.routers.apple_health"):
+        importlib.reload(apple_health_module)
+
+    matches = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING
+        and "ingest_token" in r.getMessage()
+        and "503" in r.getMessage()
+    ]
+    assert matches, (
+        "expected a WARNING mentioning ingest_token and 503 at module load, "
+        f"got: {[r.getMessage() for r in caplog.records]}"
+    )
+
+
+async def test_workouts_logs_batch_receipt_and_summary(client, caplog):
+    """A happy-path POST should emit one INFO line with ``workouts=1``
+    (batch receipt) and one with ``created=1`` (summary after ingest)."""
+    with caplog.at_level(logging.INFO, logger="backend.routers.apple_health"):
+        resp = await client.post(
+            "/api/ingest/apple-health/workouts",
+            json=_payload(),
+            headers={"X-Apple-Health-Token": _TOKEN},
+        )
+    assert resp.status_code == 200
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("workouts=1" in m for m in messages), (
+        f"expected an INFO line containing 'workouts=1', got: {messages}"
+    )
+    assert any("created=1" in m for m in messages), (
+        f"expected an INFO line containing 'created=1', got: {messages}"
+    )
 
 
 async def test_workouts_replay_returns_updated(client):
