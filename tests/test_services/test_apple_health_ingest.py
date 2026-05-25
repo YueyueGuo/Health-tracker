@@ -215,8 +215,8 @@ async def test_batch_continues_after_per_workout_error(db):
                     "start": "2026-05-24 13:00:00 +0000",
                     "end": "2026-05-24 13:30:00 +0000",
                     "duration": 1800.0,
-                    # km instead of m → flatten raises.
-                    "distance": {"qty": 5.0, "units": "km"},
+                    # Truly unknown unit — flatten raises.
+                    "distance": {"qty": 5.0, "units": "parsec"},
                 },
                 _payload(external_id="ok")["data"]["workouts"][0],
             ]
