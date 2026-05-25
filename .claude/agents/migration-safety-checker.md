@@ -1,6 +1,6 @@
 ---
 name: migration-safety-checker
-description: Validates Alembic migrations for production safety before merge. Checks model/schema drift, DAG consistency, Postgres-specific hazards (table locks, non-concurrent indexes, unsafe NOT NULL adds, unsafe type changes), and backfill safety. Use after db-migrator finishes in Phase 1, and again in the review phase if migrations were added. Read-only.
+description: Validates Alembic migrations for production safety before merge. Checks model/schema drift, DAG consistency, Postgres-specific hazards (table locks, non-concurrent indexes, unsafe NOT NULL adds, unsafe type changes), and backfill safety. Triggered only for *nontrivial* migrations — alters on populated tables, backfills, raw SQL, drops, renames, or any change the planner flagged as `Risk: nontrivial`. Skipped for new-table-only migrations (no data to migrate). Read-only.
 tools: Read, Grep, Glob, Bash
 model: opus
 memory: project

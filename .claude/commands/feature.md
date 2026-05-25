@@ -26,8 +26,12 @@ When it returns the plan, **persist it to `docs/plans/<slug>.md`**
 `git add docs/plans/<slug>.md && git commit -m "plan: <slug>"`.
 
 ### Step 2 — Phase 1 work (parallel)
-Read the plan's "Parallelism plan" section. In a **single message**,
-spawn in parallel:
+Read the plan's "Parallelism plan" section.
+
+**Scope preamble.** Before spawning, post one line stating which Phase 1 agents will run and why each available agent is being skipped, e.g.:
+> Phase 1: db-migrator (Section 7 non-empty, risk=trivial). Skipping integration-researcher (Section 4 empty), migration-safety-checker (will re-check post-author).
+
+In a **single message**, spawn in parallel:
 - `integration-researcher` — if and only if Step 4 of the plan
   ("External integration") is non-empty. Pass the open questions.
 - `db-migrator` — if and only if Step 7 of the plan ("Migration tasks")
@@ -37,11 +41,25 @@ Wait for both to finish. If `integration-researcher` flips the plan
 (e.g. "this API doesn't exist server-side"), update the plan file and
 re-commit before continuing.
 
-**If `db-migrator` ran**, immediately spawn `migration-safety-checker`
-(sequential, not parallel — it audits what db-migrator just wrote).
-On `UNSAFE`, route findings back to `db-migrator` and re-audit; loop
-up to **2** times. On `BLOCK`, stop and surface to the user. On
-`SAFE`, continue to Step 3.
+**If `db-migrator` ran**, decide whether `migration-safety-checker` is
+warranted. Inspect what was authored:
+
+```bash
+NEW_REVS=$(git diff --name-only origin/main...HEAD -- alembic/versions/)
+echo "--- New revisions:"; echo "$NEW_REVS"
+echo "--- Op calls:"
+grep -hE 'op\.(create_table|add_column|alter_column|create_index|create_foreign_key|execute|drop_|rename_)' $NEW_REVS 2>/dev/null
+```
+
+**Skip migration-safety-checker** when *all* of the following hold:
+- The new revisions contain at least one `op.create_table()` call.
+- Every `op.add_column()` / `op.create_index()` / `op.create_foreign_key()` targets a table also created in these same revisions (i.e. empty in production).
+- No `op.alter_column()`, `op.execute()` raw SQL, `op.drop_*`, or `op.rename_*` appears anywhere.
+- The plan's Section 7 "Risk" line is `trivial` (planner's hint must agree — if it says `nontrivial`, run the agent even if the ops look clean).
+
+Otherwise spawn `migration-safety-checker` sequentially. On `UNSAFE`, route findings back to `db-migrator` and re-audit; loop up to **2** times. On `BLOCK`, stop and surface to the user. On `SAFE`, continue to Step 3.
+
+State the skip/run decision in one line before proceeding.
 
 ### Step 3 — Phase 2 work (parallel)
 In a **single message**, spawn in parallel:
@@ -61,23 +79,47 @@ Spawn `test-runner`. If it reports failures:
 - Loop up to **3** times. If still failing after 3 rounds, stop and
   surface to the user with a clear summary of what's stuck.
 
-### Step 5 — Review, QA, security, performance (parallel)
-Spawn the applicable agents **in a single message** with multiple
-Agent tool uses so they run concurrently:
-- `code-reviewer` — always.
-- `qa-verifier` — **only if** the plan touches user-visible behavior:
+### Step 5 — Review (parallel, scoped)
+
+**Scope analysis.** Before spawning, run a fast pre-check on the diff
+to decide which review agents are warranted:
+
+```bash
+git diff --name-only origin/main...HEAD > /tmp/_changed.txt
+git diff --shortstat origin/main...HEAD
+```
+
+Then post **one line** announcing which agents will spawn and the
+one-phrase reason any default agent is being skipped, e.g.:
+> Review: code-reviewer + qa-verifier + security-reviewer. Skipping perf-sentinel (no perf signals), migration-safety (new tables only).
+
+Agents and triggers:
+
+- `code-reviewer` — **always**.
+- `qa-verifier` — **run if** the plan touches user-visible behavior:
   any change under `frontend/`, any new/changed router under
   `backend/routers/`, any sync that updates dashboard data, or the
   plan's "Affected surfaces" explicitly lists a user-facing surface.
-  Skip QA for pure refactors, infra-only changes, or migration-only
-  PRs.
+  Skip for pure refactors, infra-only changes, or migration-only PRs.
 - `security-reviewer` — **skip only** for doc-only diffs (changes
-  confined to `docs/`, `*.md`, or comments). Otherwise always run.
-- `performance-sentinel` — **skip only** for doc-only diffs or diffs
-  that are purely test-files. Otherwise always run.
-- `migration-safety-checker` — **only if** new revisions landed under
-  `alembic/versions/` in this branch (re-audit after Phase 2 might
-  have touched models).
+  confined to `docs/`, `*.md`, or comments). Otherwise run.
+- `performance-sentinel` — **run if** the diff touches **any** of
+  these signals (otherwise skip with reason `no perf signals`):
+  - `backend/scheduler.py`
+  - `backend/services/*sync*.py` (any sync engine)
+  - `backend/services/insights.py`, `llm_providers.py`, `insight_prompts.py`
+  - `backend/clients/` (rate-limit / async hygiene)
+  - `frontend/package.json` or `frontend/package-lock.json` (new deps)
+  - Total non-test diff size > 500 lines added
+- `migration-safety-checker` — **run if** new revisions exist under
+  `alembic/versions/` **and** Step 2's skip rule did *not* apply (i.e.
+  the migration is nontrivial: alters existing tables, backfills,
+  raw SQL, drops, renames, or planner flagged `Risk: nontrivial`).
+  Re-audit here because Phase 2 may have touched models in ways that
+  affect the migration. Skip otherwise.
+
+Spawn the applicable agents **in a single message** with multiple
+Agent tool uses so they run concurrently.
 
 Merge findings from all reviewers into one list, deduplicate by
 `Files:`, then route by the `Owner:` tag:
