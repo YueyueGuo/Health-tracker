@@ -32,7 +32,9 @@ class Activity(Base):
     strava_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     sport_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    start_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    start_date: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
     start_date_local: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     timezone: Mapped[str | None] = mapped_column(String)
     elapsed_time: Mapped[int | None] = mapped_column(Integer)
@@ -100,16 +102,12 @@ class Activity(Base):
     # source='strava' / external_id=str(strava_id). New Strava rows
     # default to the same values at the model layer so app-level
     # inserts stay consistent without relying on backfill.
-    source: Mapped[str | None] = mapped_column(
-        String(32), nullable=True, default="strava"
-    )
+    source: Mapped[str | None] = mapped_column(String(32), nullable=True, default="strava")
     external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # Plain int (no FK) — points at health_data_points.id when an Apple
     # Health workout has superseded this Strava activity. Kept FK-less
     # to avoid a cross-table dependency in the Alembic head.
-    superseded_by_id: Mapped[int | None] = mapped_column(
-        Integer, nullable=True, index=True
-    )
+    superseded_by_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
     streams: Mapped[list[ActivityStream]] = relationship(
         back_populates="activity", cascade="all, delete-orphan"
