@@ -1,5 +1,5 @@
 import { Bike, Dumbbell, Flame, Mountain, Heart } from "lucide-react";
-import { useOutletContext } from "react-router-dom";
+import { Link, useOutletContext } from "react-router-dom";
 import { Card } from "../ui/Card";
 import { useApi } from "../../hooks/useApi";
 import { fetchLatestWorkoutInsight } from "../../api/insights";
@@ -163,8 +163,14 @@ export function YesterdayActivityCard() {
         </div>
       </div>
 
-      {strength.data && (
-        <StrengthSection session={strength.data} units={units} />
+      {strength.data && workoutDate && (
+        <Link
+          to={`/workouts/lifting/${workoutDate}`}
+          className="block rounded-lg -mx-1 px-1 py-1 hover:bg-cardBorder/20 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-green"
+          aria-label="View lifting session detail"
+        >
+          <StrengthSection session={strength.data} units={units} />
+        </Link>
       )}
     </Card>
   );

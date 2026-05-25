@@ -284,22 +284,25 @@ describe("buildHistoryEvents", () => {
     expect(events[0].highlight).toBeFalsy();
   });
 
-  it("routes strength rows with no linked activity to null", () => {
+  it("routes strength rows with no linked activity to /workouts/lifting/:date", () => {
     const events = buildHistoryEvents(
       [],
       [],
-      [makeStrength({ activity_id: null })]
+      [makeStrength({ date: "2026-04-25", activity_id: null })]
     );
-    expect(events[0].navigateTo).toBeNull();
+    expect(events[0].navigateTo).toBe("/workouts/lifting/2026-04-25");
   });
 
-  it("routes strength rows with linked activity to /activities/:id", () => {
+  it("routes strength rows with linked activity to /workouts/lifting/:date", () => {
+    // The detail page surfaces the linked Strava activity as its own chip,
+    // so we always navigate to the date-keyed lifting page regardless of
+    // whether `activity_id` is set.
     const events = buildHistoryEvents(
       [],
       [],
-      [makeStrength({ activity_id: 42 })]
+      [makeStrength({ date: "2026-04-25", activity_id: 42 })]
     );
-    expect(events[0].navigateTo).toBe("/activities/42");
+    expect(events[0].navigateTo).toBe("/workouts/lifting/2026-04-25");
   });
 
   it("dedupes sleep rows by date, preferring eight_sleep over whoop", () => {

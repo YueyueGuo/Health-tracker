@@ -15,6 +15,7 @@ const Settings = lazy(() => import("./pages/Settings"));
 const Profile = lazy(() => import("./pages/Profile"));
 const Record = lazy(() => import("./pages/Record"));
 const History = lazy(() => import("./pages/History"));
+const LiftingDetail = lazy(() => import("./pages/LiftingDetail"));
 
 function routeElement(element: ReactElement) {
   return (
@@ -38,6 +39,10 @@ export default function App() {
         <Route path="/sleep" element={routeElement(<Sleep />)} />
         <Route path="/recovery" element={routeElement(<RecoveryPanel />)} />
         <Route path="/activities/:id" element={routeElement(<ActivityDetail />)} />
+        <Route
+          path="/workouts/lifting/:date"
+          element={routeElement(<LiftingDetail />)}
+        />
       </Route>
       <Route element={<Layout />}>
         <Route path="/ask" element={routeElement(<ChatPanel />)} />
