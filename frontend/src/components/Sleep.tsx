@@ -1,13 +1,23 @@
+import { useSearchParams } from "react-router-dom";
 import { useApi } from "../hooks/useApi";
 import { fetchRecovery, type RecoveryRecord } from "../api/recovery";
 import {
   fetchSleepSessions,
-  fetchLatestSleepBySource,
+  fetchLatestSleep,
   SleepSession,
 } from "../api/sleep";
 import { SleepRecoveryDetailsCard } from "./sleep/SleepRecoveryDetailsCard";
 
 export default function Sleep() {
+  // History deep-links (`/sleep?date=YYYY-MM-DD`) pin the page to that night.
+  // The dashboard entry point (`/sleep` with no query) keeps the "latest"
+  // semantics by leaving `dateParam` undefined. See
+  // docs/bugs/sleep-detail-date-scope.md.
+  const [searchParams] = useSearchParams();
+  // Normalize empty-string (`/sleep?date=`) to undefined so the fetcher omits
+  // `on_or_before=` rather than sending an empty value (backend 422).
+  const dateParam = searchParams.get("date") || undefined;
+
   const { data: sessions, loading: sessionsLoading } = useApi(
     ["sleep", "sessions", 30],
     () => fetchSleepSessions(30),
@@ -15,17 +25,24 @@ export default function Sleep() {
   // Fetch the latest row for each source independently so the card binds
   // each column to its own provider (Eight Sleep usually leads Whoop by a
   // calendar day, so a global /sleep/latest hides Whoop most days).
+  // The date is included in the cache key so navigating between historical
+  // nights does not return the previous night's cached payload.
   const { data: latestWhoop, loading: latestWhoopLoading } = useApi(
-    ["sleep", "latest-by-source", "whoop"],
-    () => fetchLatestSleepBySource("whoop"),
+    ["sleep", "latest", "whoop", dateParam ?? "latest"],
+    () => fetchLatestSleep({ source: "whoop", onOrBefore: dateParam }),
   );
   const { data: latestEight, loading: latestEightLoading } = useApi(
-    ["sleep", "latest-by-source", "eight_sleep"],
-    () => fetchLatestSleepBySource("eight_sleep"),
+    ["sleep", "latest", "eight_sleep", dateParam ?? "latest"],
+    () => fetchLatestSleep({ source: "eight_sleep", onOrBefore: dateParam }),
   );
+  // Widened lookback (30 vs 14) gives deep-linked nights a better chance of
+  // finding their matching recovery row. `asOf` anchors the window when a
+  // date is present so the recent recovery rows are scoped to that night.
+  // The full date-anchored pairing pass is tracked under the
+  // out-of-scope cleanup in docs/bugs/sleep-detail-date-scope.md.
   const { data: recoveryRows, loading: recoveryLoading } = useApi(
-    ["recovery", "recent", 14],
-    () => fetchRecovery(14),
+    ["recovery", "recent", 30, dateParam ?? "latest"],
+    () => fetchRecovery(30, dateParam),
   );
 
   if (
@@ -37,14 +54,27 @@ export default function Sleep() {
     return <div className="loading">Loading sleep data...</div>;
   }
 
-  // Merge list + latest endpoints so a row that only exists on /latest is still
-  // visible to the pairing pass (edge race with sync timing).
-  const sessionPool = mergeSleepSessions(sessions, latestWhoop, latestEight);
-  const { whoopSleep: cardWhoop, eightSleep: cardEight } = resolveSleepPairForCard(
-    sessionPool,
-    latestWhoop,
-    latestEight,
-  );
+  // When deep-linked to a specific night (`?date=`), the date-scoped
+  // `/sleep/latest?on_or_before=…` responses already describe that night for
+  // each provider, so use them directly. Walking the pool newest-first would
+  // hand back the newest pair instead — see issue #51 / qa-verifier round 2.
+  //
+  // Without `dateParam` (dashboard entry point) we keep the pairing pass so
+  // WHOOP+Eight rows that label the same night with ±1 calendar days still
+  // line up.
+  let cardWhoop: SleepSession | null;
+  let cardEight: SleepSession | null;
+  if (dateParam) {
+    cardWhoop = latestWhoop ?? null;
+    cardEight = latestEight ?? null;
+  } else {
+    // Merge list + latest endpoints so a row that only exists on /latest is
+    // still visible to the pairing pass (edge race with sync timing).
+    const sessionPool = mergeSleepSessions(sessions, latestWhoop, latestEight);
+    const pair = resolveSleepPairForCard(sessionPool, latestWhoop, latestEight);
+    cardWhoop = pair.whoopSleep;
+    cardEight = pair.eightSleep;
+  }
   const cardRecovery = pickRecoveryForSleeps(
     recoveryRows,
     cardWhoop?.date,

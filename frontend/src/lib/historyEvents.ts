@@ -239,7 +239,7 @@ function sleepToEvent(s: SleepSession): HistoryEvent {
         colorClass: lowRecovery ? "text-brand-amber" : undefined,
       },
     ],
-    navigateTo: "/sleep",
+    navigateTo: `/sleep?date=${s.date}`,
   };
 }
 
