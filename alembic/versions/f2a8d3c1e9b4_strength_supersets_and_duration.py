@@ -27,12 +27,15 @@ Composite index ``ix_strength_sets_date_superset`` on
 ``(date, superset_group_id)`` matches the per-session grouped read
 pattern used by ``session_summary``.
 
-Branches off the strength-touching head ``c2f7a4e91b85``. The
-apple-health head ``37d57cfdb27d`` remains a sibling — the DAG already
-has multiple heads.
+Chains off ``37d57cfdb27d``, the actual pre-feature single head on
+this branch. ``c2f7a4e91b85`` (the strength-touching merge point) is
+already in ``37d57cfdb27d``'s ancestry via
+``d4f1a8b62c70 → e8f31a902b94 → f9c2e1a45b80 → a9d2f6c1e3b7``, so this
+keeps the DAG single-headed and preserves the invariant the
+``tests/test_alembic_env_database_url.py`` suite enforces.
 
 Revision ID: f2a8d3c1e9b4
-Revises: c2f7a4e91b85
+Revises: 37d57cfdb27d
 Create Date: 2026-05-25
 """
 from __future__ import annotations
@@ -42,7 +45,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "f2a8d3c1e9b4"
-down_revision = "c2f7a4e91b85"
+down_revision = "37d57cfdb27d"
 branch_labels = None
 depends_on = None
 
