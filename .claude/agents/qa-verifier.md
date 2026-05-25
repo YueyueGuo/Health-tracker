@@ -1,6 +1,6 @@
 ---
 name: qa-verifier
-description: Drives the running app from a user's perspective. Boots backend + frontend, hits API endpoints with httpx, drives the UI through headless Playwright with golden-path scenarios, captures screenshots, and reports user-visible defects. Use in parallel with code-reviewer whenever the change touches user-visible behavior.
+description: Drives the running app from a user's perspective. Boots backend + frontend, hits API endpoints with httpx, drives the UI through headless Playwright with golden-path scenarios, captures screenshots, runs an axe-core accessibility scan on each rendered page, and reports user-visible defects. Use in parallel with code-reviewer whenever the change touches user-visible behavior.
 tools: Read, Grep, Glob, Bash
 model: opus
 memory: project
@@ -79,9 +79,12 @@ If `/health` doesn't exist, pick a known-good GET endpoint from
 
 ### Playwright
 ```bash
-pip install --quiet playwright pytest-playwright
+pip install --quiet playwright pytest-playwright axe-playwright-python
 python -m playwright install --with-deps chromium
 ```
+`axe-playwright-python` wraps axe-core; if it's not installable in the
+environment, fall back to `playwright` only and note `[a11y skipped:
+axe unavailable]` in the report.
 
 ## Run the scenarios
 
@@ -98,6 +101,26 @@ For each golden-path scenario, write a short Playwright script under
   screenshots into `docs/qa/<slug>/` and embeds them in the PR body,
   so filenames must be human-readable and consistent across re-runs
   (later runs overwrite earlier ones, no accumulation).
+- **Run an axe-core accessibility scan** at the final state of the
+  scenario (after user actions, before teardown):
+  ```python
+  from axe_playwright_python.sync_playwright import Axe
+  results = Axe().run(page)
+  # Write violations to /tmp/qa/a11y/<scenario>.json
+  ```
+  Treat **critical** and **serious** violations (axe's own
+  classification) as defects. Treat **moderate** and **minor** as
+  informational — list them but don't fail the verdict on them alone.
+
+### Accessibility scope (per scenario)
+Beyond axe, do two quick keyboard / structural checks the scanner
+misses:
+- **Keyboard reach**: press `Tab` until focus visits every interactive
+  element on the page, with no traps. Fail if a primary action (Save,
+  Submit, Sync) isn't reachable via keyboard.
+- **Form labels**: every `<input>` / `<select>` in the scenario's
+  flow has an associated `<label>` (axe catches most of these, but
+  confirm visually on the screenshot for any added form).
 
 API smoke checks (parallel to the browser run) — hit the new/changed
 endpoints with `httpx` directly. Verify:
@@ -122,7 +145,15 @@ Final message structured as:
 app wouldn't boot, Playwright wouldn't install, etc.).
 
 ### Scenarios run
-Table: scenario | result | screenshot path.
+Table: scenario | result | screenshot path | a11y (crit/serious counts).
+
+### Accessibility
+- Per-scenario count of axe violations by severity
+  (critical / serious / moderate / minor).
+- For each critical or serious violation, one line:
+  `<scenario>: <rule-id> on <selector> — <one-line description>`.
+- Keyboard / label checks: `PASS` per scenario or a one-line note on
+  what failed.
 
 ### Findings (FAIL or BLOCK)
 For each defect, emit **exactly these four lines** so the orchestrator
@@ -137,7 +168,10 @@ can route the fix mechanically:
 
 If the defect is purely visual (layout, missing element, console
 error), Owner is almost always `frontend-engineer`. If the API
-returned the wrong data, Owner is `backend-engineer`.
+returned the wrong data, Owner is `backend-engineer`. Accessibility
+violations (axe critical/serious, unreachable keyboard target, missing
+label) are `frontend-engineer` unless the markup originates from a
+backend-rendered template.
 
 ### Screenshots
 Inline list of `/tmp/qa/screenshots/*.png` paths in the same order as

@@ -37,6 +37,12 @@ Wait for both to finish. If `integration-researcher` flips the plan
 (e.g. "this API doesn't exist server-side"), update the plan file and
 re-commit before continuing.
 
+**If `db-migrator` ran**, immediately spawn `migration-safety-checker`
+(sequential, not parallel — it audits what db-migrator just wrote).
+On `UNSAFE`, route findings back to `db-migrator` and re-audit; loop
+up to **2** times. On `BLOCK`, stop and surface to the user. On
+`SAFE`, continue to Step 3.
+
 ### Step 3 — Phase 2 work (parallel)
 In a **single message**, spawn in parallel:
 - `backend-engineer` — pass the plan + the researcher's brief.
@@ -55,8 +61,9 @@ Spawn `test-runner`. If it reports failures:
 - Loop up to **3** times. If still failing after 3 rounds, stop and
   surface to the user with a clear summary of what's stuck.
 
-### Step 5 — Review and QA (parallel)
-Spawn both agents **in a single message** with two Agent tool uses:
+### Step 5 — Review, QA, security, performance (parallel)
+Spawn the applicable agents **in a single message** with multiple
+Agent tool uses so they run concurrently:
 - `code-reviewer` — always.
 - `qa-verifier` — **only if** the plan touches user-visible behavior:
   any change under `frontend/`, any new/changed router under
@@ -64,15 +71,28 @@ Spawn both agents **in a single message** with two Agent tool uses:
   plan's "Affected surfaces" explicitly lists a user-facing surface.
   Skip QA for pure refactors, infra-only changes, or migration-only
   PRs.
+- `security-reviewer` — **skip only** for doc-only diffs (changes
+  confined to `docs/`, `*.md`, or comments). Otherwise always run.
+- `performance-sentinel` — **skip only** for doc-only diffs or diffs
+  that are purely test-files. Otherwise always run.
+- `migration-safety-checker` — **only if** new revisions landed under
+  `alembic/versions/` in this branch (re-audit after Phase 2 might
+  have touched models).
 
-Merge findings from both into one list, deduplicate by `Files:`, then
-route by the `Owner:` tag:
-- `APPROVE` + `PASS` (or QA skipped) → continue to Step 6.
-- Any `REQUEST_CHANGES` / `FAIL` → group findings by owner, spawn
-  owners **in parallel** in a single message (each gets only its own
-  findings), then re-run **both** reviewer and (if applicable) QA.
-  Loop up to **2** times across review+QA combined.
-- `BLOCK` from either → stop and surface to the user.
+Merge findings from all reviewers into one list, deduplicate by
+`Files:`, then route by the `Owner:` tag:
+- All `APPROVE` / `PASS` / `SAFE` / `OK` (or skipped) → Step 6.
+- Any `REQUEST_CHANGES` / `FAIL` / `UNSAFE` / `CONCERNS` → group
+  findings by owner, spawn owners **in parallel** in a single message
+  (each gets only its own findings), then re-run **all** reviewers
+  that flagged something. Loop up to **2** times across the combined
+  review phase.
+- `BLOCK` from any → stop and surface to the user.
+
+Severity gate: `performance-sentinel` `LOW` findings and
+`security-reviewer` `LOW` findings on a `CONCERNS`-only verdict may
+be deferred to a follow-up issue rather than fixed in this PR — call
+that out in the PR body.
 
 ### Step 6 — Push and open PR
 
@@ -153,10 +173,14 @@ Then end the turn. Do not poll.
   ask the user via `AskUserQuestion` if ambiguous.
 
 ## Parallelism rules
-- Step 2 and Step 3 are the parallelism points. Always spawn the
+- Step 3 and Step 5 are the parallelism points. Always spawn the
   parallel agents in a **single message** with multiple `Agent` tool
   uses so they truly run concurrently.
-- Never spawn two agents that edit the same files concurrently.
+- Step 2 has one mid-step sequential dependency:
+  `migration-safety-checker` runs after `db-migrator` (it can't audit
+  work that hasn't happened yet).
+- Never spawn two agents that edit the same files concurrently. All
+  review-phase agents are read-only and safely parallel.
 - Sequential by design: planner → phase 1 → phase 2 → tests → review → PR.
 
 ## Communication rules

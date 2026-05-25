@@ -57,8 +57,9 @@ Commit each agent's changes separately: `fix(backend): ...`,
 Spawn `test-runner`. Loop up to 3 times on failure (same rules as
 `/feature` Step 4).
 
-### Step 4 — Review and QA (parallel)
-Spawn both agents **in a single message** with two Agent tool uses:
+### Step 4 — Review, QA, security, performance (parallel)
+Spawn the applicable agents **in a single message** with multiple
+Agent tool uses so they run concurrently:
 - `code-reviewer` — always. Pass the diagnosis. Reviewer should
   confirm the regression test exists and exercises the fixed path.
 - `qa-verifier` — **only if** the bug had user-visible symptoms
@@ -66,11 +67,21 @@ Spawn both agents **in a single message** with two Agent tool uses:
   Skip QA for non-user-visible bugs (a scheduler logging bug, an
   internal data-migration drift). Pass the diagnosis so QA targets
   the exact failing scenario the user reported.
+- `security-reviewer` — run unless the fix is doc-only or a pure
+  test-file change. Security-relevant bugs (auth, tokens, injection)
+  must run it.
+- `performance-sentinel` — run if the fix touches a hot path
+  (router, sync engine, scheduler, dashboard component). Skip for
+  isolated logic bugs in pure utilities.
+- `migration-safety-checker` — **only if** the fix added a new
+  Alembic revision (rare for bugs, but happens when the bug is a
+  schema mismatch).
 
 Merge findings, route by the `Owner:` tag. On `REQUEST_CHANGES` /
-`FAIL`: spawn owners **in parallel** in a single message, re-run
-both reviewer and (if applicable) QA. Loop up to 2 times across
-review+QA combined.
+`FAIL` / `UNSAFE` / `CONCERNS`: spawn owners **in parallel** in a
+single message, re-run **all** reviewers that flagged something.
+Loop up to 2 times across the combined review phase. `BLOCK` from
+any reviewer → stop and surface to the user.
 
 ### Step 5 — Push and open PR
 
