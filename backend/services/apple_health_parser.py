@@ -53,6 +53,10 @@ _UNIT_CONVERSIONS: dict[str, dict[str, float]] = {
         "m/s": 1.0,
         "km/h": 1000.0 / 3600.0,
         "mph": 0.44704,       # = 1609.344 / 3600.
+        # HAE's JSON export quirk: serializes mph as the truncated "mi"
+        # even though its CSV column header shows "mi/hr". Same factor.
+        "mi": 0.44704,
+        "mi/hr": 0.44704,
     },
     "elevation": {
         "m": 1.0,
