@@ -141,4 +141,69 @@ describe("Record page", () => {
     );
     expect(screen.getByRole("button", { name: "Finish" })).toBeDisabled();
   });
+
+  it("emits matching superset_group_id for consecutive linked exercises", async () => {
+    renderWithRouter();
+
+    // Exercise 1: name + one set.
+    const nameInputs = () => screen.getAllByPlaceholderText("Exercise Name");
+    fireEvent.change(nameInputs()[0], { target: { value: "Pull Up" } });
+    fireEvent.change(screen.getAllByLabelText(/Set 1 reps/i)[0], {
+      target: { value: "8" },
+    });
+    fireEvent.change(screen.getAllByLabelText(/Set 1 weight/i)[0], {
+      target: { value: "0" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Log set 1" }));
+
+    // Add exercise 2 first (the link button only appears once a next
+    // exercise exists, since `showLinkButton` checks position in the list).
+    fireEvent.click(screen.getByRole("button", { name: /add exercise/i }));
+
+    // Now link exercise 1 → exercise 2.
+    fireEvent.click(
+      screen.getByRole("button", { name: /create superset/i }),
+    );
+
+    // Exercise 2: name + one set.
+    fireEvent.change(nameInputs()[1], { target: { value: "Dip" } });
+    const allRepsInputs = screen.getAllByLabelText(/Set 1 reps/i);
+    fireEvent.change(allRepsInputs[allRepsInputs.length - 1], {
+      target: { value: "10" },
+    });
+    const allWeightInputs = screen.getAllByLabelText(/Set 1 weight/i);
+    fireEvent.change(allWeightInputs[allWeightInputs.length - 1], {
+      target: { value: "0" },
+    });
+    // Each ExerciseCard has its own "Log set 1" button; the second card's
+    // button is the most recently rendered one.
+    const logButtons = screen.getAllByRole("button", { name: /log set 1/i });
+    fireEvent.click(logButtons[logButtons.length - 1]);
+
+    const finishBtn = await screen.findByRole("button", { name: "Finish" });
+    expect(finishBtn).not.toBeDisabled();
+    fireEvent.click(finishBtn);
+
+    await waitFor(() => expect(createStrengthSession).toHaveBeenCalledTimes(1));
+    const payload = createStrengthSession.mock.calls[0][0] as {
+      sets: Array<{
+        exercise_name: string;
+        superset_group_id: number | null;
+        order_index: number;
+      }>;
+      started_at: string | null;
+      ended_at: string | null;
+    };
+    const byName = new Map(payload.sets.map((s) => [s.exercise_name, s]));
+    expect(byName.get("Pull Up")?.superset_group_id).not.toBeNull();
+    expect(byName.get("Pull Up")?.superset_group_id).toBe(
+      byName.get("Dip")?.superset_group_id,
+    );
+    expect(byName.get("Pull Up")?.order_index).toBe(0);
+    expect(byName.get("Dip")?.order_index).toBe(1);
+    // Naive-local ISO (no tz suffix), stamped at finish.
+    expect(payload.ended_at).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/,
+    );
+  });
 });

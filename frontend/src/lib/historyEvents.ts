@@ -182,9 +182,10 @@ function strengthToEvent(s: StrengthSession): HistoryEvent {
       { label: "Sets", value: s.total_sets.toString() },
       { label: "Exercises", value: s.exercise_count.toString() },
     ],
-    // Strength rows route to the linked Strava activity when available;
-    // otherwise we have no detail page (post-hoc linking is deferred).
-    navigateTo: s.activity_id != null ? `/activities/${s.activity_id}` : null,
+    // Strength rows always route to the date-keyed lifting detail page.
+    // The detail page surfaces the linked Strava activity (when present) as
+    // its own chip, so we no longer branch on `activity_id` here.
+    navigateTo: `/workouts/lifting/${s.date}`,
   };
 }
 

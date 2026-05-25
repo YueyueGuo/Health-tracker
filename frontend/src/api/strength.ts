@@ -20,6 +20,12 @@ interface StrengthSet {
    *  activity's streams are cached. Undefined otherwise. */
   avg_hr?: number;
   max_hr?: number;
+  /** Sets that share a non-null group id were performed back-to-back as a
+   *  superset. Scoped to the session (date). Null = standalone. */
+  superset_group_id?: number | null;
+  /** Display order across the session (0-based). Lets the detail page
+   *  render exercises in the recorded sequence rather than alphabetical. */
+  order_index?: number | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -38,6 +44,11 @@ export interface ExerciseBreakdown {
   max_weight: number | null;
   total_volume: number;
   est_1rm: number | null;
+  /** Modal `superset_group_id` across this exercise's sets, or null when
+   *  the exercise was performed standalone. */
+  superset_group_id?: number | null;
+  /** 0-based position within the session, mirroring the recorded order. */
+  order_index?: number | null;
 }
 
 export interface StrengthSessionDetail {
@@ -53,6 +64,21 @@ export interface StrengthSessionDetail {
    *  start_date fallback). Lets the frontend convert set performed_at
    *  timestamps to x-axis offsets for the hr_curve chart. */
   activity_start_iso?: string;
+  /** Duration in seconds. Prefers ``ended_at - started_at`` when stamped
+   *  by the recorder; otherwise derived from ``performed_at`` range. */
+  duration_sec?: number | null;
+  /** Total sets logged across all exercises in the session. */
+  total_sets?: number;
+  /** Total reps logged across all sets. */
+  total_reps?: number;
+  /** Total volume (sum of weight_kg × reps) across all weighted sets. */
+  total_volume_kg?: number;
+  /** Number of distinct exercises in the session. */
+  exercise_count?: number;
+  /** Naive-local ISO datetime stamped on the recorder's "Start" tap. */
+  started_at?: string | null;
+  /** Naive-local ISO datetime stamped on the recorder's "Finish" tap. */
+  ended_at?: string | null;
 }
 
 export interface ProgressionPoint {
@@ -72,12 +98,21 @@ export interface StrengthSetInput {
   notes: string | null;
   /** Naive-local ISO string (no tz) stamped by the "Log set" tap. */
   performed_at?: string | null;
+  /** Superset grouping. Sets sharing a non-null id within a single
+   *  session were performed back-to-back. */
+  superset_group_id?: number | null;
+  /** 0-based exercise ordering within the session. */
+  order_index?: number | null;
 }
 
 interface StrengthSessionCreate {
   date: string; // YYYY-MM-DD
   activity_id: number | null;
   sets: StrengthSetInput[];
+  /** Optional ISO timestamps stamped on Start / Finish taps. The backend
+   *  denormalizes these onto each row of the session. */
+  started_at?: string | null;
+  ended_at?: string | null;
 }
 
 // ── Fetchers ────────────────────────────────────────────────────────────────

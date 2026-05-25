@@ -259,3 +259,161 @@ async def test_delete_set_removes_row(client, db):
 async def test_delete_unknown_set_returns_404(client):
     response = await client.delete("/api/strength/sets/999999")
     assert response.status_code == 404
+
+
+# ── Superset + duration round-trip ────────────────────────────────────
+
+
+async def test_create_sets_persists_superset_and_duration(client, db):
+    """POST with ``superset_group_id`` on inputs + session-level
+    ``started_at`` / ``ended_at`` → fields land on every row, surface in
+    the GET payload, and the session aggregates are computed."""
+    payload = {
+        "date": "2026-05-10",
+        "activity_id": None,
+        "started_at": "2026-05-10T17:30:00",
+        "ended_at": "2026-05-10T18:25:00",
+        "sets": [
+            {
+                "exercise_name": "Bench",
+                "set_number": 1,
+                "reps": 5,
+                "weight_kg": 80.0,
+                "performed_at": "2026-05-10T17:35:00",
+                "superset_group_id": 1,
+                "order_index": 0,
+            },
+            {
+                "exercise_name": "Row",
+                "set_number": 1,
+                "reps": 10,
+                "weight_kg": 60.0,
+                "performed_at": "2026-05-10T17:40:00",
+                "superset_group_id": 1,
+                "order_index": 1,
+            },
+            {
+                "exercise_name": "Squat",
+                "set_number": 1,
+                "reps": 5,
+                "weight_kg": 100.0,
+                "performed_at": "2026-05-10T17:55:00",
+                "order_index": 2,
+            },
+        ],
+    }
+    response = await client.post("/api/strength/sets", json=payload)
+    assert response.status_code == 201
+    body = response.json()
+    assert body["created"] == 3
+
+    # GET round-trip.
+    got = (await client.get("/api/strength/session/2026-05-10")).json()
+    assert got["total_sets"] == 3
+    assert got["total_reps"] == 5 + 10 + 5
+    assert got["total_volume_kg"] == pytest.approx(5 * 80 + 10 * 60 + 5 * 100)
+    assert got["exercise_count"] == 3
+    assert got["duration_sec"] == 55 * 60
+    assert got["started_at"].startswith("2026-05-10T17:30:00")
+    assert got["ended_at"].startswith("2026-05-10T18:25:00")
+
+    # Exercises ordered by order_index.
+    names = [ex["name"] for ex in got["exercises"]]
+    assert names == ["Bench", "Row", "Squat"]
+    by_name = {ex["name"]: ex for ex in got["exercises"]}
+    assert by_name["Bench"]["superset_group_id"] == 1
+    assert by_name["Row"]["superset_group_id"] == 1
+    assert by_name["Squat"]["superset_group_id"] is None
+    # Per-set serialization carries the new fields.
+    assert all(
+        "superset_group_id" in s and "order_index" in s for s in got["sets"]
+    )
+
+    # DB rows actually persisted the denormalized session stamps.
+    rows = (
+        await db.execute(select(StrengthSet).where(StrengthSet.date == date(2026, 5, 10)))
+    ).scalars().all()
+    assert len(rows) == 3
+    for r in rows:
+        assert r.started_at is not None
+        assert r.ended_at is not None
+        assert r.started_at.replace(tzinfo=None) == datetime(2026, 5, 10, 17, 30, 0)
+        assert r.ended_at.replace(tzinfo=None) == datetime(2026, 5, 10, 18, 25, 0)
+
+
+async def test_patch_set_updates_superset_group_id(client, db):
+    """PATCH can set / change ``superset_group_id`` and ``order_index``."""
+    seed = StrengthSet(
+        date=date(2026, 5, 11),
+        exercise_name="Bench",
+        set_number=1,
+        reps=5,
+        weight_kg=80.0,
+    )
+    db.add(seed)
+    await db.commit()
+    await db.refresh(seed)
+    set_id = seed.id
+
+    response = await client.patch(
+        f"/api/strength/sets/{set_id}",
+        json={"superset_group_id": 2, "order_index": 5},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["superset_group_id"] == 2
+    assert body["order_index"] == 5
+
+    await db.refresh(seed)
+    assert seed.superset_group_id == 2
+    assert seed.order_index == 5
+
+
+async def test_session_get_exposes_new_top_level_keys(client):
+    """Contract: every new top-level key from the strength workout-detail
+    plan is present in the GET response, even when the values are null /
+    derived from a single row.
+    """
+    payload = {
+        "date": "2026-05-12",
+        "activity_id": None,
+        "sets": [
+            {
+                "exercise_name": "Squat",
+                "set_number": 1,
+                "reps": 5,
+                "weight_kg": 100.0,
+            }
+        ],
+    }
+    create = await client.post("/api/strength/sets", json=payload)
+    assert create.status_code == 201
+
+    got = await client.get("/api/strength/session/2026-05-12")
+    assert got.status_code == 200
+    body = got.json()
+    for key in (
+        "date",
+        "activity_id",
+        "sets",
+        "exercises",
+        "duration_sec",
+        "total_sets",
+        "total_reps",
+        "total_volume_kg",
+        "exercise_count",
+        "started_at",
+        "ended_at",
+    ):
+        assert key in body, f"missing top-level key: {key}"
+    # Aggregates for a one-set bodyweight-free session.
+    assert body["total_sets"] == 1
+    assert body["total_reps"] == 5
+    assert body["total_volume_kg"] == pytest.approx(5 * 100)
+    assert body["exercise_count"] == 1
+    assert body["duration_sec"] is None
+    assert body["started_at"] is None
+    assert body["ended_at"] is None
+    # Per-exercise carries the new fields too.
+    assert "superset_group_id" in body["exercises"][0]
+    assert "order_index" in body["exercises"][0]

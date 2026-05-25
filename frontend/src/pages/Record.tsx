@@ -216,8 +216,28 @@ function validateSetForLogging(set: SetDraft): string | null {
 }
 
 function buildPayload(exercises: ExerciseDraft[]): StrengthSetInput[] | string {
+  // Pre-compute superset_group_id per exercise. An exercise belongs to a
+  // group when either it OR its previous neighbor has `linkedToNext: true`.
+  // Adjacent linked exercises share the same group id; non-linked runs get
+  // null. Group ids start at 1 and increment per distinct group.
+  const groupIds: (number | null)[] = exercises.map(() => null);
+  let nextGroupId = 1;
+  for (let i = 0; i < exercises.length; i++) {
+    const prevLinked = i > 0 && exercises[i - 1].linkedToNext;
+    if (prevLinked) {
+      // Inherit the previous exercise's group id (it must be non-null since
+      // the previous iteration assigned one when it had linkedToNext).
+      groupIds[i] = groupIds[i - 1];
+    } else if (exercises[i].linkedToNext) {
+      // Start a new group.
+      groupIds[i] = nextGroupId++;
+    } else {
+      groupIds[i] = null;
+    }
+  }
+
   const payload: StrengthSetInput[] = [];
-  for (const ex of exercises) {
+  for (const [exIdx, ex] of exercises.entries()) {
     const name = ex.name.trim();
     if (!name) continue;
     const logged = ex.sets.filter((s) => s.performed_at != null);
@@ -240,6 +260,8 @@ function buildPayload(exercises: ExerciseDraft[]): StrengthSetInput[] | string {
         rpe,
         notes: ex.notes.trim() === "" ? null : ex.notes.trim(),
         performed_at: set.performed_at,
+        superset_group_id: groupIds[exIdx],
+        order_index: exIdx,
       });
     }
   }
@@ -261,6 +283,9 @@ export default function Record() {
   const [now, setNow] = useState(() => Date.now());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Naive-local ISO captured on the first "Start" tap (or first auto-start
+  // when the user begins logging). Reset when a draft finishes saving.
+  const [startedAt, setStartedAt] = useState<string | null>(null);
 
   // Background data: known exercise names for the <datalist> autocomplete.
   const { data: knownExercises } = useApi(["strength", "exercises"], () =>
@@ -287,6 +312,14 @@ export default function Record() {
     const id = window.setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => window.clearInterval(id);
   }, [isRunning]);
+
+  // Stamp `startedAt` the first time the workout transitions to running.
+  // Subsequent pauses/resumes do not overwrite the start.
+  useEffect(() => {
+    if (isRunning && startedAt == null) {
+      setStartedAt(toNaiveLocalIso(new Date()));
+    }
+  }, [isRunning, startedAt]);
 
   // Rest-timer clock. Cheap; ticks regardless so the rest chip stays live.
   useEffect(() => {
@@ -446,7 +479,14 @@ export default function Record() {
         setSaving(false);
         return;
       }
-      await createStrengthSession({ date, activity_id: null, sets: payload });
+      const endedAt = toNaiveLocalIso(new Date());
+      await createStrengthSession({
+        date,
+        activity_id: null,
+        sets: payload,
+        started_at: startedAt,
+        ended_at: endedAt,
+      });
       clearRecordDraft();
       void invalidateAppDataQueries(queryClient);
       navigate("/history");

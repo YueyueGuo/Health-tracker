@@ -6,6 +6,7 @@ response shaping happens.
 """
 from __future__ import annotations
 
+from collections import Counter
 from datetime import date as date_type, timedelta
 from typing import Any
 
@@ -84,13 +85,38 @@ async def session_summary(
 
     Returns ``None`` if no sets logged on that date. Otherwise:
     ``{date, activity_id, sets: [...], exercises: [...],
+       total_sets, total_reps, total_volume_kg, exercise_count,
+       duration_sec, started_at, ended_at,
        hr_curve?: [[offset_sec, bpm], ...], activity_start_iso?: str}``.
+
+    Exercises are ordered by ``min(order_index)`` per exercise (when
+    recorded by the new strength workout-detail flow), falling back to
+    ``min(performed_at)``, then alphabetical ``exercise_name``. Each
+    exercise carries its modal ``superset_group_id`` across that
+    exercise's sets (``None`` when no set has one) and the min
+    ``order_index`` for the exercise.
+
+    ``duration_sec`` prefers ``max(ended_at) - min(started_at)`` across
+    the date's rows (the recorder denormalizes the session-level stamps
+    onto every row), falling back to ``max(performed_at) -
+    min(performed_at)`` across rows that carry a stamp, else ``None``.
+
+    Top-level aggregates (``total_sets``, ``total_reps``,
+    ``total_volume_kg``, ``exercise_count``) match the per-exercise
+    totals and include bodyweight (``weight_kg = None``) rows in reps /
+    set counts; volume only counts weighted sets.
 
     When a Strava activity is linked (``activity_id``) and its ``time`` +
     ``heartrate`` streams are already cached (we never trigger a Strava
     fetch), per-set ``avg_hr``/``max_hr`` are merged into each set dict
     and the decimated session-wide curve is returned alongside
     ``activity_start_iso`` for chart anchoring.
+
+    All additions are *additive* — existing keys (``date``,
+    ``activity_id``, ``sets``, ``exercises[].name|sets|max_weight|
+    total_volume|est_1rm``, ``hr_curve``, ``activity_start_iso``) are
+    unchanged so older consumers (e.g. ``ExercisesTable.tsx``) keep
+    working.
     """
     stmt = (
         select(StrengthSet)
@@ -111,7 +137,7 @@ async def session_summary(
         sets_payload.append(_set_dict(s))
         by_exercise.setdefault(s.exercise_name, []).append(s)
 
-    exercises = []
+    exercises: list[dict[str, Any]] = []
     for name, sets in by_exercise.items():
         weights = [s.weight_kg for s in sets if s.weight_kg is not None]
         max_weight = max(weights) if weights else None
@@ -126,6 +152,29 @@ async def session_summary(
             est = estimate_1rm(s.weight_kg, s.reps)
             if est is not None and (best_1rm is None or est > best_1rm):
                 best_1rm = est
+
+        # Modal superset_group_id across the exercise's sets; None if no
+        # set on this exercise has one. Ties resolve to the smallest id
+        # (Counter.most_common is order-stable, but smallest-on-tie is
+        # more intuitive for the UI grouping).
+        group_ids = [
+            s.superset_group_id for s in sets if s.superset_group_id is not None
+        ]
+        if group_ids:
+            counts = Counter(group_ids)
+            top_count = max(counts.values())
+            superset_group_id: int | None = min(
+                g for g, c in counts.items() if c == top_count
+            )
+        else:
+            superset_group_id = None
+
+        order_indices = [s.order_index for s in sets if s.order_index is not None]
+        ex_order_index: int | None = min(order_indices) if order_indices else None
+
+        ex_performed_ats = [s.performed_at for s in sets if s.performed_at is not None]
+        ex_first_performed = min(ex_performed_ats) if ex_performed_ats else None
+
         exercises.append(
             {
                 "name": name,
@@ -133,14 +182,65 @@ async def session_summary(
                 "max_weight": max_weight,
                 "total_volume": total_volume,
                 "est_1rm": best_1rm,
+                "superset_group_id": superset_group_id,
+                "order_index": ex_order_index,
+                "_first_performed_at": ex_first_performed,
             }
         )
+
+    # Ordering: min(order_index) per exercise → min(performed_at) →
+    # exercise_name. ``None`` sorts after concrete values so legacy rows
+    # without order_index fall through to the performed_at / name
+    # fallbacks. Drop the private sort key before emitting.
+    exercises.sort(
+        key=lambda ex: (
+            ex["order_index"] is None,
+            ex["order_index"] if ex["order_index"] is not None else 0,
+            ex["_first_performed_at"] is None,
+            ex["_first_performed_at"] or 0,
+            ex["name"],
+        )
+    )
+    for ex in exercises:
+        ex.pop("_first_performed_at", None)
+
+    # ── Session-level aggregates / duration ────────────────────────
+    total_sets = len(rows)
+    total_reps = sum((s.reps or 0) for s in rows)
+    total_volume_kg = sum(
+        (s.reps or 0) * (s.weight_kg or 0.0) for s in rows if s.weight_kg is not None
+    )
+    exercise_count = len(by_exercise)
+
+    started_at_vals = [s.started_at for s in rows if s.started_at is not None]
+    ended_at_vals = [s.ended_at for s in rows if s.ended_at is not None]
+    session_started_at = min(started_at_vals) if started_at_vals else None
+    session_ended_at = max(ended_at_vals) if ended_at_vals else None
+
+    duration_sec: int | None = None
+    if session_started_at is not None and session_ended_at is not None:
+        delta = session_ended_at - session_started_at
+        if delta.total_seconds() >= 0:
+            duration_sec = int(delta.total_seconds())
+    if duration_sec is None:
+        perf_vals = [s.performed_at for s in rows if s.performed_at is not None]
+        if len(perf_vals) >= 2:
+            delta = max(perf_vals) - min(perf_vals)
+            if delta.total_seconds() > 0:
+                duration_sec = int(delta.total_seconds())
 
     payload: dict[str, Any] = {
         "date": target.isoformat(),
         "activity_id": activity_id,
         "sets": sets_payload,
         "exercises": exercises,
+        "total_sets": total_sets,
+        "total_reps": total_reps,
+        "total_volume_kg": total_volume_kg,
+        "exercise_count": exercise_count,
+        "duration_sec": duration_sec,
+        "started_at": session_started_at.isoformat() if session_started_at else None,
+        "ended_at": session_ended_at.isoformat() if session_ended_at else None,
     }
 
     if activity_id is not None:
@@ -247,6 +347,8 @@ def _set_dict(s: StrengthSet) -> dict[str, Any]:
         "rpe": s.rpe,
         "notes": s.notes,
         "performed_at": s.performed_at.isoformat() if s.performed_at else None,
+        "superset_group_id": s.superset_group_id,
+        "order_index": s.order_index,
         "created_at": s.created_at.isoformat() if s.created_at else None,
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
     }

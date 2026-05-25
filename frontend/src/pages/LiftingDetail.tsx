@@ -1,0 +1,182 @@
+import { ChevronLeft } from "lucide-react";
+import { useNavigate, useParams } from "react-router-dom";
+import { useApi } from "../hooks/useApi";
+import {
+  fetchStrengthSessionOptional,
+  type ExerciseBreakdown,
+  type StrengthSessionDetail,
+} from "../api/strength";
+import { SessionSummaryCard } from "../components/lifting/SessionSummaryCard";
+import { ExerciseDetailCard } from "../components/lifting/ExerciseDetailCard";
+import { SupersetBracket } from "../components/lifting/SupersetBracket";
+
+/** A renderable chunk: either a single standalone exercise or a contiguous
+ *  superset group of exercises that share a non-null `superset_group_id`. */
+type ExerciseGroup =
+  | { kind: "single"; exercise: ExerciseBreakdown }
+  | { kind: "superset"; groupId: number; exercises: ExerciseBreakdown[] };
+
+/**
+ * Walk the (already-ordered) exercises list once and bucket adjacent rows
+ * sharing the same non-null `superset_group_id` into a `superset` group.
+ * Standalone rows (null or singleton groups) emit as `single`.
+ */
+function buildExerciseGroups(exercises: ExerciseBreakdown[]): ExerciseGroup[] {
+  const groups: ExerciseGroup[] = [];
+  let i = 0;
+  while (i < exercises.length) {
+    const ex = exercises[i];
+    const gid = ex.superset_group_id;
+    if (gid == null) {
+      groups.push({ kind: "single", exercise: ex });
+      i += 1;
+      continue;
+    }
+    // Greedily consume adjacent exercises with the same group id.
+    const bucket: ExerciseBreakdown[] = [ex];
+    let j = i + 1;
+    while (j < exercises.length && exercises[j].superset_group_id === gid) {
+      bucket.push(exercises[j]);
+      j += 1;
+    }
+    if (bucket.length === 1) {
+      // A "group" of one is functionally standalone — render without the
+      // bracket so the UI stays uncluttered.
+      groups.push({ kind: "single", exercise: bucket[0] });
+    } else {
+      groups.push({ kind: "superset", groupId: gid, exercises: bucket });
+    }
+    i = j;
+  }
+  return groups;
+}
+
+function roundsFor(exercises: ExerciseBreakdown[]): number {
+  // The number of "rounds" a superset was performed for is the smallest
+  // set count across its grouped exercises.
+  let min = Number.POSITIVE_INFINITY;
+  for (const ex of exercises) {
+    const count = ex.sets.length;
+    if (count < min) min = count;
+  }
+  return Number.isFinite(min) ? min : 0;
+}
+
+export default function LiftingDetail() {
+  const { date } = useParams<{ date: string }>();
+  const navigate = useNavigate();
+  const dateKey = date ?? "";
+  const { data, loading, error } = useApi(
+    ["strength", "session", dateKey],
+    () => fetchStrengthSessionOptional(dateKey),
+    { enabled: Boolean(dateKey) },
+  );
+
+  return (
+    <div className="pb-24 pt-2">
+      <Header />
+      {loading ? (
+        <LoadingSkeleton />
+      ) : error ? (
+        <ErrorBanner message={error} />
+      ) : data == null ? (
+        <EmptyState onBack={() => navigate(-1)} />
+      ) : (
+        <SessionBody session={data} />
+      )}
+    </div>
+  );
+}
+
+function Header() {
+  const navigate = useNavigate();
+  return (
+    <div className="px-1 mb-3 sticky top-0 z-20 bg-dashboard/95 backdrop-blur-md pt-1 pb-3 -mx-4 px-4 sm:mx-0 sm:px-0">
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          aria-label="Go back"
+          className="p-1.5 -ml-1.5 text-slate-400 hover:text-white transition-colors bg-cardBorder/30 rounded-full"
+        >
+          <ChevronLeft size={18} />
+        </button>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-lg font-bold text-white tracking-tight">
+            Lifting Detail
+          </h1>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LoadingSkeleton() {
+  return (
+    <div className="space-y-3">
+      <div className="h-28 rounded-2xl bg-card border border-cardBorder animate-pulse" />
+      <div className="h-40 rounded-2xl bg-card border border-cardBorder animate-pulse" />
+      <div className="h-40 rounded-2xl bg-card border border-cardBorder animate-pulse" />
+    </div>
+  );
+}
+
+function ErrorBanner({ message }: { message: string }) {
+  return (
+    <div
+      role="alert"
+      className="px-3 py-2 rounded-md bg-brand-red/10 border border-brand-red/40 text-xs text-brand-red"
+    >
+      {message}
+    </div>
+  );
+}
+
+function EmptyState({ onBack }: { onBack: () => void }) {
+  return (
+    <div className="text-center py-12 px-4">
+      <p className="text-sm text-slate-300 mb-3">
+        No strength session on this date.
+      </p>
+      <button
+        type="button"
+        onClick={onBack}
+        className="text-xs font-medium px-3 py-1.5 rounded-md border border-cardBorder text-slate-300 hover:text-white hover:border-slate-500 transition-colors"
+      >
+        Back to history
+      </button>
+    </div>
+  );
+}
+
+function SessionBody({ session }: { session: StrengthSessionDetail }) {
+  const groups = buildExerciseGroups(session.exercises);
+  return (
+    <div>
+      <SessionSummaryCard session={session} />
+      <div className="space-y-2">
+        {groups.map((g, idx) =>
+          g.kind === "single" ? (
+            <ExerciseDetailCard
+              key={`single-${idx}-${g.exercise.name}`}
+              exercise={g.exercise}
+            />
+          ) : (
+            <SupersetBracket
+              key={`superset-${g.groupId}-${idx}`}
+              exerciseCount={g.exercises.length}
+              rounds={roundsFor(g.exercises)}
+            >
+              {g.exercises.map((ex) => (
+                <ExerciseDetailCard
+                  key={`${g.groupId}-${ex.name}`}
+                  exercise={ex}
+                />
+              ))}
+            </SupersetBracket>
+          ),
+        )}
+      </div>
+    </div>
+  );
+}

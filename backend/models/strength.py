@@ -46,6 +46,15 @@ class StrengthSet(Base):
     rpe: Mapped[float | None] = mapped_column(Float, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     performed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Session/superset metadata added by migration ``f2a8d3c1e9b4``
+    # (see ``docs/plans/strength-workout-detail.md`` and
+    # ``alembic/versions/f2a8d3c1e9b4_strength_supersets_and_duration.py``).
+    # All nullable so existing rows render as standalone exercises with
+    # alphabetical fallback ordering and a derived duration.
+    superset_group_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    order_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
