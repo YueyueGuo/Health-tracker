@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Calendar } from "lucide-react";
 import { DayPicker } from "react-day-picker";
 import "react-day-picker/style.css";
-import { addDays, relativeDateLabel } from "../../utils/date";
+import { addDays, weekdayDateLabel } from "../../utils/date";
 
 interface HeaderProps {
   selectedDate: Date;
@@ -35,7 +35,7 @@ export function Header({ selectedDate, onChange, isToday }: HeaderProps) {
     };
   }, [pickerOpen]);
 
-  const label = relativeDateLabel(selectedDate);
+  const label = weekdayDateLabel(selectedDate);
   const today = new Date();
 
   const goPrev = () => onChange(addDays(selectedDate, -1));

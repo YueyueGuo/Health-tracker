@@ -37,3 +37,14 @@ export function relativeDateLabel(d: Date): string {
     ...(sameYear ? {} : { year: "numeric" }),
   });
 }
+
+export function weekdayDateLabel(d: Date): string {
+  const today = startOfDay(new Date());
+  const sameYear = d.getFullYear() === today.getFullYear();
+  return d.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+}
