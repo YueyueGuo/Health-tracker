@@ -222,8 +222,8 @@ export function useActivityNeighbors(
   currentSource: ActivitySource | null,
 ): ActivityNeighbors {
   const { data, loading } = useApi(
-    ["activities", "list", 365, 500],
-    () => fetchActivities({ days: 365, limit: 500 }),
+    ["activities", "list", 365, 200],
+    () => fetchActivities({ days: 365, limit: 200 }),
   );
 
   return useMemo(() => {
@@ -274,8 +274,8 @@ export function useLiftingNeighbors(
   currentDate: string,
 ): LiftingNeighbors {
   const { data, loading } = useApi(
-    ["strength", "sessions", 500],
-    () => fetchStrengthSessions(500),
+    ["strength", "sessions", 200],
+    () => fetchStrengthSessions(200),
   );
 
   return useMemo(() => {
