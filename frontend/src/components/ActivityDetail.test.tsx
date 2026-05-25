@@ -164,6 +164,7 @@ describe("ActivityDetailPage", () => {
       workout: {
         id: 7,
         strava_id: 77,
+        source: "strava",
         name: "Evening Run",
         sport_type: "Run",
         classification_type: "easy",

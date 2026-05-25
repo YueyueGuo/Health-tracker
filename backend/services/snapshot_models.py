@@ -19,7 +19,7 @@ failure mode without requiring a codegen toolchain.
 
 from __future__ import annotations
 
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
@@ -139,7 +139,11 @@ class HistoricalComparisonSnapshot(SnapshotModel):
 
 class LatestWorkoutSnapshot(SnapshotModel):
     id: int
-    strava_id: int
+    # Nullable so Apple Health workouts (which lack a Strava id) can flow
+    # through the same contract. The ``source`` discriminator below tells
+    # consumers which branch to take.
+    strava_id: int | None = None
+    source: Literal["strava", "apple_health"]
     name: str
     sport_type: str
     classification_type: str | None
