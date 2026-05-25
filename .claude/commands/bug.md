@@ -90,17 +90,28 @@ discarded so the PR shows what was actually verified at sign-off.
 
 **5b. Push and open the PR.**
 - `git push -u origin <branch>`.
+- Capture the head commit SHA after the final push — you'll need it for
+  absolute image URLs below: `HEAD_SHA=$(git rev-parse HEAD)`.
 - Open PR via `mcp__github__create_pull_request`. Title:
   `fix: <one-line symptom>`.
 - Body sections:
   - **Summary** — symptom, root cause, fix in 2-3 bullets.
   - **Closes** — `Closes #<N>` if the bug originated from a GitHub issue.
-  - **Diagnosis** — link to `docs/bugs/<slug>.md`.
+  - **Diagnosis** — link to the diagnosis doc using an absolute GitHub
+    URL: `[docs/bugs/<slug>.md](https://github.com/<owner>/<repo>/blob/<branch>/docs/bugs/<slug>.md)`.
+    Relative links break in PR bodies because they resolve against
+    `/pull/<n>/...` in the rendered page URL.
   - **Test plan** — what a human would run to confirm.
   - **QA screenshots** — only if Step 5a committed any. Embed each as
-    `![<scenario>](docs/qa/<slug>/<file>.png)` so GitHub renders them
-    inline in the PR. List one per scenario in the same order as
-    qa-verifier's "Scenarios run" table.
+    an absolute `raw.githubusercontent.com` URL pinned to the head SHA
+    so the image survives post-merge branch deletion:
+    `![<scenario>](https://raw.githubusercontent.com/<owner>/<repo>/<HEAD_SHA>/docs/qa/<slug>/<file>.png)`.
+    Do **NOT** use a relative path like `docs/qa/<slug>/<file>.png` —
+    GitHub renders that as `<img src="docs/qa/...">` which the browser
+    resolves against the PR page URL (`/pull/<n>/...`) and ends up at
+    GitHub's compare route ("there isn't anything to compare"). One
+    image per scenario, in the same order as qa-verifier's "Scenarios
+    run" table.
 
 ### Step 6 — Subscribe to PR activity
 `mcp__github__subscribe_pr_activity` with the PR number.
