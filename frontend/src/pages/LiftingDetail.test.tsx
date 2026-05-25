@@ -77,6 +77,11 @@ describe("LiftingDetail page", () => {
     const session: StrengthSessionDetail = {
       date: "2026-05-24",
       activity_id: null,
+      link: null,
+      segmentation: null,
+      hr_curve: null,
+      segment_markers: null,
+      activity_start_iso: null,
       duration_sec: 3300,
       total_sets: 2,
       total_reps: 10,
@@ -135,6 +140,11 @@ describe("LiftingDetail page", () => {
     const session: StrengthSessionDetail = {
       date: "2026-05-24",
       activity_id: null,
+      link: null,
+      segmentation: null,
+      hr_curve: null,
+      segment_markers: null,
+      activity_start_iso: null,
       duration_sec: 1800,
       total_sets: 4,
       total_reps: 20,
