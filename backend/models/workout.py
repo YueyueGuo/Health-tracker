@@ -25,6 +25,7 @@ from backend.database import Base
 if TYPE_CHECKING:
     from backend.models.activity import Activity
     from backend.models.health_data_point import HealthDataPoint
+    from backend.models.shoe import Shoe
 
 
 class Workout(Base):
@@ -53,11 +54,19 @@ class Workout(Base):
         ForeignKey("activities.id", ondelete="SET NULL"),
         index=True,
     )
+    # Optional running-shoe tag (mirrors ``activities.shoe_id``).
+    shoe_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("shoes.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     data_point: Mapped[HealthDataPoint] = relationship(
         "HealthDataPoint", back_populates="workout"
     )
     activity: Mapped[Activity | None] = relationship("Activity")
+    shoe: Mapped[Shoe | None] = relationship("Shoe", back_populates="apple_workouts")
     laps: Mapped[list[WorkoutLap]] = relationship(
         "WorkoutLap",
         back_populates="workout",

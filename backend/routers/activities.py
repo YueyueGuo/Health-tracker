@@ -13,6 +13,7 @@ from backend.models import (
     ActivityLap,
     ActivityStream,
     HealthDataPoint,
+    Shoe,
     WeatherSnapshot,
     Workout,
 )
@@ -42,6 +43,16 @@ class ActivityFeedbackPatch(BaseModel):
 
     rpe: int | None = Field(default=None, ge=1, le=10)
     user_notes: str | None = Field(default=None, max_length=2000)
+
+
+class ActivityShoePatch(BaseModel):
+    """Tag (or untag) a running shoe on an activity / workout.
+
+    ``shoe_id=None`` clears the tag. Retired shoes are not tag-eligible
+    for new tags; existing tags to a now-retired shoe are untouched.
+    """
+
+    shoe_id: int | None = None
 
 
 @router.get("")
@@ -242,6 +253,80 @@ async def patch_activity_feedback(
         "rpe": activity.rpe,
         "user_notes": activity.user_notes,
         "rated_at": activity.rated_at.isoformat() if activity.rated_at else None,
+    }
+
+
+@router.patch("/{activity_id}/shoe")
+async def patch_activity_shoe(
+    activity_id: int,
+    payload: ActivityShoePatch,
+    db: AsyncSession = Depends(get_db),
+):
+    """Tag or untag a running shoe on an activity / workout.
+
+    Resolves ``activity_id`` first against ``Activity`` (Strava), then
+    against ``Workout`` via ``HealthDataPoint`` (Apple Health) — same
+    dual-resolution shape as ``patch_activity_feedback``. Rejects
+    tagging a retired shoe with a 400; untagging (``shoe_id=null``) is
+    always allowed.
+    """
+    new_shoe_id = payload.shoe_id
+
+    # Validate the target shoe up front so both branches share the
+    # same error path.
+    if new_shoe_id is not None:
+        shoe = (
+            await db.execute(select(Shoe).where(Shoe.id == new_shoe_id))
+        ).scalar_one_or_none()
+        if shoe is None:
+            raise HTTPException(status_code=400, detail="Shoe not found")
+        if shoe.status == "retired":
+            raise HTTPException(
+                status_code=400, detail="Cannot tag a retired shoe"
+            )
+
+    activity = (
+        await db.execute(select(Activity).where(Activity.id == activity_id))
+    ).scalar_one_or_none()
+    if activity is not None:
+        activity.shoe_id = new_shoe_id
+        await db.commit()
+        await db.refresh(activity)
+        return {
+            "id": activity.id,
+            "source": "strava",
+            "shoe_id": activity.shoe_id,
+        }
+
+    # Fall through to Apple Health workout. Mirror the feedback
+    # endpoint's lookup: HDP with source='apple_health' and
+    # data_type='workout', then load the joined ``Workout`` row.
+    dp = (
+        await db.execute(
+            select(HealthDataPoint).where(
+                HealthDataPoint.id == activity_id,
+                HealthDataPoint.source == "apple_health",
+                HealthDataPoint.data_type == "workout",
+            )
+        )
+    ).scalar_one_or_none()
+    if dp is None:
+        raise HTTPException(status_code=404, detail="Activity not found")
+    workout = (
+        await db.execute(select(Workout).where(Workout.id == dp.id))
+    ).scalar_one_or_none()
+    if workout is None:
+        # An HDP without a joined Workout row is a data-integrity bug,
+        # not a user-visible 4xx. Surface as 404 rather than 500 — the
+        # caller can't recover either way.
+        raise HTTPException(status_code=404, detail="Activity not found")
+    workout.shoe_id = new_shoe_id
+    await db.commit()
+    await db.refresh(workout)
+    return {
+        "id": dp.id,
+        "source": "apple_health",
+        "shoe_id": workout.shoe_id,
     }
 
 

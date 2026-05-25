@@ -4,6 +4,7 @@ from backend.models.health_data_point import HealthDataPoint
 from backend.models.oauth_token import OAuthToken
 from backend.models.recommendation_feedback import RecommendationFeedback
 from backend.models.recovery import Recovery
+from backend.models.shoe import Shoe
 from backend.models.sleep import SleepSession
 from backend.models.strength import StrengthSessionLink, StrengthSet
 from backend.models.sync_log import AnalysisCache, SyncLog
@@ -23,6 +24,7 @@ __all__ = [
     "OAuthToken",
     "RecommendationFeedback",
     "Recovery",
+    "Shoe",
     "SleepSession",
     "StrengthSessionLink",
     "StrengthSet",

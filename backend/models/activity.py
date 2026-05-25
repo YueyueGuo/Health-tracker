@@ -22,6 +22,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from backend.database import Base
 
 if TYPE_CHECKING:
+    from backend.models.shoe import Shoe
     from backend.models.weather import WeatherSnapshot
 
 
@@ -94,6 +95,11 @@ class Activity(Base):
     rpe: Mapped[int | None] = mapped_column(Integer)
     user_notes: Mapped[str | None] = mapped_column(Text)
     rated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Optional running-shoe tag. ``ON DELETE SET NULL`` so removing a
+    # shoe (P1+, not exposed yet) leaves the activity history intact.
+    shoe_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("shoes.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     raw_data: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -118,6 +124,7 @@ class Activity(Base):
     weather: Mapped[WeatherSnapshot] = relationship(
         "WeatherSnapshot", back_populates="activity", uselist=False, cascade="all, delete-orphan"
     )
+    shoe: Mapped[Shoe | None] = relationship("Shoe", back_populates="activities")
 
 
 class ActivityStream(Base):

@@ -127,6 +127,7 @@ def create_app() -> FastAPI:
         locations,
         profile,
         recovery,
+        shoes,
         sleep,
         strength,
         summary,
@@ -153,6 +154,7 @@ def create_app() -> FastAPI:
     app.include_router(insights.router, prefix="/api/insights", tags=["insights"])
     app.include_router(locations.router, prefix="/api/locations", tags=["locations"])
     app.include_router(goals.router, prefix="/api/goals", tags=["goals"])
+    app.include_router(shoes.router, prefix="/api/shoes", tags=["shoes"])
     app.include_router(profile.router, prefix="/api/profile", tags=["profile"])
     app.include_router(
         apple_health.router,
