@@ -11,14 +11,18 @@ columns the sweep marked tz-aware:
   rather than naive-UTC so ``WhoopWorkout.start`` /``end`` and
   ``SleepSession.bed_time``/``wake_time`` writes carry tzinfo.
 * ``backend.services.eight_sleep_sync._attach_utc_to_sleep_times`` —
-  attaches UTC tzinfo to naive ``bed_time`` / ``wake_time`` fields
-  produced by ``_extract_fields``.
+  defensively normalises ``bed_time`` / ``wake_time`` to tz-aware UTC.
+  ``_extract_fields`` already returns aware UTC post-fix (see
+  ``docs/bugs/eight-sleep-timezone-bug.md``), so this helper acts as a
+  safety net at the write boundary.
 
-See ``docs/audit-001-datetime-sweep-audit.md``.
+See ``docs/audit-001-datetime-sweep-audit.md`` and
+``docs/bugs/eight-sleep-timezone-bug.md``.
 """
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from backend.routers.strength import _normalize_performed_at
 from backend.services.eight_sleep_sync import _attach_utc_to_sleep_times
@@ -59,7 +63,14 @@ def test_normalize_performed_at_handles_none():
     assert _normalize_performed_at(None) is None
 
 
-def test_attach_utc_to_sleep_times_tags_naive_in_place():
+def test_attach_utc_to_sleep_times_tags_naive_as_utc_defensively():
+    """Defensive fallback: stray naive values get tagged as UTC.
+
+    ``_extract_fields`` no longer produces naive datetimes for bed/wake
+    (see docs/bugs/eight-sleep-timezone-bug.md), but the helper
+    preserves the historical implicit-UTC contract for any naive value
+    that ever slips through.
+    """
     naive_bed = datetime(2026, 5, 1, 23, 15)
     naive_wake = datetime(2026, 5, 2, 7, 5)
     fields = {"bed_time": naive_bed, "wake_time": naive_wake, "total_sleep_sec": 28200}
@@ -69,21 +80,46 @@ def test_attach_utc_to_sleep_times_tags_naive_in_place():
     assert out is fields  # In-place + return for convenience.
     assert out["bed_time"].tzinfo is timezone.utc
     assert out["wake_time"].tzinfo is timezone.utc
-    # Wall-clock value preserved.
+    # Wall-clock value preserved for the naive-defensive branch.
     assert out["bed_time"].replace(tzinfo=None) == naive_bed
     assert out["wake_time"].replace(tzinfo=None) == naive_wake
     # Other fields untouched.
     assert out["total_sleep_sec"] == 28200
 
 
-def test_attach_utc_to_sleep_times_passes_through_already_aware():
+def test_attach_utc_to_sleep_times_passes_through_already_utc():
     aware = datetime(2026, 5, 1, 23, 15, tzinfo=timezone.utc)
     fields = {"bed_time": aware, "wake_time": None}
 
     out = _attach_utc_to_sleep_times(fields)
 
-    assert out["bed_time"] is aware
+    # The helper returns an equivalent UTC value (may or may not be the
+    # same identity since astimezone(UTC) on a UTC datetime is a no-op
+    # but Python is free to return either). Assert by equality + tzinfo.
+    assert out["bed_time"] == aware
+    assert out["bed_time"].tzinfo == timezone.utc
     assert out["wake_time"] is None
+
+
+def test_attach_utc_to_sleep_times_converts_non_utc_aware_to_utc():
+    """An aware value in another zone must be converted (not relabeled)
+    so the instant is preserved.
+
+    This is the central post-fix contract: the helper normalises to UTC
+    via ``astimezone``, not ``replace(tzinfo=...)``. Relabeling would
+    re-introduce the original Eight Sleep timezone bug
+    (docs/bugs/eight-sleep-timezone-bug.md).
+    """
+    # 23:18 EDT == 03:18Z next day.
+    ny = ZoneInfo("America/New_York")
+    aware_local = datetime(2026, 5, 16, 23, 18, tzinfo=ny)
+    fields = {"bed_time": aware_local, "wake_time": None}
+
+    out = _attach_utc_to_sleep_times(fields)
+
+    assert out["bed_time"].tzinfo == timezone.utc
+    # Instant preserved; only the tz label changed.
+    assert out["bed_time"] == datetime(2026, 5, 17, 3, 18, tzinfo=timezone.utc)
 
 
 def test_attach_utc_to_sleep_times_handles_missing_keys():

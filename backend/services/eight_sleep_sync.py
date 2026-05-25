@@ -184,23 +184,23 @@ async def _sync_full_history(
 
 
 def _attach_utc_to_sleep_times(fields: dict[str, Any]) -> dict[str, Any]:
-    """Attach UTC tzinfo to naive ``bed_time``/``wake_time`` in-place.
+    """Defensively normalise ``bed_time``/``wake_time`` to tz-aware UTC.
 
-    ``_extract_fields`` returns naive-local wall-clock datetimes for
-    these keys (see ``_to_local``). The model columns are
-    ``DateTime(timezone=True)`` (commit 35d648f), so we make the bind
-    contract explicit at the write boundary. The numeric wall-clock
-    value is preserved — asyncpg has been implicitly treating naive
-    datetimes as UTC for these writes for as long as the Postgres
-    column has been ``timestamp with time zone``. See
-    docs/audit-001-datetime-sweep-audit.md (and the "Scope honesty"
-    callout for why this preserves the on-disk value rather than
-    fixing the semantic contract).
+    Post-fix, ``_extract_fields`` already returns tz-aware UTC datetimes
+    for these keys (the WHOOP contract), so this helper is effectively a
+    no-op for the production code path. It remains as a safety net at
+    the write boundary: anything aware in another zone is converted to
+    UTC, and any stray naive value is tagged as UTC (matching the
+    historical implicit-UTC contract).
     """
     for key in ("bed_time", "wake_time"):
         val = fields.get(key)
-        if val is not None and val.tzinfo is None:
+        if val is None:
+            continue
+        if val.tzinfo is None:
             fields[key] = val.replace(tzinfo=timezone.utc)
+        else:
+            fields[key] = val.astimezone(timezone.utc)
     return fields
 
 
@@ -272,21 +272,16 @@ def _extract_fields(trend: dict, interval: dict | None) -> dict[str, Any]:
     elif isinstance(tnt_count, (int, float)):
         tnt_count = int(tnt_count)
 
-    # Resolve the night's timezone — prefer the interval's own label, fall
-    # back to the user's configured EIGHT_SLEEP_TIMEZONE. Times are returned
-    # by Eight Sleep in UTC (…Z) and we convert to local wall-clock so the
-    # stored `bed_time` / `wake_time` match what the user sees in the app.
-    tz = _resolve_tz((interval or {}).get("timezone"))
-
-    bed_time = _to_local(
+    # Store bed/wake times as genuine tz-aware UTC (matching the WHOOP
+    # path). ``_parse_dt`` already returns aware UTC; the frontend
+    # converts to local at render time via ``new Date(iso)``.
+    bed_time = (
         _parse_dt(trend.get("sleepStart"))
-        or _parse_dt((interval or {}).get("sleepStart") or (interval or {}).get("ts")),
-        tz,
+        or _parse_dt((interval or {}).get("sleepStart") or (interval or {}).get("ts"))
     )
-    wake_time = _to_local(
+    wake_time = (
         _parse_dt(trend.get("sleepEnd"))
-        or _parse_dt((interval or {}).get("sleepEnd")),
-        tz,
+        or _parse_dt((interval or {}).get("sleepEnd"))
     ) or _bed_plus_total(bed_time, total_sec)
 
     # Wake / out-of-bed detail — only derivable when the interval is present.
@@ -479,19 +474,23 @@ def _index_intervals_by_date(intervals: list[dict]) -> dict[date, dict]:
     """Pick the longest interval per night (multiple nap intervals possible).
 
     Eight Sleep's trend rows key nights by the calendar date the user woke
-    up on. Intervals carry ``ts`` = bedtime. We normalize by shifting evening
-    bedtimes (hour >= 18) forward one day so ``night_date`` matches the
-    trend's ``day`` field.
+    up on. Intervals carry ``ts`` = bedtime (UTC). We normalize by shifting
+    evening bedtimes (local hour >= 18) forward one day so ``night_date``
+    matches the trend's ``day`` field. The hour comparison must be done in
+    **local time** — a 23:18 EDT bedtime is 03:18 UTC and would be
+    misclassified as the wrong night if we read the UTC hour directly.
     """
     out: dict[date, dict] = {}
     for iv in intervals:
         start_ts = _parse_dt(iv.get("ts"))
         if not start_ts:
             continue
-        if start_ts.hour >= 18:
-            night_date = start_ts.date() + timedelta(days=1)
+        tz = _resolve_tz(iv.get("timezone"))
+        local_start = start_ts.astimezone(tz)
+        if local_start.hour >= 18:
+            night_date = local_start.date() + timedelta(days=1)
         else:
-            night_date = start_ts.date()
+            night_date = local_start.date()
 
         existing = out.get(night_date)
         if existing is None or _total(iv) > _total(existing):

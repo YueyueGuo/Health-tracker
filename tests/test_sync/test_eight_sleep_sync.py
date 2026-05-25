@@ -5,7 +5,7 @@ in-memory SQLite DB so we exercise the real SQLAlchemy models.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from unittest.mock import AsyncMock
 
 import pytest
@@ -18,6 +18,7 @@ from backend.services import eight_sleep_sync
 from zoneinfo import ZoneInfo
 
 from backend.services.eight_sleep_sync import (
+    _attach_utc_to_sleep_times,
     _extract_fields,
     _index_intervals_by_date,
     _mean,
@@ -126,6 +127,54 @@ def test_index_intervals_picks_longest_when_multiple():
     long = {"ts": "2026-04-10T03:00:00Z", "stages": [{"duration": 9000}]}
     idx = _index_intervals_by_date([short, long])
     assert idx[date(2026, 4, 10)] is long
+
+
+def test_index_intervals_uses_local_hour_not_utc_hour():
+    """Regression for the companion fix in
+    docs/bugs/eight-sleep-timezone-bug.md.
+
+    Eight Sleep's interval ``ts`` arrives in UTC. The "is this an
+    evening bedtime?" gate must compare the **local** hour against 18,
+    not the bare UTC hour. Construct a scenario where the two diverge:
+
+      ts=2026-05-16T22:00:00Z  →  18:00 EDT (local hour=18 → shift +1)
+                                  but UTC hour=22 (would also shift +1).
+
+    Instead, use a UTC ts whose local hour is < 18 but whose UTC hour
+    is >= 18 — a typical afternoon nap in EDT.
+
+      ts=2026-05-16T21:00:00Z  →  17:00 EDT (local hour=17 < 18, no shift)
+                                  UTC hour=21 (>= 18, would WRONGLY shift +1).
+
+    Post-fix: night_date = May 16 (the local calendar day).
+    Pre-fix:  night_date = May 17 (wrong — bumped by the UTC hour).
+    """
+    iv = {
+        "ts": "2026-05-16T21:00:00Z",
+        "timezone": "America/New_York",
+        "stages": [{"duration": 1800}],
+    }
+    idx = _index_intervals_by_date([iv])
+    assert list(idx.keys()) == [date(2026, 5, 16)]
+
+
+def test_index_intervals_evening_local_still_shifts():
+    """Sanity check for the post-fix path: a true 23:18 EDT bedtime
+    (= 03:18 UTC the next calendar day) still shifts forward in local
+    terms (local date May 16 + 1 = May 17).
+
+    On both pre- and post-fix code this resolves to May 17, but for
+    different reasons: pre-fix relies on the UTC date already being
+    May 17 (no shift); post-fix correctly shifts the May 16 local date
+    by one because local hour=23 >= 18.
+    """
+    iv = {
+        "ts": "2026-05-17T03:18:00Z",
+        "timezone": "America/New_York",
+        "stages": [],
+    }
+    idx = _index_intervals_by_date([iv])
+    assert list(idx.keys()) == [date(2026, 5, 17)]
 
 
 # ── Field extraction ───────────────────────────────────────────────
@@ -295,6 +344,8 @@ def test_extract_fields_wake_columns_none_without_interval():
 
 
 def test_to_local_converts_utc_to_naive_wall_clock():
+    """``_to_local`` itself still strips tzinfo — it is no longer used on
+    the bed/wake path, but kept for any future caller."""
     utc = datetime(2026, 4, 16, 4, 1, 30, tzinfo=ZoneInfo("UTC"))
     local = _to_local(utc, ZoneInfo("America/New_York"))
     # April is EDT (UTC-4), so 04:01:30 UTC → 00:01:30 EDT (the prev midnight).
@@ -302,17 +353,18 @@ def test_to_local_converts_utc_to_naive_wall_clock():
     assert local.tzinfo is None
 
 
-def test_to_local_handles_naive_input_as_utc():
-    naive = datetime(2026, 4, 16, 4, 1, 30)
-    local = _to_local(naive, ZoneInfo("America/New_York"))
-    assert local == datetime(2026, 4, 16, 0, 1, 30)
-
-
 def test_to_local_passthrough_none():
     assert _to_local(None, ZoneInfo("UTC")) is None
 
 
-def test_extract_fields_returns_bed_time_in_local_tz():
+def test_extract_fields_returns_bed_time_as_tz_aware_utc():
+    """Post-fix contract: ``bed_time`` / ``wake_time`` are tz-aware UTC.
+
+    The frontend converts to the user's local tz at render time via
+    ``new Date(iso).toLocaleTimeString``. Asserting tz-aware UTC here
+    is the regression guard for the Eight Sleep timezone bug
+    (docs/bugs/eight-sleep-timezone-bug.md).
+    """
     trend = _trend_row("2026-04-16")
     trend["sleepStart"] = "2026-04-16T04:01:30Z"
     trend["sleepEnd"] = "2026-04-16T12:24:30Z"
@@ -321,12 +373,55 @@ def test_extract_fields_returns_bed_time_in_local_tz():
     interval["timezone"] = "America/New_York"
 
     fields = _extract_fields(trend, interval)
-    # EDT = UTC-4; expect local wall-clock time.
-    assert fields["bed_time"] == datetime(2026, 4, 16, 0, 1, 30)
-    assert fields["wake_time"] == datetime(2026, 4, 16, 8, 24, 30)
+    # Genuine tz-aware UTC, matching the WHOOP path.
+    assert fields["bed_time"] == datetime(2026, 4, 16, 4, 1, 30, tzinfo=timezone.utc)
+    assert fields["wake_time"] == datetime(2026, 4, 16, 12, 24, 30, tzinfo=timezone.utc)
+    assert fields["bed_time"].tzinfo is not None
+    assert fields["wake_time"].tzinfo is not None
+    # Projected to NY (EDT, UTC-4): 04:01:30Z → 00:01:30 local.
+    bed_local = fields["bed_time"].astimezone(ZoneInfo("America/New_York"))
+    wake_local = fields["wake_time"].astimezone(ZoneInfo("America/New_York"))
+    assert bed_local.strftime("%H:%M:%S") == "00:01:30"
+    assert wake_local.strftime("%H:%M:%S") == "08:24:30"
     # Latency derives from the interval's first awake chunk (30 min in
     # the fixture), not trend-level timestamps.
     assert fields["latency"] == 30 * 60
+
+
+def test_extract_fields_bed_time_round_trips_to_user_local_clock():
+    """Regression test for docs/bugs/eight-sleep-timezone-bug.md.
+
+    Scenario from the user-reported bug: 23:18 EDT bedtime arrives from
+    Eight Sleep as ``2026-05-17T03:18:00Z`` with interval timezone
+    ``America/New_York``. After ``_extract_fields`` + the write-boundary
+    helper, projecting ``bed_time`` back to NY must yield 23:18 — the
+    user's actual wall-clock bedtime. On main (pre-fix), this assertion
+    yielded ``19:18`` (the four-hour double-subtraction).
+    """
+    trend = {
+        "day": "2026-05-17",
+        "sleepStart": "2026-05-17T03:18:00Z",
+        "sleepEnd": "2026-05-17T11:17:00Z",
+        "sleepDuration": 7 * 3600 + 59 * 60,
+        "presenceDuration": 7 * 3600 + 59 * 60,
+        "mainSessionId": "abc",
+    }
+    interval = {
+        "timezone": "America/New_York",
+        "ts": "2026-05-17T03:18:00Z",
+        "stages": [],
+        "timeseries": {},
+    }
+
+    fields = _attach_utc_to_sleep_times(_extract_fields(trend, interval))
+    bed = fields["bed_time"]
+    wake = fields["wake_time"]
+    assert bed is not None and bed.tzinfo is not None
+    assert wake is not None and wake.tzinfo is not None
+
+    ny = ZoneInfo("America/New_York")
+    assert bed.astimezone(ny).strftime("%H:%M") == "23:18"
+    assert wake.astimezone(ny).strftime("%H:%M") == "07:17"
 
 
 def test_series_mean_handles_tuple_format():
