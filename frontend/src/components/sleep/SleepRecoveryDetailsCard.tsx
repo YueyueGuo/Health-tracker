@@ -141,6 +141,9 @@ export function SleepRecoveryDetailsCard({
   const hasWhoopStages = whoopStages != null && whoopStages.total > 0;
   const hasEightStages = eightStages != null && eightStages.total > 0;
 
+  const whoopBarSummary = formatBarHeaderSummary(whoopSleep);
+  const eightBarSummary = formatBarHeaderSummary(eightSleep);
+
   const showWhoopExtras =
     whoopSleep?.sleep_efficiency != null ||
     whoopSleep?.sleep_consistency != null ||
@@ -291,17 +294,14 @@ export function SleepRecoveryDetailsCard({
                 <span className="text-[10px] font-bold text-slate-300">
                   {whoopColumnLabel}
                 </span>
-                {(() => {
-                  const summary = formatBarHeaderSummary(whoopSleep);
-                  return summary ? (
-                    <span
-                      data-testid="whoop-bar-summary"
-                      className="text-[10px] tabular-nums text-slate-400"
-                    >
-                      {summary}
-                    </span>
-                  ) : null;
-                })()}
+                {whoopBarSummary ? (
+                  <span
+                    data-testid="whoop-bar-summary"
+                    className="text-[10px] tabular-nums text-slate-400"
+                  >
+                    {whoopBarSummary}
+                  </span>
+                ) : null}
               </div>
               {hasWhoopStages && whoopStages ? (
                 <div className="h-5 w-full flex rounded-full overflow-hidden gap-0.5">
@@ -340,17 +340,14 @@ export function SleepRecoveryDetailsCard({
                 <span className="text-[10px] font-bold text-sky-400">
                   {eightSleepColumnLabel}
                 </span>
-                {(() => {
-                  const summary = formatBarHeaderSummary(eightSleep);
-                  return summary ? (
-                    <span
-                      data-testid="eight-bar-summary"
-                      className="text-[10px] tabular-nums text-slate-400"
-                    >
-                      {summary}
-                    </span>
-                  ) : null;
-                })()}
+                {eightBarSummary ? (
+                  <span
+                    data-testid="eight-bar-summary"
+                    className="text-[10px] tabular-nums text-slate-400"
+                  >
+                    {eightBarSummary}
+                  </span>
+                ) : null}
               </div>
               {hasEightStages && eightStages ? (
                 <div className="h-5 w-full flex rounded-full overflow-hidden gap-0.5">

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import type { SleepSession } from "../../api/sleep";
@@ -332,7 +332,7 @@ describe("SleepRecoveryDetailsCard", () => {
         deep_sleep: 100,
         rem_sleep: 100,
         light_sleep: 296,
-        awake_time: 8, // 8 / 504 ≈ 1.6% → rounds to 2%
+        awake_time: 8, // 8 / 504 ≈ 1.6% → renders as 1% after largest-remainder rounding
       };
       render(
         <MemoryRouter>
