@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import {
   fetchActivity,
   fetchActivityStreams,
   reclassifyActivity,
   type ActivityDetail,
+  type ActivitySource,
 } from "../api/activities";
 import { fetchLatestWorkoutInsight, type WorkoutInsight } from "../api/insights";
 import { getActivityWeather } from "../api/weather";
@@ -22,9 +23,18 @@ import RPECard from "./RPECard";
 export default function ActivityDetailPage() {
   const { id } = useParams<{ id: string }>();
   const activityId = Number(id);
+  // `?source=apple_health|strava` disambiguates Apple-Watch HDP ids that
+  // collide with `activities.id`. Legacy URLs without the query keep the
+  // backend's Strava-first / Apple-fallback behavior.
+  const [searchParams] = useSearchParams();
+  const sourceParam = searchParams.get("source");
+  const source: ActivitySource | null =
+    sourceParam === "apple_health" || sourceParam === "strava"
+      ? sourceParam
+      : null;
   const { data: activity, loading, error, reload } = useApi(
-    ["activities", "detail", activityId],
-    () => fetchActivity(activityId),
+    ["activities", "detail", activityId, source],
+    () => fetchActivity(activityId, source),
   );
   // The /activities/{id}/weather endpoint is Strava-only; for Apple Health
   // workouts it always 404s. Wait until the activity payload arrives so we
@@ -69,14 +79,14 @@ export default function ActivityDetailPage() {
     setStreamsLoading(true);
     setStreamsError(null);
     try {
-      const s = await fetchActivityStreams(activityId);
+      const s = await fetchActivityStreams(activityId, source);
       setStreams(s);
     } catch (e) {
       setStreamsError(getErrorMessage(e));
     } finally {
       setStreamsLoading(false);
     }
-  }, [activityId]);
+  }, [activityId, source]);
 
   // Reset stream state whenever the active activity changes so that
   // navigating from one detail page to another doesn't carry the previous
