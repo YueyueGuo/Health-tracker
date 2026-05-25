@@ -180,4 +180,196 @@ describe("SleepRecoveryDetailsCard", () => {
     expect(mockNavigate).toHaveBeenCalledWith(-1);
     expect(mockNavigate).not.toHaveBeenCalledWith("/", { replace: true });
   });
+
+  describe("Sleep Stages bar header strip", () => {
+    const baseWhoop: SleepSession = {
+      ...whoopSleep,
+      bed_time: "2026-05-24T23:14:00",
+      wake_time: "2026-05-25T06:42:00",
+      total_duration: 408,
+    };
+    const baseEight: SleepSession = {
+      ...eightSleep,
+      bed_time: "2026-05-24T23:20:00",
+      wake_time: "2026-05-25T06:38:00",
+      total_duration: 398,
+    };
+
+    it("renders total duration + bed→wake time for both sources when present", () => {
+      render(
+        <MemoryRouter>
+          <SleepRecoveryDetailsCard
+            whoopSleep={baseWhoop}
+            eightSleep={baseEight}
+            recovery={recovery}
+          />
+        </MemoryRouter>,
+      );
+
+      const whoopSummary = screen.getByTestId("whoop-bar-summary");
+      expect(whoopSummary.textContent).toContain("6h 48m");
+      expect(whoopSummary.textContent).toContain("11:14 PM");
+      expect(whoopSummary.textContent).toContain("6:42 AM");
+
+      const eightSummary = screen.getByTestId("eight-bar-summary");
+      expect(eightSummary.textContent).toContain("6h 38m");
+      expect(eightSummary.textContent).toContain("11:20 PM");
+      expect(eightSummary.textContent).toContain("6:38 AM");
+    });
+
+    it("shows total duration without bed/wake when bed_time is null", () => {
+      const whoopWithoutBed: SleepSession = {
+        ...baseWhoop,
+        bed_time: null,
+      };
+      render(
+        <MemoryRouter>
+          <SleepRecoveryDetailsCard
+            whoopSleep={whoopWithoutBed}
+            eightSleep={null}
+            recovery={null}
+          />
+        </MemoryRouter>,
+      );
+
+      const whoopSummary = screen.getByTestId("whoop-bar-summary");
+      expect(whoopSummary.textContent).toContain("6h 48m");
+      expect(whoopSummary.textContent).not.toContain("PM");
+      expect(whoopSummary.textContent).not.toContain("AM");
+    });
+
+    it("shows bed/wake without total duration when total_duration is null", () => {
+      const whoopWithoutTotal: SleepSession = {
+        ...baseWhoop,
+        total_duration: null,
+      };
+      render(
+        <MemoryRouter>
+          <SleepRecoveryDetailsCard
+            whoopSleep={whoopWithoutTotal}
+            eightSleep={null}
+            recovery={null}
+          />
+        </MemoryRouter>,
+      );
+
+      const whoopSummary = screen.getByTestId("whoop-bar-summary");
+      expect(whoopSummary.textContent).toContain("11:14 PM");
+      expect(whoopSummary.textContent).toContain("6:42 AM");
+      expect(whoopSummary.textContent).not.toContain("6h");
+    });
+
+    it("omits the right-side strip entirely when total_duration AND bed/wake are all null", () => {
+      const whoopBare: SleepSession = {
+        ...baseWhoop,
+        bed_time: null,
+        wake_time: null,
+        total_duration: null,
+      };
+      render(
+        <MemoryRouter>
+          <SleepRecoveryDetailsCard
+            whoopSleep={whoopBare}
+            eightSleep={null}
+            recovery={null}
+          />
+        </MemoryRouter>,
+      );
+
+      expect(screen.queryByTestId("whoop-bar-summary")).toBeNull();
+      // No broken middot or dashed-connector artifacts.
+      expect(screen.queryByText(/^·$/)).toBeNull();
+      expect(screen.queryByText(/—:—/)).toBeNull();
+    });
+
+    it("uses 12-hour formatting (AM / PM) in the bar header", () => {
+      render(
+        <MemoryRouter>
+          <SleepRecoveryDetailsCard
+            whoopSleep={baseWhoop}
+            eightSleep={null}
+            recovery={null}
+          />
+        </MemoryRouter>,
+      );
+
+      const whoopSummary = screen.getByTestId("whoop-bar-summary");
+      // 11:14 PM → bed; 6:42 AM → wake.
+      expect(whoopSummary.textContent).toMatch(/PM/);
+      expect(whoopSummary.textContent).toMatch(/AM/);
+    });
+  });
+
+  describe("Sleep Stages bar segment labels", () => {
+    it("renders in-segment percentage label for wide segments (>= 8%)", () => {
+      // Light ~50% of total → clearly above the 8% threshold.
+      const wideStages: SleepSession = {
+        ...whoopSleep,
+        deep_sleep: 30,
+        rem_sleep: 30,
+        light_sleep: 100,
+        awake_time: 40,
+      };
+      render(
+        <MemoryRouter>
+          <SleepRecoveryDetailsCard
+            whoopSleep={wideStages}
+            eightSleep={null}
+            recovery={null}
+          />
+        </MemoryRouter>,
+      );
+
+      // Light = 100/200 = 50%. The visible span should render.
+      expect(screen.getByText("50%")).toBeInTheDocument();
+    });
+
+    it("suppresses the visible label for narrow segments but keeps the title attribute", () => {
+      // Awake ~2% of total. Below threshold of 8 → no visible label, but
+      // the segment div still carries `title="Awake 2%"`.
+      const narrowAwake: SleepSession = {
+        ...whoopSleep,
+        deep_sleep: 100,
+        rem_sleep: 100,
+        light_sleep: 296,
+        awake_time: 8, // 8 / 504 ≈ 1.6% → renders as 1% after largest-remainder rounding
+      };
+      render(
+        <MemoryRouter>
+          <SleepRecoveryDetailsCard
+            whoopSleep={narrowAwake}
+            eightSleep={null}
+            recovery={null}
+          />
+        </MemoryRouter>,
+      );
+
+      // No visible "2%" text node (would-be span is suppressed).
+      expect(screen.queryByText("2%")).toBeNull();
+      // But the segment element still exposes the value via title/aria-label.
+      const segment = screen.getByLabelText(/^Awake \d+%$/);
+      expect(segment.getAttribute("title")).toMatch(/^Awake \d+%$/);
+    });
+  });
+
+  describe("Sleep Stages comparison table", () => {
+    it("renders bare durations without parenthetical percentages", () => {
+      render(
+        <MemoryRouter>
+          <SleepRecoveryDetailsCard
+            whoopSleep={whoopSleep}
+            eightSleep={eightSleep}
+            recovery={recovery}
+          />
+        </MemoryRouter>,
+      );
+
+      // No `(NN%)` parenthetical anywhere in the rendered card.
+      expect(screen.queryByText(/\(\d+%\)/)).toBeNull();
+      // Sanity: stage rows still show duration values like "1h 30m" / "20m".
+      // WHOOP deep = 90 → "1h 30m"; awake = 20 → "20m".
+      expect(screen.getByText("1h 30m")).toBeInTheDocument();
+      expect(screen.getByText("20m")).toBeInTheDocument();
+    });
+  });
 });
