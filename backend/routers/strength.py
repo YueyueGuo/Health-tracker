@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date as date_type, datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
@@ -20,6 +21,16 @@ from backend.services.strength import (
     progression,
     search_exercises,
     session_summary,
+)
+from backend.services.strength_link import (
+    CandidateNotFoundError,
+    InvalidLinkSourceError,
+    LinkConflictError,
+    clear_link,
+    get_link,
+    list_candidates,
+    run_segmentation_for_link,
+    set_link,
 )
 
 logger = logging.getLogger(__name__)
@@ -104,6 +115,13 @@ class StrengthSetPatch(BaseModel):
     order_index: int | None = None
 
 
+class LinkWorkoutRequest(BaseModel):
+    """``PUT /strength/session/{date}/link`` body."""
+
+    source: Literal["strava", "apple_health"]
+    ref_id: int = Field(..., ge=1)
+
+
 # ── Endpoints ───────────────────────────────────────────────────────
 
 
@@ -112,7 +130,10 @@ async def get_sessions(
     limit: int = Query(20, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ):
-    """Newest-first list of strength sessions (grouped by date)."""
+    """Newest-first list of strength sessions (grouped by date).
+
+    Includes ``hr_linked`` per row (LEFT JOIN ``strength_session_links``).
+    """
     return await list_sessions(db, limit=limit)
 
 
@@ -123,7 +144,10 @@ async def get_session(
 ):
     """Full detail for one session (keyed by `YYYY-MM-DD`).
 
-    Returns 404 when no sets logged on that date.
+    Returns 404 when no sets logged on that date. When a
+    ``strength_session_links`` row exists with status ``pending`` (the
+    bulk POST path leaves it pending to keep the request cheap), this
+    GET runs segmentation lazily and persists the result.
     """
     summary = await session_summary(db, session_date)
     if summary is None:
@@ -136,7 +160,21 @@ async def create_sets(
     payload: StrengthSessionCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    """Bulk-insert sets for a single date. Returns count + session summary."""
+    """Bulk-insert sets for a single date. Returns count + session summary.
+
+    Back-compat: when ``activity_id`` is provided in the payload, also
+    write a ``strength_session_links`` row with ``source="strava"``.
+    The link is left in ``segmentation_status="pending"`` so the first
+    ``GET /session/{date}`` (or an explicit ``POST /resegment``) fires
+    the actual segmentation run — keeps this POST cheap and avoids
+    blocking the request on a lazy Strava stream fetch.
+
+    Performance-sentinel finding #5: this handler explicitly passes
+    ``lazy_resegment=False`` to :func:`session_summary` so the response
+    never fires a Strava round-trip on the POST. The returned summary
+    will surface ``segmentation.status="pending"`` for newly-seeded
+    links; the next ``GET /session/{date}`` does the real work.
+    """
     if not payload.sets:
         raise HTTPException(status_code=400, detail="At least one set required")
 
@@ -166,7 +204,36 @@ async def create_sets(
     for row in created:
         await db.refresh(row)
 
-    summary = await session_summary(db, payload.date)
+    # Legacy ``activity_id`` payload → seed the link row with
+    # ``source="strava"``. We skip segmentation here on purpose; the
+    # first GET will run it.
+    if payload.activity_id is not None:
+        try:
+            await set_link(
+                db,
+                payload.date,
+                "strava",
+                payload.activity_id,
+                run_segmentation=False,
+            )
+        except LinkConflictError as e:
+            # Don't fail the whole POST on a link conflict — the sets
+            # are already saved. Surface in the response so the
+            # frontend can prompt the user to re-link manually.
+            logger.warning(
+                "POST /strength/sets: link conflict (date=%s, activity_id=%s): %s",
+                payload.date,
+                payload.activity_id,
+                e,
+            )
+        except CandidateNotFoundError as e:
+            logger.warning(
+                "POST /strength/sets: activity %s not found, skipping link: %s",
+                payload.activity_id,
+                e,
+            )
+
+    summary = await session_summary(db, payload.date, lazy_resegment=False)
     return {
         "created": len(created),
         "session": summary,
@@ -244,3 +311,95 @@ async def list_exercises(
 ):
     """Distinct exercise names for autocomplete."""
     return await search_exercises(db, q=q, limit=20)
+
+
+# ── Link endpoints (linked workout HR sets feature) ─────────────────
+
+
+@router.get("/session/{session_date}/link-candidates")
+async def get_link_candidates(
+    session_date: date_type,
+    db: AsyncSession = Depends(get_db),
+):
+    """Candidate device workouts in ``[date-1d, date+1d]``.
+
+    Returns Strava activities + Apple Health workouts, ordered by
+    start time. Empty list when no candidates exist (the frontend
+    renders an explicit empty state on the picker).
+    """
+    return await list_candidates(db, session_date)
+
+
+@router.put("/session/{session_date}/link")
+async def put_link(
+    session_date: date_type,
+    payload: LinkWorkoutRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist (or update) the 1:1 link for a session.
+
+    * 200 — link saved, returns the full session summary with
+      segmentation results.
+    * 404 — no strength session on that date.
+    * 409 — target device workout already linked to another date.
+    * 422 — chosen ``(source, ref_id)`` doesn't exist.
+    """
+    # Verify the session exists first so 404 wins over 422 / 409.
+    summary = await session_summary(db, session_date)
+    if summary is None:
+        raise HTTPException(status_code=404, detail="No strength session on that date")
+
+    try:
+        await set_link(
+            db,
+            session_date,
+            payload.source,
+            payload.ref_id,
+            run_segmentation=True,
+        )
+    except LinkConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except CandidateNotFoundError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except InvalidLinkSourceError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    summary = await session_summary(db, session_date)
+    return summary
+
+
+@router.delete("/session/{session_date}/link", status_code=204)
+async def delete_link(
+    session_date: date_type,
+    db: AsyncSession = Depends(get_db),
+):
+    """Drop the link row for this session date (no-op if absent)."""
+    await clear_link(db, session_date)
+    return Response(status_code=204)
+
+
+@router.post("/session/{session_date}/resegment")
+async def post_resegment(
+    session_date: date_type,
+    db: AsyncSession = Depends(get_db),
+):
+    """Recompute segmentation against the currently linked workout.
+
+    Useful when the link was first attempted before streams were
+    available (e.g. lazy Strava fetch was rate-limited). Returns the
+    full session summary on success; 404 when there's no session or no
+    link.
+    """
+    link = await get_link(db, session_date)
+    if link is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No link to resegment for this session date",
+        )
+    await run_segmentation_for_link(db, link)
+    await db.commit()
+
+    summary = await session_summary(db, session_date)
+    if summary is None:
+        raise HTTPException(status_code=404, detail="No strength session on that date")
+    return summary

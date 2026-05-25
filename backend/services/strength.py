@@ -8,13 +8,24 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import date as date_type, timedelta
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models import StrengthSet
+from backend.models import StrengthSessionLink, StrengthSet
 from backend.services.strength_hr import attach_hr_to_sets
+from backend.services.strength_link import (
+    ensure_streams_loaded,
+    get_link,
+    link_summary_dict,
+    run_segmentation_for_link,
+)
+from backend.services.strength_segmentation import (
+    Segment,
+    SegmentationResult,
+    SegmentationStatus,
+)
 
 
 # ── 1RM estimation ──────────────────────────────────────────────────
@@ -47,11 +58,21 @@ async def list_sessions(
 ) -> list[dict[str, Any]]:
     """Newest-first list of sessions (one row per `date`).
 
-    Returns: ``[{date, exercise_count, total_sets, total_volume_kg, activity_id}, ...]``.
-    `total_volume_kg = sum(reps * weight_kg)` across sets with non-null weight.
-    `activity_id` is whichever FK is attached to any row on that date
-    (we don't currently allow multiple FKs per date).
+    Returns: ``[{date, exercise_count, total_sets, total_volume_kg,
+    activity_id, hr_linked}, ...]``.
+
+    * ``total_volume_kg = sum(reps * weight_kg)`` across sets with
+      non-null weight.
+    * ``activity_id`` is whichever FK is attached to any row on that
+      date (legacy back-compat — pre-link feature; preserved so
+      ``frontend/src/components/activity/ActivityDetailStrength.tsx``
+      keeps working when source is Strava).
+    * ``hr_linked`` is True when a ``strength_session_links`` row exists
+      for that date.
     """
+    # Group strength_sets → one row per date, LEFT JOIN to
+    # strength_session_links so we can emit the hr_linked flag without
+    # a second round-trip.
     stmt = (
         select(
             StrengthSet.date,
@@ -66,6 +87,23 @@ async def list_sessions(
     )
     result = await db.execute(stmt)
     rows = result.all()
+    if not rows:
+        return []
+
+    dates = [r.date for r in rows]
+    link_rows = (
+        (
+            await db.execute(
+                select(StrengthSessionLink.session_date).where(
+                    StrengthSessionLink.session_date.in_(dates)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    linked_dates = set(link_rows)
+
     return [
         {
             "date": row.date.isoformat(),
@@ -73,24 +111,47 @@ async def list_sessions(
             "total_sets": int(row.total_sets or 0),
             "total_volume_kg": float(row.total_volume_kg) if row.total_volume_kg else 0.0,
             "activity_id": row.activity_id,
+            "hr_linked": row.date in linked_dates,
         }
         for row in rows
     ]
 
 
 async def session_summary(
-    db: AsyncSession, target: date_type
+    db: AsyncSession,
+    target: date_type,
+    *,
+    lazy_resegment: bool = True,
 ) -> dict[str, Any] | None:
     """Full detail for one session (a single `date`).
 
-    Returns ``None`` if no sets logged on that date. Otherwise:
-    ``{date, activity_id, sets: [...], exercises: [...],
-       total_sets, total_reps, total_volume_kg, exercise_count,
-       duration_sec, started_at, ended_at,
-       hr_curve?: [[offset_sec, bpm], ...], activity_start_iso?: str}``.
+    Returns ``None`` if no sets logged on that date. Otherwise::
 
-    Exercises are ordered by ``min(order_index)`` per exercise (when
-    recorded by the new strength workout-detail flow), falling back to
+        {
+          "date": "YYYY-MM-DD",
+          "activity_id": int | None,       # back-compat (Strava source only)
+          "sets": [...],
+          "exercises": [...],
+          "total_sets": int,
+          "total_reps": int,
+          "total_volume_kg": float,
+          "exercise_count": int,
+          "duration_sec": int | None,
+          "started_at": "..." | None,
+          "ended_at": "..." | None,
+          "link": {...} | None,
+          "segmentation": {...} | None,
+          "hr_curve": [[off, bpm], ...] | None,
+          "segment_markers": [
+              {set_number, exercise_name, per_exercise_set_number,
+               start_sec, end_sec}, ...
+          ] | None,
+          "activity_start_iso": "..." | None,
+        }
+
+    **Display ordering** (drives ``sets`` + ``exercises``): exercises
+    are ordered by ``min(order_index)`` per exercise (when recorded by
+    the strength workout-detail flow), falling back to
     ``min(performed_at)``, then alphabetical ``exercise_name``. Each
     exercise carries its modal ``superset_group_id`` across that
     exercise's sets (``None`` when no set has one) and the min
@@ -106,18 +167,29 @@ async def session_summary(
     totals and include bodyweight (``weight_kg = None``) rows in reps /
     set counts; volume only counts weighted sets.
 
-    When a Strava activity is linked (``activity_id``) and its ``time`` +
-    ``heartrate`` streams are already cached (we never trigger a Strava
-    fetch), per-set ``avg_hr``/``max_hr`` are merged into each set dict
-    and the decimated session-wide curve is returned alongside
-    ``activity_start_iso`` for chart anchoring.
+    **Link / HR (segmentation-driven)**: when a
+    ``strength_session_links`` row exists, segmentation runs lazily on
+    first GET if the link is in ``pending`` state (the bulk-insert
+    POST writes ``pending`` rather than running segmentation inline).
+    Callers that explicitly do not want to pay for that lazy run (e.g.
+    ``POST /strength/sets`` building its response) can pass
+    ``lazy_resegment=False`` — the segmentation block will surface as
+    ``status="pending"`` and the next GET will trigger the real run.
 
-    All additions are *additive* — existing keys (``date``,
-    ``activity_id``, ``sets``, ``exercises[].name|sets|max_weight|
-    total_volume|est_1rm``, ``hr_curve``, ``activity_start_iso``) are
-    unchanged so older consumers (e.g. ``ExercisesTable.tsx``) keep
-    working.
+    The chronological set→segment mapping used for HR attachment is a
+    **separate concern** from the alphabetical-then-order_index
+    display ordering: sets are re-sorted chronologically
+    (``performed_at ASC NULLS LAST, id ASC``) only when assigning
+    segments, and the per-set ``avg_hr`` / ``max_hr`` are then merged
+    back into the alphabetical ``sets_payload`` / ``exercises`` by set
+    id so the display order stays stable.
+
+    All additions are *additive* — existing keys are unchanged so
+    older consumers (e.g. ``ExercisesTable.tsx``,
+    ``ActivityDetailStrength.tsx``) keep working.
     """
+    # Display order (alphabetical-by-exercise, then set_number) drives
+    # ``sets_payload`` and ``exercises`` — the public response shape.
     stmt = (
         select(StrengthSet)
         .where(StrengthSet.date == target)
@@ -127,13 +199,10 @@ async def session_summary(
     if not rows:
         return None
 
-    activity_id: int | None = None
     sets_payload: list[dict[str, Any]] = []
     by_exercise: dict[str, list[StrengthSet]] = {}
 
     for s in rows:
-        if s.activity_id is not None and activity_id is None:
-            activity_id = s.activity_id
         sets_payload.append(_set_dict(s))
         by_exercise.setdefault(s.exercise_name, []).append(s)
 
@@ -229,6 +298,14 @@ async def session_summary(
             if delta.total_seconds() > 0:
                 duration_sec = int(delta.total_seconds())
 
+    # Back-compat ``activity_id``: only emit when source is Strava and
+    # the link still resolves. Legacy ``strength_sets.activity_id`` is
+    # ignored here — the link table is the new source of truth.
+    link = await get_link(db, target)
+    activity_id: int | None = None
+    if link is not None and link.source == "strava":
+        activity_id = link.activity_id
+
     payload: dict[str, Any] = {
         "date": target.isoformat(),
         "activity_id": activity_id,
@@ -241,12 +318,78 @@ async def session_summary(
         "duration_sec": duration_sec,
         "started_at": session_started_at.isoformat() if session_started_at else None,
         "ended_at": session_ended_at.isoformat() if session_ended_at else None,
+        "link": None,
+        "segmentation": None,
+        "hr_curve": None,
+        "segment_markers": None,
+        "activity_start_iso": None,
     }
 
-    if activity_id is not None:
-        hr = await attach_hr_to_sets(db, activity_id, list(rows))
+    if link is None:
+        return payload
+
+    # Lazy resegment on first GET when the bulk POST left it pending.
+    # ``run_segmentation_for_link`` now returns the streams it loaded,
+    # so we reuse them below instead of re-parsing the payload — see
+    # performance-sentinel finding #4.
+    cached_streams: dict[str, Any] | None = None
+    if link.segmentation_status == "pending" and lazy_resegment:
+        _result, cached_streams = await run_segmentation_for_link(db, link)
+        await db.commit()
+        await db.refresh(link)
+
+    payload["link"] = await link_summary_dict(db, link)
+    payload["segmentation"] = {
+        "status": link.segmentation_status,
+        "detected_count": link.segmentation_detected_count or 0,
+        "target_count": link.segmentation_target_count or 0,
+    }
+
+    # Attach HR to sets when segmentation produced segments. Reuse the
+    # streams loaded above when available; only fall back to a fresh
+    # load when this GET skipped the lazy resegment (status was already
+    # ok/too_few/too_many before this call).
+    if link.segmentation_status in {"ok", "too_few", "too_many"}:
+        if cached_streams is None:
+            cached_streams = await ensure_streams_loaded(db, link)
+        streams = cached_streams
+        segments = _segments_from_payload(link.segmentation_payload)
+        result = SegmentationResult(
+            status=cast(SegmentationStatus, link.segmentation_status),
+            target_count=link.segmentation_target_count or 0,
+            detected_count=link.segmentation_detected_count or 0,
+            segments=segments,
+        )
+        # Segments are in chronological order; map them to sets in the
+        # same chronological logged order to match (code-reviewer
+        # finding #1). Two passes so we never compare a ``datetime`` to
+        # ``None``: dated rows sort by ``(performed_at, id)``, undated
+        # rows sort by ``id`` alone. Concatenating dated+undated keeps
+        # the dated rows in the lead and falls back to insert order
+        # (id is monotonic with insertion) for the rest — which is the
+        # right behaviour for bulk-logged sessions where every
+        # ``performed_at`` is null.
+        dated = sorted(
+            (s for s in rows if s.performed_at is not None),
+            key=lambda s: (s.performed_at, s.id or 0),
+        )
+        undated = sorted(
+            (s for s in rows if s.performed_at is None),
+            key=lambda s: s.id or 0,
+        )
+        chronological = [*dated, *undated]
+        hr = attach_hr_to_sets(
+            chronological,
+            result,
+            streams["time_stream"],
+            streams["hr_stream"],
+            streams["activity_start"],
+        )
         if hr:
             by_id = hr.get("hr_by_set_id") or {}
+            # Merge per-set HR back into the alphabetical
+            # ``sets_payload`` / ``exercises`` by id, not iteration
+            # order — finishing the fix for #1.
             for s in sets_payload:
                 stats = by_id.get(s["id"])
                 if stats:
@@ -259,9 +402,37 @@ async def session_summary(
                         s["avg_hr"] = stats["avg_hr"]
                         s["max_hr"] = stats["max_hr"]
             payload["hr_curve"] = hr.get("hr_curve")
+            payload["segment_markers"] = hr.get("segment_markers")
             payload["activity_start_iso"] = hr.get("activity_start_iso")
 
     return payload
+
+
+def _segments_from_payload(payload: Any) -> list[Segment]:
+    """Re-hydrate :class:`Segment` instances from the JSON-cached payload."""
+    if not payload:
+        return []
+    raw = payload.get("segments") if isinstance(payload, dict) else None
+    if not isinstance(raw, list):
+        return []
+    out: list[Segment] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            out.append(
+                Segment(
+                    start_sec=float(entry["start_sec"]),
+                    end_sec=float(entry["end_sec"]),
+                    avg_hr=float(entry["avg_hr"]),
+                    max_hr=float(entry["max_hr"]),
+                    peak_sec=float(entry["peak_sec"]),
+                    prominence=float(entry["prominence"]),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
 
 
 async def progression(

@@ -232,18 +232,61 @@ describe("buildHistoryEvents", () => {
   it("merges and sorts newest-first", () => {
     const events = buildHistoryEvents(
       [
-        makeActivity({ id: 1, start_date_local: "2026-04-23T10:00:00" }),
-        makeActivity({ id: 2, start_date_local: "2026-04-25T10:00:00" }),
+        makeActivity({
+          id: 1,
+          source: "strava",
+          start_date_local: "2026-04-23T10:00:00",
+        }),
+        makeActivity({
+          id: 2,
+          source: "strava",
+          start_date_local: "2026-04-25T10:00:00",
+        }),
       ],
       [makeSleep({ id: 1, date: "2026-04-24", wake_time: "2026-04-24T07:00:00" })],
       [makeStrength({ date: "2026-04-22" })]
     );
     expect(events.map((e) => e.id)).toEqual([
-      "activity-2",
+      "strava-2",
       "sleep-1",
-      "activity-1",
+      "strava-1",
       "strength-2026-04-22",
     ]);
+  });
+
+  it("uses source-prefixed keys so an Apple workout and Strava activity with the same numeric id do not collide", () => {
+    // Regression for review-round-1: prior to this fix both events keyed as
+    // "activity-1" and React warned about duplicate child keys.
+    const events = buildHistoryEvents(
+      [
+        makeActivity({
+          id: 1,
+          source: "strava",
+          name: "Strava Activity",
+          start_date_local: "2026-04-25T10:00:00",
+        }),
+        makeActivity({
+          id: 1,
+          source: "apple_health",
+          name: "Apple Workout",
+          start_date_local: "2026-04-25T11:00:00",
+        }),
+      ],
+      [],
+      []
+    );
+    const ids = events.map((e) => e.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toEqual(expect.arrayContaining(["apple-1", "strava-1"]));
+  });
+
+  it("falls back to an 'activity-' prefix for legacy rows missing a source", () => {
+    const events = buildHistoryEvents(
+      [makeActivity({ id: 5, source: null, name: "Legacy" })],
+      [],
+      []
+    );
+    expect(events[0].id).toBe("activity-5");
   });
 
   it("dedups a strength session that points to a Strava WeightTraining activity", () => {
@@ -294,7 +337,7 @@ describe("buildHistoryEvents", () => {
   });
 
   it("routes strength rows with linked activity to /workouts/lifting/:date", () => {
-    // The detail page surfaces the linked Strava activity as its own chip,
+    // The detail page surfaces the linked device workout as its own chip,
     // so we always navigate to the date-keyed lifting page regardless of
     // whether `activity_id` is set.
     const events = buildHistoryEvents(
@@ -303,6 +346,24 @@ describe("buildHistoryEvents", () => {
       [makeStrength({ date: "2026-04-25", activity_id: 42 })]
     );
     expect(events[0].navigateTo).toBe("/workouts/lifting/2026-04-25");
+  });
+
+  it("flags strength events as HR-linked when hr_linked is true", () => {
+    const events = buildHistoryEvents(
+      [],
+      [],
+      [makeStrength({ activity_id: 42, hr_linked: true })]
+    );
+    expect(events[0].hrLinked).toBe(true);
+  });
+
+  it("defaults hrLinked to false when the strength row has no hr_linked flag", () => {
+    const events = buildHistoryEvents(
+      [],
+      [],
+      [makeStrength({ activity_id: null })]
+    );
+    expect(events[0].hrLinked).toBe(false);
   });
 
   it("dedupes sleep rows by date, preferring eight_sleep over whoop", () => {

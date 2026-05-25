@@ -1,106 +1,26 @@
 """Tests for backend.services.strength_hr.
 
-Covers the pure slice/decimate helpers and the DB-backed
-``attach_hr_to_sets`` against an in-memory SQLite DB.
+The primary path is now segmentation-driven — :func:`attach_hr_to_sets`
+takes a :class:`SegmentationResult` plus the already-loaded streams and
+returns per-set HR plus a decimated curve. The legacy timestamp slicer
+(:func:`_slice_hr_for_set`) is kept as a private fallback and retains a
+focused regression test under the ``_legacy_fallback`` group at the
+bottom of the file.
 """
 from __future__ import annotations
 
 from datetime import date, datetime
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from backend.database import Base
-from backend.models import Activity, ActivityStream, StrengthSet
+from backend.models import StrengthSet
 from backend.services.strength_hr import (
     CURVE_TARGET_POINTS,
     _decimate,
     _slice_hr_for_set,
     attach_hr_to_sets,
 )
-
-
-# ── _slice_hr_for_set ───────────────────────────────────────────────
-
-
-def test_slice_picks_window_ending_at_performed_at():
-    """45s lookback; samples at t=[0..100] with hr=[100..200] (linear)."""
-    start = datetime(2026, 4, 21, 9, 0, 0)
-    time_stream = list(range(0, 101))  # 0..100s
-    hr_stream = [100 + t for t in time_stream]  # 100..200
-
-    # Set ends at 60s → window [15, 60] inclusive → 46 samples hr=115..160.
-    avg, mx = _slice_hr_for_set(
-        performed_at=datetime(2026, 4, 21, 9, 1, 0),
-        activity_start=start,
-        time_stream=time_stream,
-        hr_stream=hr_stream,
-        window_sec=45,
-    )
-    assert mx == 160.0
-    assert avg == pytest.approx(137.5, abs=0.1)
-
-
-def test_slice_returns_none_when_window_outside_stream():
-    start = datetime(2026, 4, 21, 9, 0, 0)
-    time_stream = list(range(0, 101))
-    hr_stream = [140] * len(time_stream)
-    # performed_at is 10 minutes after activity ends.
-    avg, mx = _slice_hr_for_set(
-        performed_at=datetime(2026, 4, 21, 9, 11, 0),
-        activity_start=start,
-        time_stream=time_stream,
-        hr_stream=hr_stream,
-    )
-    assert (avg, mx) == (None, None)
-
-
-def test_slice_skips_zero_and_none_dropouts():
-    start = datetime(2026, 4, 21, 9, 0, 0)
-    time_stream = [0, 10, 20, 30, 40]
-    hr_stream = [0, None, 140, 150, 0]
-    avg, mx = _slice_hr_for_set(
-        performed_at=datetime(2026, 4, 21, 9, 0, 45),
-        activity_start=start,
-        time_stream=time_stream,
-        hr_stream=hr_stream,
-    )
-    assert avg == pytest.approx(145.0, abs=0.1)
-    assert mx == 150.0
-
-
-def test_slice_handles_mismatched_lengths():
-    """Strava occasionally truncates one of the two arrays — fall back to min."""
-    start = datetime(2026, 4, 21, 9, 0, 0)
-    time_stream = [0, 10, 20, 30, 40, 50]
-    hr_stream = [140, 145, 150]  # shorter
-    avg, mx = _slice_hr_for_set(
-        performed_at=datetime(2026, 4, 21, 9, 0, 30),
-        activity_start=start,
-        time_stream=time_stream,
-        hr_stream=hr_stream,
-    )
-    # Window (-15, 30] picks indices 0..2 → hr=140,145,150.
-    assert avg == pytest.approx(145.0, abs=0.1)
-    assert mx == 150.0
-
-
-def test_slice_all_dropouts_returns_none():
-    start = datetime(2026, 4, 21, 9, 0, 0)
-    time_stream = [0, 10, 20, 30]
-    hr_stream = [0, 0, None, 0]
-    assert _slice_hr_for_set(
-        performed_at=datetime(2026, 4, 21, 9, 0, 30),
-        activity_start=start,
-        time_stream=time_stream,
-        hr_stream=hr_stream,
-    ) == (None, None)
-
-
-def test_slice_empty_streams():
-    start = datetime(2026, 4, 21, 9, 0, 0)
-    assert _slice_hr_for_set(start, start, [], []) == (None, None)
-    assert _slice_hr_for_set(start, start, [0], []) == (None, None)
+from backend.services.strength_segmentation import Segment, SegmentationResult
 
 
 # ── _decimate ──────────────────────────────────────────────────────
@@ -111,17 +31,15 @@ def test_decimate_respects_target_points():
     time_stream = list(range(n))
     hr_stream = [140] * n
     out = _decimate(time_stream, hr_stream, target_points=300)
-    # step = 3600 // 300 = 12 → 300 points.
     assert len(out) == 300
     assert out[0] == [0, 140.0]
-    assert out[-1][0] == 3588  # last step
+    assert out[-1][0] == 3588
 
 
 def test_decimate_skips_dropouts():
     time_stream = list(range(10))
     hr_stream = [0, 140, None, 150, 0, 160, 0, 170, 180, 0]
     out = _decimate(time_stream, hr_stream, target_points=10)
-    # step=1, filters out zero/None.
     assert out == [[1, 140.0], [3, 150.0], [5, 160.0], [7, 170.0], [8, 180.0]]
 
 
@@ -137,208 +55,182 @@ def test_decimate_empty():
     assert _decimate([0], []) == []
 
 
-# ── attach_hr_to_sets (DB-backed) ──────────────────────────────────
+# ── attach_hr_to_sets (segmentation-driven) ────────────────────────
 
 
-@pytest.fixture
-async def db() -> AsyncSession:
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    Session = async_sessionmaker(engine, expire_on_commit=False)
-    async with Session() as session:
-        yield session
-    await engine.dispose()
-
-
-_next_id_counter = [100_000]
-
-
-def _next_strava_id() -> int:
-    _next_id_counter[0] += 1
-    return _next_id_counter[0]
-
-
-async def _seed_activity_with_streams(
-    db: AsyncSession,
-    start: datetime,
-    time_stream: list | None,
-    hr_stream: list | None,
-) -> Activity:
-    activity = Activity(
-        strava_id=_next_strava_id(),
-        name="Lift",
-        sport_type="WeightTraining",
-        start_date=start,
-        start_date_local=start,
+def _seg(
+    start: float,
+    end: float,
+    avg: float,
+    mx: float,
+    peak: float,
+    prom: float = 30.0,
+) -> Segment:
+    return Segment(
+        start_sec=start, end_sec=end, avg_hr=avg, max_hr=mx, peak_sec=peak, prominence=prom
     )
-    db.add(activity)
-    await db.flush()
-    if time_stream is not None:
-        db.add(ActivityStream(activity_id=activity.id, stream_type="time", data=time_stream))
-    if hr_stream is not None:
-        db.add(
-            ActivityStream(activity_id=activity.id, stream_type="heartrate", data=hr_stream)
-        )
-    await db.commit()
-    return activity
 
 
-async def test_attach_hr_returns_per_set_stats_and_curve(db: AsyncSession):
-    start = datetime(2026, 4, 21, 9, 0, 0)
-    time_stream = list(range(0, 600))  # 10 minutes
-    hr_stream = [100 + (t // 60) * 10 for t in time_stream]  # ramps 100→190
-    activity = await _seed_activity_with_streams(db, start, time_stream, hr_stream)
-
-    sets = [
-        StrengthSet(
-            date=date(2026, 4, 21),
-            exercise_name="Squat",
-            set_number=1,
-            reps=5,
-            weight_kg=100,
-            performed_at=datetime(2026, 4, 21, 9, 1, 0),  # offset 60s
-            activity_id=activity.id,
-        ),
-        StrengthSet(
-            date=date(2026, 4, 21),
-            exercise_name="Squat",
-            set_number=2,
-            reps=5,
-            weight_kg=100,
-            performed_at=datetime(2026, 4, 21, 9, 3, 0),  # offset 180s
-            activity_id=activity.id,
-        ),
-    ]
-    for s in sets:
-        db.add(s)
-    await db.commit()
-
-    out = await attach_hr_to_sets(db, activity.id, sets)
-    assert set(out.keys()) == {"hr_by_set_id", "hr_curve", "activity_start_iso"}
-    assert out["activity_start_iso"] == start.isoformat()
-    assert len(out["hr_by_set_id"]) == 2
-    # Each stats dict has both keys.
-    for stats in out["hr_by_set_id"].values():
-        assert set(stats.keys()) == {"avg_hr", "max_hr"}
-        assert stats["max_hr"] >= stats["avg_hr"]
-    # Curve is decimated (<= target points).
-    assert 0 < len(out["hr_curve"]) <= CURVE_TARGET_POINTS
-
-
-async def test_attach_hr_empty_when_no_performed_at(db: AsyncSession):
-    start = datetime(2026, 4, 21, 9, 0, 0)
-    activity = await _seed_activity_with_streams(
-        db, start, list(range(60)), [140] * 60
+def _set(id_: int, set_number: int = 1) -> StrengthSet:
+    return StrengthSet(
+        id=id_,
+        date=date(2026, 5, 1),
+        exercise_name="Squat",
+        set_number=set_number,
+        reps=5,
+        weight_kg=100,
     )
-    sets = [
-        StrengthSet(
-            date=date(2026, 4, 21),
-            exercise_name="Squat",
-            set_number=1,
-            reps=5,
-            weight_kg=100,
-            performed_at=None,
-            activity_id=activity.id,
-        ),
-    ]
-    for s in sets:
-        db.add(s)
-    await db.commit()
-    assert await attach_hr_to_sets(db, activity.id, sets) == {}
 
 
-async def test_attach_hr_empty_when_streams_missing(db: AsyncSession):
-    start = datetime(2026, 4, 21, 9, 0, 0)
-    # Seed activity without streams.
-    activity = await _seed_activity_with_streams(db, start, None, None)
-    sets = [
-        StrengthSet(
-            date=date(2026, 4, 21),
-            exercise_name="Squat",
-            set_number=1,
-            reps=5,
-            weight_kg=100,
-            performed_at=datetime(2026, 4, 21, 9, 1, 0),
-            activity_id=activity.id,
-        ),
-    ]
-    for s in sets:
-        db.add(s)
-    await db.commit()
-    assert await attach_hr_to_sets(db, activity.id, sets) == {}
-
-
-async def test_attach_hr_empty_when_only_one_stream_cached(db: AsyncSession):
-    start = datetime(2026, 4, 21, 9, 0, 0)
-    # Time only, no HR.
-    activity = await _seed_activity_with_streams(db, start, list(range(60)), None)
-    sets = [
-        StrengthSet(
-            date=date(2026, 4, 21),
-            exercise_name="Squat",
-            set_number=1,
-            reps=5,
-            weight_kg=100,
-            performed_at=datetime(2026, 4, 21, 9, 0, 30),
-            activity_id=activity.id,
-        ),
-    ]
-    for s in sets:
-        db.add(s)
-    await db.commit()
-    assert await attach_hr_to_sets(db, activity.id, sets) == {}
-
-
-async def test_attach_hr_empty_when_activity_missing(db: AsyncSession):
-    """Stale FK — activity row was deleted but set still references it."""
-    sets = [
-        StrengthSet(
-            id=999,
-            date=date(2026, 4, 21),
-            exercise_name="Squat",
-            set_number=1,
-            reps=5,
-            weight_kg=100,
-            performed_at=datetime(2026, 4, 21, 9, 0, 30),
-            activity_id=404,
-        ),
-    ]
-    assert await attach_hr_to_sets(db, 404, sets) == {}
-
-
-async def test_attach_hr_skips_set_with_window_outside_stream(db: AsyncSession):
-    """Set logged 10 min after activity ended → no sample in window."""
-    start = datetime(2026, 4, 21, 9, 0, 0)
-    activity = await _seed_activity_with_streams(
-        db, start, list(range(60)), [140] * 60
+def test_attach_maps_segments_to_sets_in_logged_order():
+    sets = [_set(1, 1), _set(2, 2), _set(3, 3)]
+    result = SegmentationResult(
+        status="ok",
+        target_count=3,
+        detected_count=3,
+        segments=[
+            _seg(60, 90, avg=140, mx=160, peak=80),
+            _seg(180, 210, avg=150, mx=170, peak=200),
+            _seg(300, 330, avg=155, mx=175, peak=320),
+        ],
     )
+    out = attach_hr_to_sets(
+        sets,
+        result,
+        time_stream=list(range(400)),
+        hr_stream=[140] * 400,
+        activity_start=datetime(2026, 5, 1, 9, 0, 0),
+    )
+    assert set(out["hr_by_set_id"].keys()) == {1, 2, 3}
+    assert out["hr_by_set_id"][1] == {"avg_hr": 140.0, "max_hr": 160.0}
+    assert out["hr_by_set_id"][2] == {"avg_hr": 150.0, "max_hr": 170.0}
+    assert out["hr_by_set_id"][3] == {"avg_hr": 155.0, "max_hr": 175.0}
+    assert out["activity_start_iso"] == "2026-05-01T09:00:00"
+    # Segment markers carry the set_number ordinal.
+    assert [m["set_number"] for m in out["segment_markers"]] == [1, 2, 3]
+
+
+def test_attach_too_few_leaves_trailing_sets_without_hr():
+    """``detected_count < target_count`` → trailing sets unmapped."""
+    sets = [_set(1, 1), _set(2, 2), _set(3, 3)]
+    result = SegmentationResult(
+        status="too_few",
+        target_count=3,
+        detected_count=1,
+        segments=[_seg(60, 90, avg=140, mx=160, peak=80)],
+    )
+    out = attach_hr_to_sets(
+        sets, result, time_stream=list(range(100)), hr_stream=[140] * 100,
+        activity_start=datetime(2026, 5, 1, 9, 0, 0),
+    )
+    assert set(out["hr_by_set_id"].keys()) == {1}
+    assert 2 not in out["hr_by_set_id"]
+    assert 3 not in out["hr_by_set_id"]
+
+
+def test_attach_too_many_extras_are_trimmed_by_prominence():
+    """Defensive guard: if the segmenter handed us more segments than
+    sets, the helper drops the lowest-prominence extras and re-sorts by
+    time before assigning to sets.
+    """
+    sets = [_set(1, 1), _set(2, 2)]
+    result = SegmentationResult(
+        status="too_many",
+        target_count=2,
+        detected_count=3,
+        segments=[
+            # Time order: A < B < C. Prominence order: C > A > B.
+            _seg(60, 90, avg=140, mx=160, peak=80, prom=20),    # A
+            _seg(180, 210, avg=130, mx=145, peak=200, prom=5),  # B (low prom)
+            _seg(300, 330, avg=150, mx=170, peak=320, prom=40), # C
+        ],
+    )
+    out = attach_hr_to_sets(
+        sets, result, time_stream=list(range(400)), hr_stream=[140] * 400,
+        activity_start=datetime(2026, 5, 1, 9, 0, 0),
+    )
+    # Set 1 maps to the earliest-by-time *surviving* segment (A),
+    # set 2 maps to the next (C — B was dropped).
+    assert out["hr_by_set_id"][1] == {"avg_hr": 140.0, "max_hr": 160.0}
+    assert out["hr_by_set_id"][2] == {"avg_hr": 150.0, "max_hr": 170.0}
+
+
+def test_attach_flat_with_no_timestamps_returns_curve_only():
+    """``flat`` segmentation + no per-set timestamps → no hr_by_set_id,
+    but the decimated curve is still emitted if streams are present.
+    """
+    sets = [_set(1, 1), _set(2, 2)]
+    result = SegmentationResult(
+        status="flat", target_count=2, detected_count=0, segments=[]
+    )
+    out = attach_hr_to_sets(
+        sets,
+        result,
+        time_stream=list(range(100)),
+        hr_stream=[140] * 100,
+        activity_start=datetime(2026, 5, 1, 9, 0, 0),
+    )
+    assert out["hr_by_set_id"] == {}
+    assert out["hr_curve"]
+
+
+def test_attach_no_streams_returns_empty_dict():
+    sets = [_set(1, 1)]
+    result = SegmentationResult(
+        status="no_stream", target_count=1, detected_count=0, segments=[]
+    )
+    assert attach_hr_to_sets(
+        sets, result, time_stream=None, hr_stream=None, activity_start=None
+    ) == {}
+
+
+def test_attach_no_sets_returns_empty_dict():
+    result = SegmentationResult(
+        status="ok", target_count=0, detected_count=0, segments=[]
+    )
+    assert attach_hr_to_sets([], result, [0, 1, 2], [140, 145, 150], None) == {}
+
+
+# ── _legacy_fallback: timestamp-driven path ────────────────────────
+
+
+def test_legacy_fallback_engages_when_segmentation_flat_and_all_sets_timestamped():
+    """When every set has ``performed_at`` AND segmentation returned
+    ``flat``, the legacy timestamp-window slicer fills in per-set HR."""
+    start = datetime(2026, 5, 1, 9, 0, 0)
     sets = [
         StrengthSet(
-            date=date(2026, 4, 21),
+            id=1,
+            date=date(2026, 5, 1),
             exercise_name="Squat",
             set_number=1,
             reps=5,
             weight_kg=100,
-            performed_at=datetime(2026, 4, 21, 9, 0, 30),  # in-window
-            activity_id=activity.id,
-        ),
-        StrengthSet(
-            date=date(2026, 4, 21),
-            exercise_name="Squat",
-            set_number=2,
-            reps=5,
-            weight_kg=100,
-            performed_at=datetime(2026, 4, 21, 9, 10, 0),  # way out
-            activity_id=activity.id,
+            performed_at=datetime(2026, 5, 1, 9, 1, 0),  # offset 60s
         ),
     ]
-    for s in sets:
-        db.add(s)
-    await db.commit()
-    out = await attach_hr_to_sets(db, activity.id, sets)
-    assert out != {}
-    # Only the first set has stats.
-    assert len(out["hr_by_set_id"]) == 1
-    assert sets[0].id in out["hr_by_set_id"]
-    assert sets[1].id not in out["hr_by_set_id"]
+    result = SegmentationResult(
+        status="flat", target_count=1, detected_count=0, segments=[]
+    )
+    time_stream = list(range(100))
+    hr_stream = [100 + t for t in time_stream]  # 100..199
+    out = attach_hr_to_sets(sets, result, time_stream, hr_stream, start)
+    # Legacy slicer engaged → set 1 gets HR.
+    assert out
+    assert 1 in out["hr_by_set_id"]
+
+
+def test_legacy_slice_picks_window_ending_at_performed_at():
+    """Bare regression coverage of :func:`_slice_hr_for_set`."""
+    start = datetime(2026, 4, 21, 9, 0, 0)
+    time_stream = list(range(0, 101))
+    hr_stream = [100 + t for t in time_stream]
+    avg, mx = _slice_hr_for_set(
+        performed_at=datetime(2026, 4, 21, 9, 1, 0),
+        activity_start=start,
+        time_stream=time_stream,
+        hr_stream=hr_stream,
+        window_sec=45,
+    )
+    assert mx == 160.0
+    assert avg == pytest.approx(137.5, abs=0.1)

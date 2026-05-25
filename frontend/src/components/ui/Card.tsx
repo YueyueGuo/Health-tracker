@@ -1,10 +1,10 @@
-import { motion } from "framer-motion";
+import { motion, type HTMLMotionProps } from "framer-motion";
 import type { ReactNode } from "react";
 
-interface CardProps {
+type CardProps = Omit<HTMLMotionProps<"div">, "children"> & {
   children: ReactNode;
   className?: string;
-}
+};
 
 const cardVariants = {
   hidden: { opacity: 0, y: 20 },
@@ -15,10 +15,11 @@ const cardVariants = {
   },
 };
 
-export function Card({ children, className = "" }: CardProps) {
+export function Card({ children, className = "", ...rest }: CardProps) {
   return (
     <motion.div
       variants={cardVariants}
+      {...rest}
       className={`bg-card border border-cardBorder rounded-2xl p-5 shadow-sm ${className}`}
     >
       {children}

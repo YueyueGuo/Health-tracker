@@ -5,15 +5,30 @@ Bug B's failure path. Specifically asserts that ``performed_at`` round-
 trips through ``POST /api/strength/sets`` and that the auto-increment
 ``id`` is populated by SQLAlchemy's default behavior — the regression
 gate for "INSERT failed because no autoincrement is configured".
+
+Also covers the linked-workout HR sets feature endpoints:
+
+* ``GET /session/{date}/link-candidates``
+* ``PUT /session/{date}/link``
+* ``DELETE /session/{date}/link``
+* ``POST /session/{date}/resegment``
+* The ``hr_linked`` flag on ``GET /sessions``
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
 
-from backend.models import StrengthSet
+from backend.models import (
+    Activity,
+    ActivityStream,
+    HealthDataPoint,
+    StrengthSessionLink,
+    StrengthSet,
+    Workout,
+)
 import backend.routers.strength as strength_router_module
 
 from .conftest import make_client
@@ -417,3 +432,427 @@ async def test_session_get_exposes_new_top_level_keys(client):
     # Per-exercise carries the new fields too.
     assert "superset_group_id" in body["exercises"][0]
     assert "order_index" in body["exercises"][0]
+
+
+# ── Linked-workout HR sets feature ─────────────────────────────────
+
+
+_strava_id_counter = [70_000]
+
+
+def _next_strava_id() -> int:
+    _strava_id_counter[0] += 1
+    return _strava_id_counter[0]
+
+
+def _synth_two_peak_streams() -> tuple[list[int], list[float]]:
+    """Synthetic 2-peak HR trace; matches the link service tests."""
+    import math as _math
+
+    time_stream: list[int] = []
+    hr_stream: list[float] = []
+    t = 0
+    for _ in range(60):
+        time_stream.append(t)
+        hr_stream.append(110.0)
+        t += 1
+    for k in range(30):
+        x = t + k
+        d = (x - (t + 15)) / 7.5
+        hr_stream.append(110.0 + 50.0 * _math.exp(-(d * d) / 2))
+        time_stream.append(x)
+    t += 30
+    for _ in range(120):
+        time_stream.append(t)
+        hr_stream.append(110.0)
+        t += 1
+    for k in range(30):
+        x = t + k
+        d = (x - (t + 15)) / 7.5
+        hr_stream.append(110.0 + 50.0 * _math.exp(-(d * d) / 2))
+        time_stream.append(x)
+    t += 30
+    for _ in range(60):
+        time_stream.append(t)
+        hr_stream.append(110.0)
+        t += 1
+    return time_stream, hr_stream
+
+
+async def _seed_strava(db, *, start_utc: datetime, name: str = "Lift") -> Activity:
+    a = Activity(
+        strava_id=_next_strava_id(),
+        name=name,
+        sport_type="WeightTraining",
+        start_date=start_utc,
+        start_date_local=start_utc.replace(tzinfo=None),
+        elapsed_time=3600,
+        moving_time=3600,
+        average_hr=132.0,
+        max_hr=168.0,
+        enrichment_status="complete",
+    )
+    db.add(a)
+    await db.commit()
+    await db.refresh(a)
+    return a
+
+
+async def _seed_apple(db, *, start_utc: datetime, hr_series=None) -> Workout:
+    payload: dict = {"name": "Apple lift"}
+    if hr_series is not None:
+        payload["heartRateData"] = hr_series
+    dp = HealthDataPoint(
+        source="apple_health",
+        data_type="workout",
+        external_id=f"apple-{int(start_utc.timestamp())}",
+        start_time=start_utc,
+        end_time=start_utc + timedelta(seconds=3600),
+        raw_payload=payload,
+    )
+    db.add(dp)
+    await db.flush()
+    w = Workout(
+        id=dp.id,
+        activity_type="strength",
+        duration_s=3600,
+        avg_hr=125.0,
+        max_hr=155.0,
+    )
+    db.add(w)
+    await db.commit()
+    await db.refresh(w)
+    return w
+
+
+async def _seed_session_sets(db, target_date: date, count: int = 2) -> None:
+    for i in range(count):
+        db.add(
+            StrengthSet(
+                date=target_date,
+                exercise_name="Squat",
+                set_number=i + 1,
+                reps=5,
+                weight_kg=100.0,
+            )
+        )
+    await db.commit()
+
+
+async def test_link_candidates_lists_strava_and_apple(client, db):
+    target = date(2026, 5, 15)
+    await _seed_strava(db, start_utc=datetime(2026, 5, 15, 17, 0, 0, tzinfo=timezone.utc))
+    await _seed_apple(db, start_utc=datetime(2026, 5, 14, 18, 0, 0, tzinfo=timezone.utc))
+    resp = await client.get(f"/api/strength/session/{target.isoformat()}/link-candidates")
+    assert resp.status_code == 200
+    body = resp.json()
+    sources = {r["source"] for r in body}
+    assert sources == {"strava", "apple_health"}
+
+
+async def test_link_candidates_empty(client):
+    resp = await client.get("/api/strength/session/2030-01-01/link-candidates")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+async def test_put_link_strava_with_cached_streams_returns_ok(client, db):
+    target = date(2026, 5, 15)
+    activity = await _seed_strava(
+        db, start_utc=datetime(2026, 5, 15, 9, 0, 0, tzinfo=timezone.utc)
+    )
+    time_stream, hr_stream = _synth_two_peak_streams()
+    db.add(ActivityStream(activity_id=activity.id, stream_type="time", data=time_stream))
+    db.add(
+        ActivityStream(activity_id=activity.id, stream_type="heartrate", data=hr_stream)
+    )
+    await db.commit()
+    await _seed_session_sets(db, target, count=2)
+
+    resp = await client.put(
+        f"/api/strength/session/{target.isoformat()}/link",
+        json={"source": "strava", "ref_id": activity.id},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["link"]["source"] == "strava"
+    assert body["link"]["ref_id"] == activity.id
+    assert body["activity_id"] == activity.id  # back-compat
+    assert body["segmentation"]["status"] in {"ok", "too_few", "too_many"}
+    assert body["segmentation"]["target_count"] == 2
+    assert body["hr_curve"]
+
+
+async def test_put_link_strava_without_cached_streams_triggers_fetch(
+    client, db, monkeypatch
+):
+    """No cached streams + monkey-patched fetch → 200 with status ok."""
+    target = date(2026, 5, 15)
+    activity = await _seed_strava(
+        db, start_utc=datetime(2026, 5, 15, 9, 0, 0, tzinfo=timezone.utc)
+    )
+    await _seed_session_sets(db, target, count=2)
+
+    time_stream, hr_stream = _synth_two_peak_streams()
+
+    async def _fake_fetch(db, activity):
+        """Mock the lazy-fetch path. Mirrors the real implementation's
+        cache-check so the second call (from session_summary) doesn't
+        try to insert duplicate rows."""
+        cached = (
+            (
+                await db.execute(
+                    select(ActivityStream).where(
+                        ActivityStream.activity_id == activity.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if cached:
+            return {s.stream_type: s.data for s in cached}
+        db.add(
+            ActivityStream(activity_id=activity.id, stream_type="time", data=time_stream)
+        )
+        db.add(
+            ActivityStream(activity_id=activity.id, stream_type="heartrate", data=hr_stream)
+        )
+        await db.commit()
+        return {"time": time_stream, "heartrate": hr_stream}
+
+    from backend.services import strava_streams as ss
+
+    monkeypatch.setattr(ss, "load_streams_for_activity", _fake_fetch)
+
+    resp = await client.put(
+        f"/api/strength/session/{target.isoformat()}/link",
+        json={"source": "strava", "ref_id": activity.id},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["segmentation"]["status"] in {"ok", "too_few", "too_many"}
+
+
+async def test_put_link_apple_without_hr_series_returns_no_curve(client, db):
+    target = date(2026, 5, 15)
+    workout = await _seed_apple(
+        db, start_utc=datetime(2026, 5, 15, 9, 0, 0, tzinfo=timezone.utc)
+    )
+    await _seed_session_sets(db, target, count=2)
+    resp = await client.put(
+        f"/api/strength/session/{target.isoformat()}/link",
+        json={"source": "apple_health", "ref_id": workout.id},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["link"]["source"] == "apple_health"
+    assert body["segmentation"]["status"] == "no_curve"
+    assert body["hr_curve"] is None
+
+
+async def test_put_link_conflict_returns_409(client, db):
+    """Linking the same Strava activity to two different dates → 409."""
+    activity = await _seed_strava(
+        db, start_utc=datetime(2026, 5, 15, 9, 0, 0, tzinfo=timezone.utc)
+    )
+    await _seed_session_sets(db, date(2026, 5, 15), count=1)
+    await _seed_session_sets(db, date(2026, 5, 16), count=1)
+
+    r1 = await client.put(
+        "/api/strength/session/2026-05-15/link",
+        json={"source": "strava", "ref_id": activity.id},
+    )
+    assert r1.status_code == 200
+
+    r2 = await client.put(
+        "/api/strength/session/2026-05-16/link",
+        json={"source": "strava", "ref_id": activity.id},
+    )
+    assert r2.status_code == 409
+
+
+async def test_put_link_unknown_candidate_returns_422(client, db):
+    await _seed_session_sets(db, date(2026, 5, 15), count=1)
+    resp = await client.put(
+        "/api/strength/session/2026-05-15/link",
+        json={"source": "strava", "ref_id": 999_999},
+    )
+    assert resp.status_code == 422
+
+
+async def test_put_link_unknown_session_returns_404(client):
+    resp = await client.put(
+        "/api/strength/session/2030-01-01/link",
+        json={"source": "strava", "ref_id": 1},
+    )
+    assert resp.status_code == 404
+
+
+async def test_delete_link_204_and_clears_state(client, db):
+    target = date(2026, 5, 15)
+    activity = await _seed_strava(
+        db, start_utc=datetime(2026, 5, 15, 9, 0, 0, tzinfo=timezone.utc)
+    )
+    await _seed_session_sets(db, target, count=1)
+    db.add(
+        StrengthSessionLink(
+            session_date=target,
+            source="strava",
+            activity_id=activity.id,
+            segmentation_status="ok",
+        )
+    )
+    await db.commit()
+    resp = await client.delete(f"/api/strength/session/{target.isoformat()}/link")
+    assert resp.status_code == 204
+
+    follow = await client.get(f"/api/strength/session/{target.isoformat()}")
+    assert follow.status_code == 200
+    assert follow.json()["link"] is None
+
+
+async def test_post_resegment_recomputes(client, db):
+    """``POST /resegment`` re-runs segmentation against the current link."""
+    target = date(2026, 5, 15)
+    activity = await _seed_strava(
+        db, start_utc=datetime(2026, 5, 15, 9, 0, 0, tzinfo=timezone.utc)
+    )
+    await _seed_session_sets(db, target, count=2)
+    # Seed a link with stale (no-stream) state.
+    db.add(
+        StrengthSessionLink(
+            session_date=target,
+            source="strava",
+            activity_id=activity.id,
+            segmentation_status="no_stream",
+            segmentation_detected_count=0,
+            segmentation_target_count=0,
+        )
+    )
+    await db.commit()
+    # Now drop in streams so the resegment finds something.
+    time_stream, hr_stream = _synth_two_peak_streams()
+    db.add(ActivityStream(activity_id=activity.id, stream_type="time", data=time_stream))
+    db.add(
+        ActivityStream(activity_id=activity.id, stream_type="heartrate", data=hr_stream)
+    )
+    await db.commit()
+
+    resp = await client.post(
+        f"/api/strength/session/{target.isoformat()}/resegment"
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["segmentation"]["status"] in {"ok", "too_few", "too_many"}
+
+
+async def test_post_resegment_without_link_returns_404(client, db):
+    target = date(2026, 5, 15)
+    await _seed_session_sets(db, target, count=1)
+    resp = await client.post(f"/api/strength/session/{target.isoformat()}/resegment")
+    assert resp.status_code == 404
+
+
+async def test_sessions_list_includes_hr_linked_flag(client, db):
+    target = date(2026, 5, 15)
+    activity = await _seed_strava(
+        db, start_utc=datetime(2026, 5, 15, 9, 0, 0, tzinfo=timezone.utc)
+    )
+    await _seed_session_sets(db, target, count=1)
+    await _seed_session_sets(db, target - timedelta(days=1), count=1)
+    db.add(
+        StrengthSessionLink(
+            session_date=target,
+            source="strava",
+            activity_id=activity.id,
+            segmentation_status="ok",
+        )
+    )
+    await db.commit()
+    resp = await client.get("/api/strength/sessions")
+    assert resp.status_code == 200
+    rows = {r["date"]: r for r in resp.json()}
+    assert rows[target.isoformat()]["hr_linked"] is True
+    assert rows[(target - timedelta(days=1)).isoformat()]["hr_linked"] is False
+
+
+async def test_create_sets_with_activity_id_seeds_link_row(client, db):
+    """Back-compat: ``POST /strength/sets`` with ``activity_id`` writes a
+    link row with ``source="strava"`` AND ``segmentation_status="pending"``.
+    The link is later picked up by ``GET /session/{date}``.
+    """
+    activity = await _seed_strava(
+        db, start_utc=datetime(2026, 5, 18, 9, 0, 0, tzinfo=timezone.utc)
+    )
+    payload = {
+        "date": "2026-05-18",
+        "activity_id": activity.id,
+        "sets": [
+            {"exercise_name": "Squat", "set_number": 1, "reps": 5, "weight_kg": 100.0}
+        ],
+    }
+    resp = await client.post("/api/strength/sets", json=payload)
+    assert resp.status_code == 201
+    link = (
+        await db.execute(
+            select(StrengthSessionLink).where(
+                StrengthSessionLink.session_date == date(2026, 5, 18)
+            )
+        )
+    ).scalar_one_or_none()
+    assert link is not None
+    assert link.source == "strava"
+    assert link.activity_id == activity.id
+    # Performance-sentinel finding #5: the bulk POST must leave the link
+    # in ``pending`` — the request must not fire the lazy Strava
+    # stream fetch. The response's ``session`` block is built with
+    # ``lazy_resegment=False``, so the status stays ``pending`` until
+    # the next ``GET /session/{date}``.
+    assert link.segmentation_status == "pending"
+    assert resp.json()["session"]["segmentation"]["status"] == "pending"
+
+
+async def test_create_sets_with_activity_id_does_not_fire_strava_fetch(
+    client, db, monkeypatch
+):
+    """Performance-sentinel finding #5 regression gate.
+
+    ``POST /strength/sets`` with ``activity_id`` writes the link row in
+    ``pending`` state, and the response uses ``lazy_resegment=False`` —
+    so the lazy Strava stream fetch path must never be invoked from
+    this request. If anything calls into ``strava_streams`` during the
+    POST, the monkey-patched stub raises, failing the test.
+    """
+    activity = await _seed_strava(
+        db, start_utc=datetime(2026, 5, 19, 9, 0, 0, tzinfo=timezone.utc)
+    )
+
+    from backend.services import strava_streams as ss
+
+    fetch_calls: list[int] = []
+
+    async def _explode(db, activity):  # pragma: no cover - failure path
+        fetch_calls.append(activity.id)
+        raise AssertionError(
+            "POST /strength/sets must not trigger a Strava stream fetch; "
+            "lazy_resegment=False is supposed to keep the request cheap."
+        )
+
+    monkeypatch.setattr(ss, "load_streams_for_activity", _explode)
+
+    payload = {
+        "date": "2026-05-19",
+        "activity_id": activity.id,
+        "sets": [
+            {"exercise_name": "Squat", "set_number": 1, "reps": 5, "weight_kg": 100.0},
+            {"exercise_name": "Squat", "set_number": 2, "reps": 5, "weight_kg": 100.0},
+        ],
+    }
+    resp = await client.post("/api/strength/sets", json=payload)
+    assert resp.status_code == 201
+    assert fetch_calls == []
+    # The follow-up GET is allowed to fetch; pre-seed streams so the
+    # later test session is fully consistent if someone extends this.
+    body = resp.json()
+    assert body["session"]["segmentation"]["status"] == "pending"

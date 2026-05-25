@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.database import Base
-from backend.models import Activity, ActivityStream, StrengthSet
+from backend.models import Activity, ActivityStream, StrengthSessionLink, StrengthSet
 from backend.services.strength import (
     estimate_1rm,
     list_sessions,
@@ -91,9 +91,49 @@ async def test_list_sessions_groups_by_date_newest_first(db: AsyncSession):
     assert sessions[0]["exercise_count"] == 2
     assert sessions[0]["total_sets"] == 2
     assert sessions[0]["total_volume_kg"] == pytest.approx(5 * 80 + 10 * 60)
+    # No link rows yet → hr_linked False on every row.
+    assert sessions[0]["hr_linked"] is False
     assert sessions[1]["exercise_count"] == 1
     assert sessions[1]["total_sets"] == 2
     assert sessions[1]["total_volume_kg"] == pytest.approx(2 * 5 * 100)
+    assert sessions[1]["hr_linked"] is False
+
+
+async def test_list_sessions_flags_hr_linked(db: AsyncSession):
+    """A ``strength_session_links`` row flips ``hr_linked`` to True for
+    that date — used by the history list HR-linked indicator."""
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    start = datetime(today.year, today.month, today.day, 9, 0, 0)
+    activity = Activity(
+        strava_id=42_001,
+        name="Lift",
+        sport_type="WeightTraining",
+        start_date=start,
+        start_date_local=start,
+    )
+    db.add(activity)
+    await db.flush()
+    await _seed(
+        db,
+        [
+            StrengthSet(date=today, exercise_name="Squat", set_number=1, reps=5, weight_kg=100),
+            StrengthSet(date=yesterday, exercise_name="Bench", set_number=1, reps=5, weight_kg=80),
+        ],
+    )
+    db.add(
+        StrengthSessionLink(
+            session_date=today,
+            source="strava",
+            activity_id=activity.id,
+            segmentation_status="ok",
+        )
+    )
+    await db.commit()
+    sessions = await list_sessions(db, limit=10)
+    by_date = {s["date"]: s for s in sessions}
+    assert by_date[today.isoformat()]["hr_linked"] is True
+    assert by_date[yesterday.isoformat()]["hr_linked"] is False
 
 
 async def test_session_summary_groups_by_exercise(db: AsyncSession):
@@ -184,10 +224,12 @@ async def test_session_summary_round_trips_performed_at(db: AsyncSession):
     assert stamps == [stamped.isoformat(), None]
 
 
-async def test_session_summary_merges_hr_when_streams_cached(db: AsyncSession):
-    """When a linked activity has cached time + heartrate streams, each
-    set with ``performed_at`` gets ``avg_hr``/``max_hr`` merged in and the
-    top-level payload carries ``hr_curve`` + ``activity_start_iso``."""
+async def test_session_summary_merges_hr_via_link_with_segmentation(db: AsyncSession):
+    """When a ``strength_session_links`` row exists pointing at a Strava
+    activity whose streams are cached, segmentation runs lazily on the
+    first GET and the payload carries the ``link`` / ``segmentation`` /
+    ``hr_curve`` / ``segment_markers`` blocks plus per-set ``avg_hr`` /
+    ``max_hr``."""
     today = date.today()
     start = datetime(today.year, today.month, today.day, 9, 0, 0)
     activity = Activity(
@@ -199,8 +241,38 @@ async def test_session_summary_merges_hr_when_streams_cached(db: AsyncSession):
     )
     db.add(activity)
     await db.flush()
-    time_stream = list(range(0, 600))
-    hr_stream = [140 + (t // 120) * 5 for t in time_stream]
+    # Synthetic HR trace with 2 clean peaks separated by 120s of rest.
+    time_stream: list[int] = []
+    hr_stream: list[float] = []
+    import math as _math
+    t = 0
+    for _ in range(60):
+        time_stream.append(t)
+        hr_stream.append(110.0)
+        t += 1
+    for k in range(30):
+        x = t + k
+        center = t + 15
+        d = (x - center) / 7.5
+        hr_stream.append(110.0 + 50.0 * _math.exp(-(d * d) / 2))
+        time_stream.append(x)
+    t += 30
+    for _ in range(120):
+        time_stream.append(t)
+        hr_stream.append(110.0)
+        t += 1
+    for k in range(30):
+        x = t + k
+        center = t + 15
+        d = (x - center) / 7.5
+        hr_stream.append(110.0 + 50.0 * _math.exp(-(d * d) / 2))
+        time_stream.append(x)
+    t += 30
+    for _ in range(60):
+        time_stream.append(t)
+        hr_stream.append(110.0)
+        t += 1
+
     db.add(ActivityStream(activity_id=activity.id, stream_type="time", data=time_stream))
     db.add(
         ActivityStream(activity_id=activity.id, stream_type="heartrate", data=hr_stream)
@@ -214,8 +286,6 @@ async def test_session_summary_merges_hr_when_streams_cached(db: AsyncSession):
                 set_number=1,
                 reps=5,
                 weight_kg=100,
-                performed_at=datetime(today.year, today.month, today.day, 9, 2, 0),
-                activity_id=activity.id,
             ),
             StrengthSet(
                 date=today,
@@ -223,39 +293,177 @@ async def test_session_summary_merges_hr_when_streams_cached(db: AsyncSession):
                 set_number=2,
                 reps=5,
                 weight_kg=100,
-                performed_at=None,
-                activity_id=activity.id,
             ),
         ],
     )
+    # The link table is the source of truth for the link target now.
+    db.add(
+        StrengthSessionLink(
+            session_date=today,
+            source="strava",
+            activity_id=activity.id,
+            segmentation_status="pending",
+        )
+    )
+    await db.commit()
 
     summary = await session_summary(db, today)
     assert summary is not None
-    assert summary["activity_start_iso"] == start.isoformat()
+    # Back-compat: activity_id still exposed for the Strava source.
+    assert summary["activity_id"] == activity.id
+    assert summary["link"] is not None
+    assert summary["link"]["source"] == "strava"
+    assert summary["link"]["ref_id"] == activity.id
+    assert summary["segmentation"] is not None
+    assert summary["segmentation"]["status"] in {"ok", "too_few", "too_many"}
+    assert summary["segmentation"]["target_count"] == 2
     assert isinstance(summary["hr_curve"], list) and summary["hr_curve"]
-    logged = next(s for s in summary["sets"] if s["performed_at"] is not None)
-    unlogged = next(s for s in summary["sets"] if s["performed_at"] is None)
-    assert "avg_hr" in logged and "max_hr" in logged
-    assert logged["avg_hr"] <= logged["max_hr"]
-    assert "avg_hr" not in unlogged
-    # And also merged into the per-exercise breakdown.
-    ex_sets = summary["exercises"][0]["sets"]
-    assert any("avg_hr" in s for s in ex_sets)
+    assert summary["activity_start_iso"] == start.isoformat()
+    assert summary["segment_markers"]
+    # Each detected set carries avg/max HR.
+    detected_count = summary["segmentation"]["detected_count"]
+    sets_with_hr = [s for s in summary["sets"] if "avg_hr" in s]
+    assert len(sets_with_hr) == detected_count
 
 
-async def test_session_summary_no_hr_when_streams_missing(db: AsyncSession):
-    """No cached streams → payload has no ``hr_curve`` / ``activity_start_iso``."""
+async def test_session_summary_maps_segments_to_chronological_logged_order(
+    db: AsyncSession,
+):
+    """Regression for code-reviewer finding #1.
+
+    An alternating Squat/Bench/Squat/Bench session: alphabetical display
+    order is ``[Bench#1, Bench#2, Squat#1, Squat#2]`` but the
+    chronologically logged order is
+    ``[Squat#1, Bench#1, Squat#2, Bench#2]``. Segments come out of
+    segmentation in chronological order — they must map to the logged
+    order, not the alphabetical display order.
+
+    Setup: four Gaussian peaks with strictly ascending magnitudes (so
+    each peak has a unique max HR). The test asserts that ``Squat #1``
+    (logged first) gets the lowest peak and ``Bench #2`` (logged last)
+    gets the highest peak. Before the fix, alphabetical iteration order
+    would have caused ``Bench #1`` to receive the lowest peak.
+    """
+    import math as _math
+
     today = date.today()
     start = datetime(today.year, today.month, today.day, 9, 0, 0)
     activity = Activity(
         strava_id=999_002,
-        name="Lift",
+        name="Alternating block",
         sport_type="WeightTraining",
         start_date=start,
         start_date_local=start,
     )
     db.add(activity)
     await db.flush()
+
+    # 4 peaks at t=30, 150, 270, 390 with peak magnitudes 160, 170, 180, 190.
+    time_stream: list[int] = []
+    hr_stream: list[float] = []
+    peak_centers = [30, 150, 270, 390]
+    peak_magnitudes = [50.0, 60.0, 70.0, 80.0]  # baseline 110 → 160/170/180/190
+    duration = 480
+    for t in range(duration):
+        baseline = 110.0
+        hr = baseline
+        # Add the contribution of every nearby peak (they're well
+        # separated so cross-talk is negligible).
+        for c, m in zip(peak_centers, peak_magnitudes):
+            d = (t - c) / 7.5
+            hr += m * _math.exp(-(d * d) / 2)
+        time_stream.append(t)
+        hr_stream.append(hr)
+    db.add(ActivityStream(activity_id=activity.id, stream_type="time", data=time_stream))
+    db.add(
+        ActivityStream(activity_id=activity.id, stream_type="heartrate", data=hr_stream)
+    )
+
+    # Logged in chronological order Squat/Bench/Squat/Bench, each tagged
+    # with the ``performed_at`` of the corresponding peak so the sort
+    # key is unambiguous (no tie-breaking on id alone).
+    base = datetime(today.year, today.month, today.day, 9, 0, 0)
+    squat1 = StrengthSet(
+        date=today,
+        exercise_name="Squat",
+        set_number=1,
+        reps=5,
+        weight_kg=100,
+        performed_at=base + timedelta(seconds=30),
+    )
+    bench1 = StrengthSet(
+        date=today,
+        exercise_name="Bench",
+        set_number=1,
+        reps=5,
+        weight_kg=80,
+        performed_at=base + timedelta(seconds=150),
+    )
+    squat2 = StrengthSet(
+        date=today,
+        exercise_name="Squat",
+        set_number=2,
+        reps=5,
+        weight_kg=100,
+        performed_at=base + timedelta(seconds=270),
+    )
+    bench2 = StrengthSet(
+        date=today,
+        exercise_name="Bench",
+        set_number=2,
+        reps=5,
+        weight_kg=80,
+        performed_at=base + timedelta(seconds=390),
+    )
+    await _seed(db, [squat1, bench1, squat2, bench2])
+
+    db.add(
+        StrengthSessionLink(
+            session_date=today,
+            source="strava",
+            activity_id=activity.id,
+            segmentation_status="pending",
+        )
+    )
+    await db.commit()
+
+    summary = await session_summary(db, today)
+    assert summary is not None
+    # Segmentation should find all 4 peaks.
+    assert summary["segmentation"]["status"] in {"ok", "too_few", "too_many"}
+    assert summary["segmentation"]["detected_count"] == 4
+    assert summary["segmentation"]["target_count"] == 4
+
+    sets_by_key = {(s["exercise_name"], s["set_number"]): s for s in summary["sets"]}
+    # Chronologically first set (Squat #1) gets the lowest peak (~160);
+    # chronologically last (Bench #2) gets the highest (~190).
+    assert sets_by_key[("Squat", 1)]["max_hr"] == pytest.approx(160.0, abs=2.0)
+    assert sets_by_key[("Bench", 1)]["max_hr"] == pytest.approx(170.0, abs=2.0)
+    assert sets_by_key[("Squat", 2)]["max_hr"] == pytest.approx(180.0, abs=2.0)
+    assert sets_by_key[("Bench", 2)]["max_hr"] == pytest.approx(190.0, abs=2.0)
+
+    # ``segment_markers`` must carry session-wide ordinals (1..4) over
+    # chronological order — code-reviewer finding #2. The picker label
+    # in ``SessionHRCurve`` reads ``set_number`` directly, so the
+    # ordinal sequence must be 1, 2, 3, 4 — not a per-exercise repeat
+    # like 1, 1, 2, 2.
+    markers = summary["segment_markers"]
+    assert [m["set_number"] for m in markers] == [1, 2, 3, 4]
+    # ``per_exercise_set_number`` is preserved for tooltip captions.
+    # Chronological exercise sequence: Squat / Bench / Squat / Bench.
+    assert [m["exercise_name"] for m in markers] == [
+        "Squat",
+        "Bench",
+        "Squat",
+        "Bench",
+    ]
+    assert [m["per_exercise_set_number"] for m in markers] == [1, 1, 2, 2]
+
+
+async def test_session_summary_no_link_returns_empty_link_blocks(db: AsyncSession):
+    """No ``strength_session_links`` row → ``link`` / ``segmentation`` /
+    ``hr_curve`` / ``activity_start_iso`` all None."""
+    today = date.today()
     await _seed(
         db,
         [
@@ -266,14 +474,15 @@ async def test_session_summary_no_hr_when_streams_missing(db: AsyncSession):
                 reps=5,
                 weight_kg=100,
                 performed_at=datetime(today.year, today.month, today.day, 9, 2, 0),
-                activity_id=activity.id,
             ),
         ],
     )
     summary = await session_summary(db, today)
     assert summary is not None
-    assert "hr_curve" not in summary
-    assert "activity_start_iso" not in summary
+    assert summary["link"] is None
+    assert summary["segmentation"] is None
+    assert summary["hr_curve"] is None
+    assert summary["activity_start_iso"] is None
     assert "avg_hr" not in summary["sets"][0]
 
 

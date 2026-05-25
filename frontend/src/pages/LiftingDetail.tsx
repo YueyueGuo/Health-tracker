@@ -1,14 +1,22 @@
+import { useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { useApi } from "../hooks/useApi";
 import {
   fetchStrengthSessionOptional,
+  resegmentSession,
+  unlinkWorkout,
   type ExerciseBreakdown,
   type StrengthSessionDetail,
 } from "../api/strength";
+import { getErrorMessage } from "../utils/errors";
 import { SessionSummaryCard } from "../components/lifting/SessionSummaryCard";
 import { ExerciseDetailCard } from "../components/lifting/ExerciseDetailCard";
 import { SupersetBracket } from "../components/lifting/SupersetBracket";
+import DeviceWorkoutPanel from "../components/strength/DeviceWorkoutPanel";
+import LinkWorkoutPicker from "../components/strength/LinkWorkoutPicker";
+import SessionHRCurve from "../components/strength/SessionHRCurve";
 
 /** A renderable chunk: either a single standalone exercise or a contiguous
  *  superset group of exercises that share a non-null `superset_group_id`. */
@@ -82,7 +90,7 @@ export default function LiftingDetail() {
       ) : data == null ? (
         <EmptyState onBack={() => navigate(-1)} />
       ) : (
-        <SessionBody session={data} />
+        <SessionBody session={data} dateKey={dateKey} />
       )}
     </div>
   );
@@ -149,11 +157,75 @@ function EmptyState({ onBack }: { onBack: () => void }) {
   );
 }
 
-function SessionBody({ session }: { session: StrengthSessionDetail }) {
+function SessionBody({
+  session,
+  dateKey,
+}: {
+  session: StrengthSessionDetail;
+  dateKey: string;
+}) {
+  const queryClient = useQueryClient();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [panelError, setPanelError] = useState<string | null>(null);
+
+  const reload = async () => {
+    await queryClient.invalidateQueries({
+      queryKey: ["strength", "session", dateKey],
+    });
+  };
+
+  const handleUnlink = async () => {
+    setBusy(true);
+    setPanelError(null);
+    try {
+      await unlinkWorkout(dateKey);
+      await reload();
+    } catch (e) {
+      setPanelError(getErrorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRetry = async () => {
+    setBusy(true);
+    setPanelError(null);
+    try {
+      await resegmentSession(dateKey);
+      await reload();
+    } catch (e) {
+      setPanelError(getErrorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const groups = buildExerciseGroups(session.exercises);
+  const showCurve =
+    session.hr_curve != null ||
+    session.segmentation?.status === "no_curve";
+
   return (
-    <div>
+    <div className="space-y-3">
       <SessionSummaryCard session={session} />
+      <DeviceWorkoutPanel
+        date={dateKey}
+        link={session.link}
+        segmentation={session.segmentation}
+        onOpenPicker={() => setPickerOpen(true)}
+        onUnlink={handleUnlink}
+        onRetry={handleRetry}
+        busy={busy}
+        error={panelError}
+      />
+      {showCurve && (
+        <SessionHRCurve
+          hrCurve={session.hr_curve}
+          segmentMarkers={session.segment_markers}
+          segmentationStatus={session.segmentation?.status ?? null}
+        />
+      )}
       <div className="space-y-2">
         {groups.map((g, idx) =>
           g.kind === "single" ? (
@@ -177,6 +249,12 @@ function SessionBody({ session }: { session: StrengthSessionDetail }) {
           ),
         )}
       </div>
+      <LinkWorkoutPicker
+        date={dateKey}
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onLinked={() => void reload()}
+      />
     </div>
   );
 }

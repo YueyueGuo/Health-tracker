@@ -5,6 +5,7 @@ import {
   Dumbbell,
   Footprints,
   Heart,
+  HeartPulse,
   Moon,
   Mountain,
 } from "lucide-react";
@@ -73,6 +74,14 @@ export function HistoryEventCard({ event, onClick }: Props) {
                 {event.title}
               </h3>
               <SourceBadge source={event.sourceBadge} />
+              {event.type === "Strength" && event.hrLinked && (
+                <HeartPulse
+                  size={14}
+                  className="text-brand-red"
+                  aria-label="HR-linked"
+                  data-testid="hr-linked-indicator"
+                />
+              )}
             </div>
             <p className="text-[11px] text-slate-500">
               {formatRelativeDate(event.timestamp)}
