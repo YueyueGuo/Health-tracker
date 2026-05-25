@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { renderWithQuery } from "../test/renderWithQuery";
 import type {
   ExerciseBreakdown,
+  StrengthSession,
   StrengthSessionDetail,
 } from "../api/strength";
 
@@ -14,9 +15,14 @@ import type {
 type StrengthSet = StrengthSessionDetail["sets"][number];
 
 const fetchStrengthSessionOptional = vi.fn();
+const fetchStrengthSessions = vi.fn<(limit?: number) => Promise<StrengthSession[]>>();
 vi.mock("../api/strength", () => ({
   fetchStrengthSessionOptional: (...args: unknown[]) =>
     (fetchStrengthSessionOptional as unknown as (
+      ...a: unknown[]
+    ) => Promise<unknown>)(...args),
+  fetchStrengthSessions: (...args: unknown[]) =>
+    (fetchStrengthSessions as unknown as (
       ...a: unknown[]
     ) => Promise<unknown>)(...args),
 }));
@@ -24,6 +30,15 @@ vi.mock("../api/strength", () => ({
 vi.mock("../hooks/useUnits", () => ({
   useUnits: () => ({ units: "imperial", setUnits: () => {}, toggle: () => {} }),
 }));
+
+const { mockNavigate } = vi.hoisted(() => ({ mockNavigate: vi.fn() }));
+vi.mock("react-router-dom", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router-dom")>();
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+  };
+});
 
 import LiftingDetail from "./LiftingDetail";
 
@@ -71,6 +86,9 @@ function renderRoute(date = "2026-05-24") {
 describe("LiftingDetail page", () => {
   beforeEach(() => {
     fetchStrengthSessionOptional.mockReset();
+    fetchStrengthSessions.mockReset();
+    fetchStrengthSessions.mockResolvedValue([]);
+    mockNavigate.mockClear();
   });
 
   it("renders summary card + standalone exercises when no supersets", async () => {
@@ -213,5 +231,76 @@ describe("LiftingDetail page", () => {
     expect(
       screen.getByRole("button", { name: /back to history/i }),
     ).toBeInTheDocument();
+  });
+
+  describe("prev/next navigation arrows", () => {
+    function liftSession(date: string): StrengthSession {
+      return {
+        date,
+        exercise_count: 1,
+        total_sets: 1,
+        total_volume_kg: 100,
+        activity_id: null,
+      };
+    }
+
+    it("renders both arrows and disables them when current is the only session", async () => {
+      fetchStrengthSessionOptional.mockResolvedValue(null);
+      fetchStrengthSessions.mockResolvedValue([liftSession("2026-05-24")]);
+      renderRoute("2026-05-24");
+
+      const prev = await screen.findByRole("button", {
+        name: "Previous lifting session",
+      });
+      const next = await screen.findByRole("button", {
+        name: "Next lifting session",
+      });
+      await waitFor(() => expect(prev).toBeDisabled());
+      expect(next).toBeDisabled();
+    });
+
+    it("clicking prev/next navigates to the neighboring lifting session URL", async () => {
+      fetchStrengthSessionOptional.mockResolvedValue(null);
+      fetchStrengthSessions.mockResolvedValue([
+        liftSession("2026-05-26"),
+        liftSession("2026-05-24"),
+        liftSession("2026-05-22"),
+      ]);
+      renderRoute("2026-05-24");
+
+      const prev = await screen.findByRole("button", {
+        name: "Previous lifting session",
+      });
+      const next = await screen.findByRole("button", {
+        name: "Next lifting session",
+      });
+      await waitFor(() => expect(prev).not.toBeDisabled());
+      await waitFor(() => expect(next).not.toBeDisabled());
+
+      fireEvent.click(prev);
+      expect(mockNavigate).toHaveBeenCalledWith("/workouts/lifting/2026-05-22");
+
+      mockNavigate.mockClear();
+      fireEvent.click(next);
+      expect(mockNavigate).toHaveBeenCalledWith("/workouts/lifting/2026-05-26");
+    });
+
+    it("disables next when current is the newest known session", async () => {
+      fetchStrengthSessionOptional.mockResolvedValue(null);
+      fetchStrengthSessions.mockResolvedValue([
+        liftSession("2026-05-24"),
+        liftSession("2026-05-22"),
+      ]);
+      renderRoute("2026-05-24");
+
+      const next = await screen.findByRole("button", {
+        name: "Next lifting session",
+      });
+      const prev = await screen.findByRole("button", {
+        name: "Previous lifting session",
+      });
+      await waitFor(() => expect(next).toBeDisabled());
+      await waitFor(() => expect(prev).not.toBeDisabled());
+    });
   });
 });

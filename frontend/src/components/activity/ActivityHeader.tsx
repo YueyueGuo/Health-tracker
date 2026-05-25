@@ -1,10 +1,14 @@
+import { useCallback, useEffect } from "react";
 import { ChevronLeft } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import ClassificationBadge from "../ClassificationBadge";
 import SourceBadge from "./SourceBadge";
-import type { ActivityDetail } from "../../api/activities";
+import type { ActivityDetail, ActivitySource } from "../../api/activities";
 import { activitySourceToBadge } from "../../lib/historyEvents";
 import { formatActivityDateTime } from "./utils";
+import { DetailNavArrows } from "../ui/DetailNavArrows";
+import { useActivityNeighbors } from "../../hooks/useDetailNeighbors";
+import { isTypingTarget } from "../../utils/dom";
 
 interface Props {
   activity: ActivityDetail;
@@ -18,6 +22,40 @@ export default function ActivityHeader({
   onReclassify,
 }: Props) {
   const navigate = useNavigate();
+  // Apple Health and Strava ids can collide — pin both id+source for neighbor
+  // resolution and always include `?source=` in the URL when stepping.
+  const currentSource: ActivitySource = activity.source ?? "strava";
+  const {
+    prev: prevActivity,
+    next: nextActivity,
+    loading: neighborsLoading,
+  } = useActivityNeighbors(activity.id, currentSource);
+
+  const goPrev = useCallback(() => {
+    if (!prevActivity) return;
+    navigate(`/activities/${prevActivity.id}?source=${prevActivity.source}`);
+  }, [navigate, prevActivity]);
+  const goNext = useCallback(() => {
+    if (!nextActivity) return;
+    navigate(`/activities/${nextActivity.id}?source=${nextActivity.source}`);
+  }, [navigate, nextActivity]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isTypingTarget(e.target)) return;
+      if (e.key === "ArrowLeft" && prevActivity) {
+        e.preventDefault();
+        goPrev();
+      } else if (e.key === "ArrowRight" && nextActivity) {
+        e.preventDefault();
+        goNext();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [goPrev, goNext, prevActivity, nextActivity]);
+
   return (
     <div className="px-1 mb-3 sticky top-0 z-20 bg-dashboard/95 backdrop-blur-md pt-1 pb-3 -mx-4 px-4 sm:mx-0 sm:px-0">
       <div className="flex items-center gap-3">
@@ -40,6 +78,16 @@ export default function ActivityHeader({
             {formatActivityDateTime(activity.start_date_local)}
           </p>
         </div>
+        <DetailNavArrows
+          onPrev={goPrev}
+          onNext={goNext}
+          hasPrev={prevActivity != null}
+          hasNext={nextActivity != null}
+          loading={neighborsLoading}
+          size={18}
+          prevLabel="Previous workout"
+          nextLabel="Next workout"
+        />
       </div>
       <div className="flex items-center flex-wrap gap-2 mt-2 pl-9">
         <ClassificationBadge

@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReactElement, ReactNode } from "react";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { SleepSession } from "../../api/sleep";
 import type { RecoveryRecord } from "../../api/recovery";
 
@@ -9,6 +11,13 @@ vi.mock("../../hooks/useUnits", () => ({
   useUnits: () => ({ units: "imperial" }),
   formatTemperature: (c: number | null | undefined) =>
     c == null ? "—" : `${Math.round(c)}°`,
+}));
+
+// `useSleepNeighbors` calls fetchSleepSessions(365). Default to an empty list
+// so the arrow buttons render disabled — individual tests opt into a richer
+// dataset when they want to exercise prev/next.
+vi.mock("../../api/sleep", () => ({
+  fetchSleepSessions: vi.fn(() => Promise.resolve([])),
 }));
 
 const { mockNavigate } = vi.hoisted(() => ({ mockNavigate: vi.fn() }));
@@ -22,6 +31,28 @@ vi.mock("react-router-dom", async (importOriginal) => {
 });
 
 import { SleepRecoveryDetailsCard } from "./SleepRecoveryDetailsCard";
+import { fetchSleepSessions } from "../../api/sleep";
+
+const mockedFetchSleepSessions = vi.mocked(fetchSleepSessions);
+
+function makeClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: 0, staleTime: 0 },
+    },
+  });
+}
+
+/** Wrap the existing `<MemoryRouter>` callsites with a QueryClientProvider
+ *  without rewriting every test — `useApi` (added for arrow neighbors) now
+ *  requires a client to be in scope. */
+function renderWithProviders(ui: ReactElement) {
+  const client = makeClient();
+  function Wrapper({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  }
+  return render(ui, { wrapper: Wrapper });
+}
 
 const whoopSleep: SleepSession = {
   id: 101,
@@ -88,10 +119,12 @@ const recovery: RecoveryRecord = {
 describe("SleepRecoveryDetailsCard", () => {
   beforeEach(() => {
     mockNavigate.mockClear();
+    mockedFetchSleepSessions.mockReset();
+    mockedFetchSleepSessions.mockResolvedValue([]);
   });
 
   it("renders both source labels and the score circles", () => {
-    render(
+    renderWithProviders(
       <MemoryRouter>
         <SleepRecoveryDetailsCard
           whoopSleep={whoopSleep}
@@ -116,7 +149,7 @@ describe("SleepRecoveryDetailsCard", () => {
   });
 
   it("renders even when recovery is missing", () => {
-    render(
+    renderWithProviders(
       <MemoryRouter>
         <SleepRecoveryDetailsCard
           whoopSleep={whoopSleep}
@@ -136,7 +169,7 @@ describe("SleepRecoveryDetailsCard", () => {
   it("back button falls back to dashboard when entered via deep link", () => {
     // Single MemoryRouter entry — react-router classifies the initial
     // navigation as "POP", mimicking a fresh-tab deep link to /sleep.
-    render(
+    renderWithProviders(
       <MemoryRouter initialEntries={["/sleep"]}>
         <SleepRecoveryDetailsCard
           whoopSleep={whoopSleep}
@@ -156,7 +189,7 @@ describe("SleepRecoveryDetailsCard", () => {
     // Drive a real in-app PUSH (Link click) so useNavigationType reports
     // "PUSH" when the detail card mounts. A static initialIndex doesn't
     // work — MemoryRouter classifies its initial render as "POP".
-    render(
+    renderWithProviders(
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
           <Route path="/" element={<Link to="/sleep">Open sleep</Link>} />
@@ -196,7 +229,7 @@ describe("SleepRecoveryDetailsCard", () => {
     };
 
     it("renders total duration + bed→wake time for both sources when present", () => {
-      render(
+      renderWithProviders(
         <MemoryRouter>
           <SleepRecoveryDetailsCard
             whoopSleep={baseWhoop}
@@ -222,7 +255,7 @@ describe("SleepRecoveryDetailsCard", () => {
         ...baseWhoop,
         bed_time: null,
       };
-      render(
+      renderWithProviders(
         <MemoryRouter>
           <SleepRecoveryDetailsCard
             whoopSleep={whoopWithoutBed}
@@ -243,7 +276,7 @@ describe("SleepRecoveryDetailsCard", () => {
         ...baseWhoop,
         total_duration: null,
       };
-      render(
+      renderWithProviders(
         <MemoryRouter>
           <SleepRecoveryDetailsCard
             whoopSleep={whoopWithoutTotal}
@@ -266,7 +299,7 @@ describe("SleepRecoveryDetailsCard", () => {
         wake_time: null,
         total_duration: null,
       };
-      render(
+      renderWithProviders(
         <MemoryRouter>
           <SleepRecoveryDetailsCard
             whoopSleep={whoopBare}
@@ -283,7 +316,7 @@ describe("SleepRecoveryDetailsCard", () => {
     });
 
     it("uses 12-hour formatting (AM / PM) in the bar header", () => {
-      render(
+      renderWithProviders(
         <MemoryRouter>
           <SleepRecoveryDetailsCard
             whoopSleep={baseWhoop}
@@ -310,7 +343,7 @@ describe("SleepRecoveryDetailsCard", () => {
         light_sleep: 100,
         awake_time: 40,
       };
-      render(
+      renderWithProviders(
         <MemoryRouter>
           <SleepRecoveryDetailsCard
             whoopSleep={wideStages}
@@ -334,7 +367,7 @@ describe("SleepRecoveryDetailsCard", () => {
         light_sleep: 296,
         awake_time: 8, // 8 / 504 ≈ 1.6% → renders as 1% after largest-remainder rounding
       };
-      render(
+      renderWithProviders(
         <MemoryRouter>
           <SleepRecoveryDetailsCard
             whoopSleep={narrowAwake}
@@ -354,7 +387,7 @@ describe("SleepRecoveryDetailsCard", () => {
 
   describe("Sleep Stages comparison table", () => {
     it("renders bare durations without parenthetical percentages", () => {
-      render(
+      renderWithProviders(
         <MemoryRouter>
           <SleepRecoveryDetailsCard
             whoopSleep={whoopSleep}
@@ -370,6 +403,121 @@ describe("SleepRecoveryDetailsCard", () => {
       // WHOOP deep = 90 → "1h 30m"; awake = 20 → "20m".
       expect(screen.getByText("1h 30m")).toBeInTheDocument();
       expect(screen.getByText("20m")).toBeInTheDocument();
+    });
+  });
+
+  describe("Prev/Next navigation arrows", () => {
+    const olderWhoop: SleepSession = {
+      ...whoopSleep,
+      id: 301,
+      date: "2026-05-20",
+    };
+    const olderEight: SleepSession = {
+      ...eightSleep,
+      id: 302,
+      date: "2026-05-20",
+    };
+    const newerWhoop: SleepSession = {
+      ...whoopSleep,
+      id: 303,
+      date: "2026-05-24",
+    };
+    const newerEight: SleepSession = {
+      ...eightSleep,
+      id: 304,
+      date: "2026-05-24",
+    };
+
+    it("renders both arrow buttons", async () => {
+      mockedFetchSleepSessions.mockResolvedValue([whoopSleep, eightSleep]);
+      renderWithProviders(
+        <MemoryRouter initialEntries={["/sleep?date=2026-05-22"]}>
+          <SleepRecoveryDetailsCard
+            whoopSleep={whoopSleep}
+            eightSleep={eightSleep}
+            recovery={recovery}
+          />
+        </MemoryRouter>,
+      );
+
+      expect(
+        await screen.findByRole("button", { name: "Previous night" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Next night" }),
+      ).toBeInTheDocument();
+    });
+
+    it("disables both arrows when only the current night exists", async () => {
+      mockedFetchSleepSessions.mockResolvedValue([whoopSleep, eightSleep]);
+      renderWithProviders(
+        <MemoryRouter initialEntries={["/sleep?date=2026-05-22"]}>
+          <SleepRecoveryDetailsCard
+            whoopSleep={whoopSleep}
+            eightSleep={eightSleep}
+            recovery={recovery}
+          />
+        </MemoryRouter>,
+      );
+
+      const prev = await screen.findByRole("button", { name: "Previous night" });
+      const next = screen.getByRole("button", { name: "Next night" });
+      // `aria-disabled` survives @testing-library role queries even with the
+      // disabled attribute set.
+      await screen.findByRole("button", { name: "Previous night" });
+      expect(prev).toBeDisabled();
+      expect(next).toBeDisabled();
+    });
+
+    it("clicking prev navigates to /sleep?date=<older night>", async () => {
+      mockedFetchSleepSessions.mockResolvedValue([
+        newerWhoop,
+        newerEight,
+        whoopSleep,
+        eightSleep,
+        olderWhoop,
+        olderEight,
+      ]);
+      renderWithProviders(
+        <MemoryRouter initialEntries={["/sleep?date=2026-05-22"]}>
+          <SleepRecoveryDetailsCard
+            whoopSleep={whoopSleep}
+            eightSleep={eightSleep}
+            recovery={recovery}
+          />
+        </MemoryRouter>,
+      );
+
+      const prev = await screen.findByRole("button", { name: "Previous night" });
+      // Wait for the neighbors hook to resolve before clicking.
+      await new Promise((r) => setTimeout(r, 0));
+      fireEvent.click(prev);
+      expect(mockNavigate).toHaveBeenCalledWith("/sleep?date=2026-05-20");
+    });
+
+    it("clicking next navigates to /sleep?date=<newer night>", async () => {
+      mockedFetchSleepSessions.mockResolvedValue([
+        newerWhoop,
+        newerEight,
+        whoopSleep,
+        eightSleep,
+        olderWhoop,
+        olderEight,
+      ]);
+      renderWithProviders(
+        <MemoryRouter initialEntries={["/sleep?date=2026-05-22"]}>
+          <SleepRecoveryDetailsCard
+            whoopSleep={whoopSleep}
+            eightSleep={eightSleep}
+            recovery={recovery}
+          />
+        </MemoryRouter>,
+      );
+
+      const next = await screen.findByRole("button", { name: "Next night" });
+      await new Promise((r) => setTimeout(r, 0));
+      fireEvent.click(next);
+      expect(mockNavigate).toHaveBeenCalledWith("/sleep?date=2026-05-24");
     });
   });
 });
