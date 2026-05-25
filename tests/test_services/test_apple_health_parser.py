@@ -130,6 +130,57 @@ def test_workout_preserves_extra_series_via_model_dump():
     assert "route" in dumped
 
 
+# Regression: HAE's "Aggregate workout data = OFF" config sends declared
+# metric fields (stepCount, heart rate, etc.) as time-series arrays
+# rather than scalar {qty, units} objects. A real prod HAE export hit
+# this against PR #46 with all-metric-array shapes and got a 422 for
+# every workout. The model must accept either shape.
+_SERIES_WORKOUT = {
+    "id": "C9F4E3D2-A1B0-4567-89AB-CDEF01234567",
+    "name": "Running",
+    "start": "2026-05-23 17:00:00 -0400",
+    "end": "2026-05-23 18:00:00 -0400",
+    "duration": 3600.0,
+    "stepCount": [
+        {
+            "date": "2026-05-23 17:22:14 -0400",
+            "qty": 17.92905971749749,
+            "source": "Yueyue’s iphone 14",
+            "units": "steps",
+        },
+        {
+            "date": "2026-05-23 17:23:14 -0400",
+            "qty": 17.07094028250251,
+            "source": "Yueyue’s iphone 14",
+            "units": "steps",
+        },
+    ],
+}
+
+
+def test_batch_accepts_series_shape_metric():
+    """Series-shaped metrics must validate (was 422 before the fix)."""
+    batch = HAEBatch.model_validate({"data": {"workouts": [_SERIES_WORKOUT]}})
+    w = batch.data.workouts[0]
+    assert isinstance(w.stepCount, list)
+    assert len(w.stepCount) == 2
+    assert w.stepCount[0]["qty"] == 17.92905971749749
+
+
+def test_flatten_series_shape_returns_none_scalar_and_preserves_raw():
+    """Series-shaped metric → scalar attr is ``None``; series rides in
+    ``raw_payload`` so we don't lose data."""
+    w = HAEWorkout.model_validate(_SERIES_WORKOUT)
+    parsed = flatten_hae_workout(w)
+    assert parsed.external_id == _SERIES_WORKOUT["id"]
+    # No aggregation today — the series is non-scalar, so the typed
+    # scalar attr is None. (Aggregation is a feature, not this fix.)
+    assert parsed.active_energy_kcal is None
+    # Series data still reaches the DB via raw_payload.
+    assert isinstance(parsed.raw_payload["stepCount"], list)
+    assert parsed.raw_payload["stepCount"][0]["qty"] == 17.92905971749749
+
+
 # ── flatten_hae_workout ─────────────────────────────────────────────
 
 

@@ -61,13 +61,20 @@ class HAEQty(BaseModel):
         return float(self.qty)
 
 
+# HAE can send any metric field in one of two shapes depending on the
+# user's "Aggregate workout data" toggle: a scalar {qty, units} (HAEQty)
+# or a per-minute time series [{date, qty, units, source}, ...]. Declared
+# fields must accept either or pydantic 422s the whole batch.
+HAEMetric = HAEQty | list[dict[str, Any]] | None
+
+
 class HAEWorkout(BaseModel):
     """Single workout entry from an HAE batch.
 
-    All numeric fields except ``duration`` arrive wrapped in
-    :class:`HAEQty`. Extra series like ``heartRateData`` / ``route`` are
-    preserved on the model via Pydantic's ``model_extra`` so they land
-    intact in ``raw_payload``.
+    Numeric metric fields arrive either as a scalar :class:`HAEQty` or
+    as a time-series list (see :data:`HAEMetric`). Extra series like
+    ``heartRateData`` / ``route`` ride along via Pydantic's
+    ``model_extra`` so they land intact in ``raw_payload``.
     """
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
@@ -77,18 +84,18 @@ class HAEWorkout(BaseModel):
     start: str
     end: str
     duration: float
-    activeEnergyBurned: HAEQty | None = None
-    totalEnergy: HAEQty | None = None
-    distance: HAEQty | None = None
-    avgHeartRate: HAEQty | None = None
-    maxHeartRate: HAEQty | None = None
-    minHeartRate: HAEQty | None = None
-    avgSpeed: HAEQty | None = None
-    maxSpeed: HAEQty | None = None
-    elevationUp: HAEQty | None = None
-    flightsClimbed: HAEQty | None = None
-    stepCount: HAEQty | None = None
-    stepCadence: HAEQty | None = None
+    activeEnergyBurned: HAEMetric = None
+    totalEnergy: HAEMetric = None
+    distance: HAEMetric = None
+    avgHeartRate: HAEMetric = None
+    maxHeartRate: HAEMetric = None
+    minHeartRate: HAEMetric = None
+    avgSpeed: HAEMetric = None
+    maxSpeed: HAEMetric = None
+    elevationUp: HAEMetric = None
+    flightsClimbed: HAEMetric = None
+    stepCount: HAEMetric = None
+    stepCadence: HAEMetric = None
     location: str | None = None
 
 
@@ -147,9 +154,16 @@ class ParsedWorkout:
     raw_payload: dict[str, Any]
 
 
-def _opt_qty(qty: HAEQty | None, unit_key: str) -> float | None:
-    """Unwrap an :class:`HAEQty` validating against ``_EXPECTED_UNITS``."""
-    if qty is None:
+def _opt_qty(qty: HAEMetric, unit_key: str) -> float | None:
+    """Unwrap an :class:`HAEQty` validating against ``_EXPECTED_UNITS``.
+
+    Series-shaped values (HAE's ``[{date, qty, units}, ...]`` format,
+    emitted when "Aggregate workout data" is off in HAE) return
+    ``None`` — the raw series is still preserved in ``raw_payload``
+    via ``model_dump``. We don't aggregate; that's a feature decision,
+    not a bug fix.
+    """
+    if qty is None or isinstance(qty, list):
         return None
     return qty.as_unit(_EXPECTED_UNITS[unit_key])
 
