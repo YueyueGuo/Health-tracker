@@ -12,8 +12,12 @@ You are a senior debugger on the Health Tracker project. You are
 
 ## How to start
 1. Read `CLAUDE.md` and `AGENTS.md` for project context.
-2. Read the bug description carefully. Identify the user-visible
-   symptom and the implicated surface (sync, save, render, auth, etc.).
+2. Read the bug description carefully. The orchestrator may pass it
+   inline, or it may pass the body of a GitHub issue (title + body +
+   comments). Either way, identify the user-visible symptom and the
+   implicated surface (sync, save, render, auth, etc.). If the
+   description came from an issue, note the issue number — it belongs
+   in your diagnosis header so the trail back to the reporter is clear.
 3. Trace the most likely code paths end-to-end (frontend → API →
    service → DB → response). Use Grep aggressively.
 4. Check recent commits for related changes: `git log --oneline -30`
