@@ -19,6 +19,7 @@ import {
 } from "../hooks/useProfilePreferences";
 import { fetchProfile, patchProfile } from "../api/profile";
 import { fetchSyncStatus } from "../api/sync";
+import { UnitsProvider } from "../hooks/useUnits";
 
 const mockedFetchSyncStatus = vi.mocked(fetchSyncStatus);
 const mockedFetchProfile = vi.mocked(fetchProfile);
@@ -27,7 +28,9 @@ const mockedPatchProfile = vi.mocked(patchProfile);
 function renderProfile() {
   return renderWithQuery(
     <MemoryRouter initialEntries={["/profile"]}>
-      <Profile />
+      <UnitsProvider>
+        <Profile />
+      </UnitsProvider>
     </MemoryRouter>
   );
 }
@@ -54,7 +57,7 @@ describe("Profile", () => {
     window.localStorage.clear();
   });
 
-  it("renders the mockup sections with honest data-source statuses", async () => {
+  it("renders the mockup sections without Data Sources", async () => {
     renderProfile();
 
     await waitFor(() =>
@@ -64,12 +67,9 @@ describe("Profile", () => {
     expect(screen.getByRole("heading", { name: "Profile" })).toBeInTheDocument();
     expect(screen.getByText("AI Coaching Directives")).toBeInTheDocument();
     expect(screen.getByText("Physiology & Vitals")).toBeInTheDocument();
-    expect(screen.getByText("Data Sources")).toBeInTheDocument();
 
-    expect(await screen.findByText("Needs setup")).toBeInTheDocument();
-    expect(screen.getAllByText("Connected", { selector: "span" })).toHaveLength(2);
-    expect(screen.getByText("Error")).toBeInTheDocument();
-    expect(screen.getAllByText("Coming soon")).toHaveLength(2);
+    // Data Sources moved to the Settings page.
+    expect(screen.queryByText("Data Sources")).not.toBeInTheDocument();
   });
 
   it("persists profile updates via PATCH /api/profile", async () => {

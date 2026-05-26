@@ -1,5 +1,4 @@
 import CoachingDirectivesCard from "../components/profile/CoachingDirectivesCard";
-import DataSourcesCard from "../components/profile/DataSourcesCard";
 import PhysiologyVitalsCard from "../components/profile/PhysiologyVitalsCard";
 import ProfileHeader from "../components/profile/ProfileHeader";
 import { useProfilePreferences } from "../hooks/useProfilePreferences";
@@ -45,7 +44,6 @@ export default function Profile() {
           vitals={preferences.vitals}
           onChange={(vitals) => setPreferences({ ...preferences, vitals })}
         />
-        <DataSourcesCard />
       </div>
     </div>
   );

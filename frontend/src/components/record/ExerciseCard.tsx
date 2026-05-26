@@ -1,6 +1,7 @@
 import { Check, Link as LinkIcon, MessageSquare, Plus, Unlink } from "lucide-react";
 import { Card } from "../ui/Card";
 import { usePriorPerformance } from "./usePriorPerformance";
+import { useUnits } from "../../hooks/useUnits";
 import type { ExerciseDraft, SetDraft } from "./types";
 
 type SetField = "weight" | "reps" | "rpe";
@@ -33,6 +34,8 @@ export function ExerciseCard({
   onToggleLinkNext,
 }: Props) {
   const priorLabel = usePriorPerformance(exercise.name);
+  const { units } = useUnits();
+  const weightHeader = units === "metric" ? "kg" : "lb";
   const linkClasses = [
     isLinkedToPrev ? "rounded-t-none border-t-0" : "",
     isLinkedToNext ? "rounded-b-none mb-0" : "mb-2",
@@ -91,7 +94,7 @@ export function ExerciseCard({
         <div className="px-1.5 pt-1.5 pb-1">
           <div className="grid grid-cols-[20px_1fr_1fr_36px_28px] gap-2 mb-0.5 px-1 text-[9px] font-medium text-slate-500 uppercase tracking-wider">
             <div className="text-center">Set</div>
-            <div className="text-center">kg</div>
+            <div className="text-center">{weightHeader}</div>
             <div className="text-center">Reps</div>
             <div className="text-center">RPE</div>
             <div className="text-center">

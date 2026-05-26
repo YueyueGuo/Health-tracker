@@ -25,13 +25,16 @@ vi.mock("../api/strength", () => ({
 }));
 
 import Record from "./Record";
+import { UnitsProvider } from "../hooks/useUnits";
 
 function renderWithRouter() {
   return renderWithQuery(
     <MemoryRouter initialEntries={["/record"]}>
-      <Routes>
-        <Route path="/record" element={<Record />} />
-      </Routes>
+      <UnitsProvider>
+        <Routes>
+          <Route path="/record" element={<Record />} />
+        </Routes>
+      </UnitsProvider>
     </MemoryRouter>
   );
 }

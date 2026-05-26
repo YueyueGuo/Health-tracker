@@ -98,6 +98,27 @@ function formatSpeed(
   return `${kph.toFixed(1)} km/h`;
 }
 
+/**
+ * Format a body or training weight value.
+ *
+ * Input is always pounds (lb) — same convention as the other formatters
+ * take meters / m·s⁻¹ as their canonical unit. When the active system is
+ * metric we convert to kilograms (kg = lb * 0.453592).
+ */
+export function formatWeight(
+  valueLb: number | null | undefined,
+  units: UnitSystem,
+  opts?: { digits?: number; suffix?: boolean }
+): string {
+  if (valueLb == null) return "—";
+  const digits = opts?.digits ?? 0;
+  const includeSuffix = opts?.suffix ?? true;
+  const value = units === "metric" ? valueLb * 0.453592 : valueLb;
+  const suffix = units === "metric" ? "kg" : "lb";
+  const rendered = value.toFixed(digits);
+  return includeSuffix ? `${rendered} ${suffix}` : rendered;
+}
+
 export function formatElevation(
   meters: number | null | undefined,
   units: UnitSystem

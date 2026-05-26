@@ -57,6 +57,7 @@ export interface ProfileVitals {
 export interface ProfilePreferences {
   displayName: string;
   email: string;
+  dateOfBirth: string;
   focus: TrainingFocus;
   frequency: TrainingFrequency;
   duration: TrainingDuration;
@@ -68,6 +69,7 @@ export interface ProfilePreferences {
 export const DEFAULT_PROFILE_PREFERENCES: ProfilePreferences = {
   displayName: "",
   email: "",
+  dateOfBirth: "",
   focus: "Event Prep",
   frequency: "4-5 Days/wk",
   duration: "45-60m",
@@ -175,6 +177,7 @@ export function parseProfilePreferences(value: unknown): ProfilePreferences {
   return {
     displayName: readString(value.displayName, defaults.displayName),
     email: readString(value.email, defaults.email),
+    dateOfBirth: readString(value.dateOfBirth, defaults.dateOfBirth),
     focus: readOption(value.focus, FOCUS_OPTIONS, defaults.focus),
     frequency: readOption(value.frequency, FREQUENCY_OPTIONS, defaults.frequency),
     duration: readOption(value.duration, DURATION_OPTIONS, defaults.duration),
