@@ -561,12 +561,16 @@ async def test_unretire_is_idempotent(client):
         assert body["retired_at"] is None
 
 
-async def test_tag_activity_id_collision_strava_wins(
+async def test_tag_activity_id_collision_no_source_defaults_to_strava(
     combined_client, db_and_sessionmaker
 ):
     """When a Strava ``Activity`` and an Apple ``HealthDataPoint`` share
-    the same id, the dual-resolution lookup picks Strava first. Pin the
-    precedence so a future refactor can't silently flip it."""
+    the same id AND the caller omits ``?source=``, the PATCH retains the
+    legacy Strava-first / Apple-fallback resolution for back-compat with
+    older clients. Explicit ``?source=apple_health`` callers (see the
+    sibling collision tests below) bypass this default. Pin the
+    no-source precedence so a future refactor can't silently flip it.
+    """
     _, Session = db_and_sessionmaker
     collision_id = 777
     async with Session() as db:
@@ -615,6 +619,178 @@ async def test_tag_activity_id_collision_strava_wins(
     body = resp.json()
     assert body["source"] == "strava"
     assert body["shoe_id"] == shoe_id
+
+
+# Back-compat alias for any external module that imported the old name.
+test_tag_activity_id_collision_strava_wins = (
+    test_tag_activity_id_collision_no_source_defaults_to_strava
+)
+
+
+async def test_patch_shoe_with_source_apple_health_routes_to_workout_on_id_collision(
+    combined_client, db_and_sessionmaker
+):
+    """Smoking-gun regression for the server-side persistence bug.
+
+    With both an ``Activity`` and a ``HealthDataPoint``/``Workout`` at
+    the same numeric id, an explicit ``?source=apple_health`` PATCH must
+    write ``Workout.shoe_id`` (not the unrelated Strava row). A follow-
+    up ``GET ...?source=apple_health`` must echo the shoe back, and the
+    untouched Strava row must still report ``shoe_id=None``.
+    """
+    _, Session = db_and_sessionmaker
+    collision_id = 778
+    async with Session() as db:
+        dp = HealthDataPoint(
+            id=collision_id,
+            source="apple_health",
+            data_type="workout",
+            external_id="apple-collision-explicit",
+            start_time=utc_now_naive() - timedelta(days=1),
+        )
+        db.add(dp)
+        await db.flush()
+        w = Workout(
+            id=dp.id,
+            activity_type="run",
+            duration_s=1800,
+            distance_m=1111.0,
+        )
+        db.add(w)
+
+        start = utc_now_naive() - timedelta(days=1)
+        a = Activity(
+            id=collision_id,
+            strava_id=88888,
+            name="strava-collision-explicit",
+            sport_type="Run",
+            start_date=start,
+            start_date_local=start,
+            distance=2222.0,
+            enrichment_status="complete",
+        )
+        db.add(a)
+        await db.commit()
+
+    create = await combined_client.post(
+        "/api/shoes", json={"name": "Apple-routed shoe"}
+    )
+    shoe_id = create.json()["id"]
+
+    resp = await combined_client.patch(
+        f"/api/activities/{collision_id}/shoe?source=apple_health",
+        json={"shoe_id": shoe_id},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "apple_health"
+    assert body["shoe_id"] == shoe_id
+
+    # GET the Apple side — the user-visible regression: the dropdown
+    # rehydrates from this response on a fresh page load.
+    apple_get = await combined_client.get(
+        f"/api/activities/{collision_id}?source=apple_health"
+    )
+    assert apple_get.status_code == 200
+    assert apple_get.json()["shoe_id"] == shoe_id
+
+    # The unrelated Strava row at the same numeric id must NOT have
+    # been mutated by the Apple-targeted PATCH.
+    strava_get = await combined_client.get(
+        f"/api/activities/{collision_id}?source=strava"
+    )
+    assert strava_get.status_code == 200
+    assert strava_get.json()["shoe_id"] is None
+
+
+async def test_patch_shoe_with_source_strava_routes_to_activity_on_id_collision(
+    combined_client, db_and_sessionmaker
+):
+    """Symmetric to the Apple-routed collision test: an explicit
+    ``?source=strava`` PATCH writes ``Activity.shoe_id`` and leaves the
+    colliding Apple ``Workout`` row untouched."""
+    _, Session = db_and_sessionmaker
+    collision_id = 779
+    async with Session() as db:
+        dp = HealthDataPoint(
+            id=collision_id,
+            source="apple_health",
+            data_type="workout",
+            external_id="apple-collision-strava-side",
+            start_time=utc_now_naive() - timedelta(days=1),
+        )
+        db.add(dp)
+        await db.flush()
+        w = Workout(
+            id=dp.id,
+            activity_type="run",
+            duration_s=1800,
+            distance_m=1111.0,
+        )
+        db.add(w)
+
+        start = utc_now_naive() - timedelta(days=1)
+        a = Activity(
+            id=collision_id,
+            strava_id=77777,
+            name="strava-collision-strava-side",
+            sport_type="Run",
+            start_date=start,
+            start_date_local=start,
+            distance=2222.0,
+            enrichment_status="complete",
+        )
+        db.add(a)
+        await db.commit()
+
+    create = await combined_client.post(
+        "/api/shoes", json={"name": "Strava-routed shoe"}
+    )
+    shoe_id = create.json()["id"]
+
+    resp = await combined_client.patch(
+        f"/api/activities/{collision_id}/shoe?source=strava",
+        json={"shoe_id": shoe_id},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "strava"
+    assert body["shoe_id"] == shoe_id
+
+    strava_get = await combined_client.get(
+        f"/api/activities/{collision_id}?source=strava"
+    )
+    assert strava_get.status_code == 200
+    assert strava_get.json()["shoe_id"] == shoe_id
+
+    # The colliding Apple workout row must NOT have been mutated.
+    apple_get = await combined_client.get(
+        f"/api/activities/{collision_id}?source=apple_health"
+    )
+    assert apple_get.status_code == 200
+    assert apple_get.json()["shoe_id"] is None
+
+
+async def test_patch_shoe_with_invalid_source_returns_400(
+    combined_client, db_and_sessionmaker
+):
+    """Validation parity with ``GET /api/activities/{id}``: an unknown
+    ``?source=`` value (e.g. ``garmin``) returns 400, not a confusing
+    404 from the resolution branches."""
+    _, Session = db_and_sessionmaker
+    async with Session() as db:
+        activity = await _seed_strava(db, strava_id=4242, distance=5000.0)
+
+    create = await combined_client.post(
+        "/api/shoes", json={"name": "Invalid-source shoe"}
+    )
+    shoe_id = create.json()["id"]
+
+    resp = await combined_client.patch(
+        f"/api/activities/{activity.id}/shoe?source=garmin",
+        json={"shoe_id": shoe_id},
+    )
+    assert resp.status_code == 400
 
 
 async def test_patch_shoe_then_get_activity_returns_shoe_id_strava(
