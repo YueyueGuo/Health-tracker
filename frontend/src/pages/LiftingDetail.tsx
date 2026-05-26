@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ChevronLeft } from "lucide-react";
+import { X } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useApi } from "../hooks/useApi";
@@ -158,10 +158,10 @@ function Header({
         <button
           type="button"
           onClick={() => navigate(-1)}
-          aria-label="Go back"
+          aria-label="Close"
           className="p-1.5 -ml-1.5 text-slate-400 hover:text-white transition-colors bg-cardBorder/30 rounded-full"
         >
-          <ChevronLeft size={18} />
+          <X size={18} />
         </button>
         <div className="flex-1 min-w-0">
           <h1 className="text-lg font-bold text-white tracking-tight">

@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from "react";
-import { ChevronLeft } from "lucide-react";
+import { X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import ClassificationBadge from "../ClassificationBadge";
 import SourceBadge from "./SourceBadge";
@@ -62,10 +62,10 @@ export default function ActivityHeader({
         <button
           type="button"
           onClick={() => navigate(-1)}
-          aria-label="Go back"
+          aria-label="Close"
           className="p-1.5 -ml-1.5 text-slate-400 hover:text-white transition-colors bg-cardBorder/30 rounded-full"
         >
-          <ChevronLeft size={18} />
+          <X size={18} />
         </button>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 min-w-0">

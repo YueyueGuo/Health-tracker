@@ -4,7 +4,7 @@ import {
   Activity,
   Battery,
   BedDouble,
-  ChevronLeft,
+  X,
   Gauge,
   Heart,
   Moon,
@@ -208,9 +208,9 @@ export function SleepRecoveryDetailsCard({
               }
             }}
             className="p-1.5 -ml-1.5 text-slate-400 hover:text-white transition-colors bg-cardBorder/30 rounded-full"
-            aria-label="Go back"
+            aria-label="Close"
           >
-            <ChevronLeft size={18} />
+            <X size={18} />
           </button>
           <div className="flex-1 min-w-0">
             <h1 className="text-lg font-bold text-white tracking-tight">

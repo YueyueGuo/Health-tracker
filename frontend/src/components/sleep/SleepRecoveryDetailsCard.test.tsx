@@ -179,7 +179,7 @@ describe("SleepRecoveryDetailsCard", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     expect(mockNavigate).toHaveBeenCalledWith("/", { replace: true });
     expect(mockNavigate).not.toHaveBeenCalledWith(-1);
@@ -208,7 +208,7 @@ describe("SleepRecoveryDetailsCard", () => {
     );
 
     fireEvent.click(screen.getByRole("link", { name: "Open sleep" }));
-    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     expect(mockNavigate).toHaveBeenCalledWith(-1);
     expect(mockNavigate).not.toHaveBeenCalledWith("/", { replace: true });
