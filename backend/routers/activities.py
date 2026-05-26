@@ -292,16 +292,36 @@ async def patch_activity_feedback(
 async def patch_activity_shoe(
     activity_id: int,
     payload: ActivityShoePatch,
+    source: str | None = Query(
+        None,
+        description=(
+            "Disambiguate Strava vs Apple Health when the integer ids "
+            "collide. ``strava`` forces the Strava ``Activity`` row, "
+            "``apple_health`` forces the Apple ``Workout`` row. When "
+            "omitted, retains the legacy Strava-first / Apple-fallback "
+            "resolution for back-compat with older clients."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """Tag or untag a running shoe on an activity / workout.
 
-    Resolves ``activity_id`` first against ``Activity`` (Strava), then
-    against ``Workout`` via ``HealthDataPoint`` (Apple Health) — same
-    dual-resolution shape as ``patch_activity_feedback``. Rejects
-    tagging a retired shoe with a 400; untagging (``shoe_id=null``) is
-    always allowed.
+    Resolves ``activity_id`` honoring ``?source=`` exactly like
+    ``GET /{activity_id}``: ``apple_health`` skips the ``Activity``
+    lookup and writes ``Workout.shoe_id`` directly; ``strava`` writes
+    ``Activity.shoe_id`` and does NOT fall through to Apple on miss.
+    When ``source`` is omitted, the legacy Strava-first / Apple-fallback
+    behavior is preserved so older clients keep working.
+
+    Rejects tagging a retired shoe with a 400; untagging
+    (``shoe_id=null``) is always allowed.
     """
+    if source is not None and source not in ("strava", "apple_health"):
+        raise HTTPException(
+            status_code=400,
+            detail="source must be 'strava' or 'apple_health'",
+        )
+
     new_shoe_id = payload.shoe_id
 
     # Validate the target shoe up front so both branches share the
@@ -317,6 +337,12 @@ async def patch_activity_shoe(
                 status_code=400, detail="Cannot tag a retired shoe"
             )
 
+    if source == "apple_health":
+        # Explicit Apple intent — skip the ``Activity`` lookup entirely
+        # so a colliding Strava row at the same numeric id cannot
+        # absorb the write.
+        return await _patch_apple_workout_shoe(db, activity_id, new_shoe_id)
+
     activity = (
         await db.execute(select(Activity).where(Activity.id == activity_id))
     ).scalar_one_or_none()
@@ -330,9 +356,23 @@ async def patch_activity_shoe(
             "shoe_id": activity.shoe_id,
         }
 
-    # Fall through to Apple Health workout. Mirror the feedback
-    # endpoint's lookup: HDP with source='apple_health' and
-    # data_type='workout', then load the joined ``Workout`` row.
+    if source == "strava":
+        # Explicit Strava intent — do not fall through to Apple.
+        raise HTTPException(status_code=404, detail="Activity not found")
+
+    # Legacy / source-less call: fall through to Apple Health workout.
+    return await _patch_apple_workout_shoe(db, activity_id, new_shoe_id)
+
+
+async def _patch_apple_workout_shoe(
+    db: AsyncSession, activity_id: int, new_shoe_id: int | None
+) -> dict:
+    """Write ``shoe_id`` to the Apple ``Workout`` row at ``activity_id``.
+
+    Mirrors the feedback endpoint's lookup: HDP with
+    ``source='apple_health'`` and ``data_type='workout'``, then load the
+    joined ``Workout`` row. 404 if either is missing.
+    """
     dp = (
         await db.execute(
             select(HealthDataPoint).where(
