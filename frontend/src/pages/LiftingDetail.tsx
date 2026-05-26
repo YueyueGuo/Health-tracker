@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { ChevronLeft } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { X } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useApi } from "../hooks/useApi";
@@ -17,6 +17,9 @@ import { SupersetBracket } from "../components/lifting/SupersetBracket";
 import DeviceWorkoutPanel from "../components/strength/DeviceWorkoutPanel";
 import LinkWorkoutPicker from "../components/strength/LinkWorkoutPicker";
 import SessionHRCurve from "../components/strength/SessionHRCurve";
+import { DetailNavArrows } from "../components/ui/DetailNavArrows";
+import { useLiftingNeighbors } from "../hooks/useDetailNeighbors";
+import { isTypingTarget } from "../utils/dom";
 
 /** A renderable chunk: either a single standalone exercise or a contiguous
  *  superset group of exercises that share a non-null `superset_group_id`. */
@@ -80,9 +83,46 @@ export default function LiftingDetail() {
     { enabled: Boolean(dateKey) },
   );
 
+  const {
+    prevDate,
+    nextDate,
+    loading: neighborsLoading,
+  } = useLiftingNeighbors(dateKey);
+
+  const goPrev = useCallback(() => {
+    if (!prevDate) return;
+    navigate(`/workouts/lifting/${prevDate}`);
+  }, [navigate, prevDate]);
+  const goNext = useCallback(() => {
+    if (!nextDate) return;
+    navigate(`/workouts/lifting/${nextDate}`);
+  }, [navigate, nextDate]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isTypingTarget(e.target)) return;
+      if (e.key === "ArrowLeft" && prevDate) {
+        e.preventDefault();
+        goPrev();
+      } else if (e.key === "ArrowRight" && nextDate) {
+        e.preventDefault();
+        goNext();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [goPrev, goNext, prevDate, nextDate]);
+
   return (
     <div className="pb-24 pt-2">
-      <Header />
+      <Header
+        onPrev={goPrev}
+        onNext={goNext}
+        hasPrev={prevDate != null}
+        hasNext={nextDate != null}
+        neighborsLoading={neighborsLoading}
+      />
       {loading ? (
         <LoadingSkeleton />
       ) : error ? (
@@ -96,7 +136,21 @@ export default function LiftingDetail() {
   );
 }
 
-function Header() {
+interface HeaderProps {
+  onPrev: () => void;
+  onNext: () => void;
+  hasPrev: boolean;
+  hasNext: boolean;
+  neighborsLoading: boolean;
+}
+
+function Header({
+  onPrev,
+  onNext,
+  hasPrev,
+  hasNext,
+  neighborsLoading,
+}: HeaderProps) {
   const navigate = useNavigate();
   return (
     <div className="px-1 mb-3 sticky top-0 z-20 bg-dashboard/95 backdrop-blur-md pt-1 pb-3 -mx-4 px-4 sm:mx-0 sm:px-0">
@@ -104,16 +158,26 @@ function Header() {
         <button
           type="button"
           onClick={() => navigate(-1)}
-          aria-label="Go back"
+          aria-label="Close"
           className="p-1.5 -ml-1.5 text-slate-400 hover:text-white transition-colors bg-cardBorder/30 rounded-full"
         >
-          <ChevronLeft size={18} />
+          <X size={18} />
         </button>
         <div className="flex-1 min-w-0">
           <h1 className="text-lg font-bold text-white tracking-tight">
             Lifting Detail
           </h1>
         </div>
+        <DetailNavArrows
+          onPrev={onPrev}
+          onNext={onNext}
+          hasPrev={hasPrev}
+          hasNext={hasNext}
+          loading={neighborsLoading}
+          size={18}
+          prevLabel="Previous lifting session"
+          nextLabel="Next lifting session"
+        />
       </div>
     </div>
   );

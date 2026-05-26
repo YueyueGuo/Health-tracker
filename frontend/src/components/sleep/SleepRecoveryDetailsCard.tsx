@@ -1,10 +1,10 @@
-import { useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useNavigate, useNavigationType } from "react-router-dom";
 import {
   Activity,
   Battery,
   BedDouble,
-  ChevronLeft,
+  X,
   Gauge,
   Heart,
   Moon,
@@ -17,7 +17,10 @@ import type { SleepSession } from "../../api/sleep";
 import type { RecoveryRecord } from "../../api/recovery";
 import { Card } from "../ui/Card";
 import { CircularProgress } from "../ui/CircularProgress";
+import { DetailNavArrows } from "../ui/DetailNavArrows";
 import { formatTemperature, useUnits } from "../../hooks/useUnits";
+import { useSleepNeighbors } from "../../hooks/useDetailNeighbors";
+import { isTypingTarget } from "../../utils/dom";
 
 const SOURCE_LABEL: Record<string, string> = {
   whoop: "WHOOP",
@@ -64,6 +67,43 @@ export function SleepRecoveryDetailsCard({
   const navigationType = useNavigationType();
   const enteredViaDeepLink = useRef(navigationType === "POP").current;
   const { units } = useUnits();
+
+  // The "current" night for neighbor lookup is the canonical date the page
+  // is showing — prefer Eight's date (right column) then WHOOP, then
+  // Recovery. When all are null we leave the lookup undefined so the hook
+  // anchors on the latest known night.
+  const currentNightDate =
+    eightSleep?.date ?? whoopSleep?.date ?? recovery?.date ?? undefined;
+  const {
+    prevDate: prevSleepDate,
+    nextDate: nextSleepDate,
+    loading: neighborsLoading,
+  } = useSleepNeighbors(currentNightDate);
+
+  const goPrev = useCallback(() => {
+    if (!prevSleepDate) return;
+    navigate(`/sleep?date=${prevSleepDate}`);
+  }, [navigate, prevSleepDate]);
+  const goNext = useCallback(() => {
+    if (!nextSleepDate) return;
+    navigate(`/sleep?date=${nextSleepDate}`);
+  }, [navigate, nextSleepDate]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isTypingTarget(e.target)) return;
+      if (e.key === "ArrowLeft" && prevSleepDate) {
+        e.preventDefault();
+        goPrev();
+      } else if (e.key === "ArrowRight" && nextSleepDate) {
+        e.preventDefault();
+        goNext();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [goPrev, goNext, prevSleepDate, nextSleepDate]);
 
   const whoopColumnLabel =
     sourceLabel(whoopSleep?.source) ??
@@ -168,11 +208,11 @@ export function SleepRecoveryDetailsCard({
               }
             }}
             className="p-1.5 -ml-1.5 text-slate-400 hover:text-white transition-colors bg-cardBorder/30 rounded-full"
-            aria-label="Go back"
+            aria-label="Close"
           >
-            <ChevronLeft size={18} />
+            <X size={18} />
           </button>
-          <div>
+          <div className="flex-1 min-w-0">
             <h1 className="text-lg font-bold text-white tracking-tight">
               Sleep & Recovery
             </h1>
@@ -187,6 +227,16 @@ export function SleepRecoveryDetailsCard({
                 </p>
               )}
           </div>
+          <DetailNavArrows
+            onPrev={goPrev}
+            onNext={goNext}
+            hasPrev={prevSleepDate != null}
+            hasNext={nextSleepDate != null}
+            loading={neighborsLoading}
+            size={18}
+            prevLabel="Previous night"
+            nextLabel="Next night"
+          />
         </div>
       </div>
 

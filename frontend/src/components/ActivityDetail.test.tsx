@@ -17,9 +17,11 @@ function setRouteSearch(search: string) {
   routeSearch = search;
 }
 
+const { mockNavigate } = vi.hoisted(() => ({ mockNavigate: vi.fn() }));
+
 vi.mock("react-router-dom", () => ({
   useParams: () => ({ id: routeParams.id }),
-  useNavigate: () => vi.fn(),
+  useNavigate: () => mockNavigate,
   useSearchParams: () => {
     const params = new URLSearchParams(routeSearch);
     const setParams = vi.fn();
@@ -49,6 +51,7 @@ vi.mock("recharts", () => {
 
 vi.mock("../api/activities", () => ({
   fetchActivity: vi.fn(),
+  fetchActivities: vi.fn(() => Promise.resolve([])),
   fetchActivityStreams: vi.fn(),
   reclassifyActivity: vi.fn(),
 }));
@@ -93,6 +96,8 @@ vi.mock("./WeatherCard", () => ({
 import ActivityDetailPage from "./ActivityDetail";
 import {
   type ActivityDetail as ActivityDetailResponse,
+  type ActivitySummary,
+  fetchActivities,
   fetchActivity,
   fetchActivityStreams,
 } from "../api/activities";
@@ -100,6 +105,7 @@ import { fetchLatestWorkoutInsight } from "../api/insights";
 import { getActivityWeather } from "../api/weather";
 
 const mockedFetchActivity = vi.mocked(fetchActivity);
+const mockedFetchActivities = vi.mocked(fetchActivities);
 const mockedFetchActivityStreams = vi.mocked(fetchActivityStreams);
 const mockedFetchLatestWorkoutInsight = vi.mocked(fetchLatestWorkoutInsight);
 const mockedGetActivityWeather = vi.mocked(getActivityWeather);
@@ -165,6 +171,11 @@ describe("ActivityDetailPage", () => {
     setRouteId(7);
     setRouteSearch("");
     mockedGetActivityWeather.mockResolvedValue(null);
+    // Default the activities list (used by the prev/next arrow neighbors hook)
+    // to empty so existing assertions aren't affected. Individual tests
+    // override when exercising arrow navigation.
+    mockedFetchActivities.mockResolvedValue([]);
+    mockNavigate.mockClear();
   });
 
   afterEach(() => {
@@ -535,5 +546,111 @@ describe("ActivityDetailPage", () => {
     await screen.findByText("Strava Run");
 
     expect(mockedFetchActivity).toHaveBeenCalledWith(123, "strava");
+  });
+
+  describe("prev/next navigation arrows", () => {
+    function summary(
+      id: number,
+      start: string,
+      source: ActivitySummary["source"] = "strava",
+    ): ActivitySummary {
+      return {
+        id,
+        strava_id: id,
+        name: `Run ${id}`,
+        sport_type: "Run",
+        source,
+        external_id: null,
+        superseded_by_id: null,
+        start_date: start,
+        start_date_local: start,
+        elapsed_time: 1800,
+        moving_time: 1800,
+        distance: 5000,
+        total_elevation: 0,
+        average_hr: 140,
+        max_hr: 160,
+        average_speed: 3,
+        max_speed: 4,
+        average_power: null,
+        max_power: null,
+        weighted_avg_power: null,
+        average_cadence: null,
+        calories: 400,
+        kilojoules: null,
+        suffer_score: null,
+        device_watts: null,
+        workout_type: null,
+        available_zones: null,
+        enrichment_status: "complete",
+        enriched_at: null,
+        classification_type: null,
+        classification_flags: null,
+        classified_at: null,
+        weather_enriched: false,
+        elev_high_m: null,
+        elev_low_m: null,
+        base_elevation_m: null,
+        elevation_enriched: false,
+        location_id: null,
+        start_lat: null,
+        start_lng: null,
+        rpe: null,
+        user_notes: null,
+        rated_at: null,
+      };
+    }
+
+    it("renders both arrows and disables them when current is the only workout", async () => {
+      setRouteId(7);
+      mockedFetchActivity.mockResolvedValue(makeActivity());
+      mockedFetchActivities.mockResolvedValue([
+        summary(7, "2026-04-20T18:00:00"),
+      ]);
+      renderWithQuery(<ActivityDetailPage />);
+      await screen.findByText("Evening Run");
+
+      const prev = await screen.findByRole("button", {
+        name: "Previous workout",
+      });
+      const next = await screen.findByRole("button", {
+        name: "Next workout",
+      });
+      await waitFor(() => expect(prev).toBeDisabled());
+      expect(next).toBeDisabled();
+    });
+
+    it("clicking prev/next navigates to /activities/{id}?source=... with source preserved", async () => {
+      setRouteId(7);
+      setRouteSearch("?source=strava");
+      mockedFetchActivity.mockResolvedValue(makeActivity({ source: "strava" }));
+      mockedFetchActivities.mockResolvedValue([
+        summary(10, "2026-04-22T18:00:00", "strava"), // newer → next
+        summary(7, "2026-04-20T18:00:00", "strava"), // current
+        summary(5, "2026-04-18T18:00:00", "apple_health"), // older → prev
+      ]);
+      renderWithQuery(<ActivityDetailPage />);
+      await screen.findByText("Evening Run");
+
+      const prev = await screen.findByRole("button", {
+        name: "Previous workout",
+      });
+      const next = await screen.findByRole("button", {
+        name: "Next workout",
+      });
+      await waitFor(() => expect(prev).not.toBeDisabled());
+      await waitFor(() => expect(next).not.toBeDisabled());
+
+      fireEvent.click(prev);
+      expect(mockNavigate).toHaveBeenCalledWith(
+        "/activities/5?source=apple_health",
+      );
+
+      mockNavigate.mockClear();
+      fireEvent.click(next);
+      expect(mockNavigate).toHaveBeenCalledWith(
+        "/activities/10?source=strava",
+      );
+    });
   });
 });
