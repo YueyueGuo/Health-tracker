@@ -1,5 +1,6 @@
 import GoalsSection from "../components/GoalsSection";
 import LocationSettingsSection from "../components/settings/LocationSettingsSection";
+import ShoesSettingsCard from "../components/settings/ShoesSettingsCard";
 import SyncSection from "../components/settings/SyncSection";
 
 /**
@@ -21,6 +22,7 @@ export default function Settings() {
       </div>
 
       <GoalsSection />
+      <ShoesSettingsCard />
       <SyncSection />
       <LocationSettingsSection />
     </div>

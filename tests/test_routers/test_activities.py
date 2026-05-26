@@ -224,6 +224,12 @@ async def test_get_activity_resolves_strava_id_first(client, db):
     body = resp.json()
     assert body["source"] == "strava"
     assert body["id"] == a.id
+    # ``shoe_id`` must be emitted (null when no shoe is tagged) so the
+    # frontend's shoe selector can render the current state on reload.
+    # Regression for PR #65 / shoe-mileage-frontend QA: GET response
+    # was omitting the field entirely.
+    assert "shoe_id" in body
+    assert body["shoe_id"] is None
 
 
 async def test_get_activity_falls_back_to_apple_workout(client, db):
@@ -247,6 +253,11 @@ async def test_get_activity_falls_back_to_apple_workout(client, db):
     # ``start_date_local`` is populated so the date subtitle renders.
     assert body["start_date_local"] is not None
     assert isinstance(body["start_date_local"], str)
+    # ``shoe_id`` must be emitted on Apple summaries too (null when no
+    # shoe is tagged) — the frontend selector lives on the dual-resolved
+    # ``ActivityDetail`` page and needs the field for both source types.
+    assert "shoe_id" in body
+    assert body["shoe_id"] is None
 
 
 async def test_get_activity_404_when_neither_strava_nor_apple(client, db):
@@ -561,3 +572,53 @@ async def test_streams_source_strava_404_when_only_apple_exists(client, db):
 async def test_streams_invalid_source_returns_400(client, db):
     resp = await client.get("/api/activities/1/streams?source=garmin")
     assert resp.status_code == 400
+
+
+# ── GET /activities/{id} — shoe_id emitted on summary ──────────────
+#
+# Regression for the shoe-mileage-frontend QA gap: PATCH /shoe persists
+# the FK but the GET response was omitting ``shoe_id`` entirely, so the
+# frontend's selector re-rendered as "— None —" after reload and the
+# user's selection appeared lost. The serializer just forgot the field.
+
+
+async def test_get_strava_activity_includes_shoe_id_when_tagged(client, db):
+    """``GET /api/activities/{id}`` must surface ``shoe_id`` for Strava
+    rows so the frontend can hydrate the shoe selector on reload."""
+    from backend.models import Shoe
+
+    shoe = Shoe(name="Pegasus")
+    db.add(shoe)
+    await db.commit()
+    await db.refresh(shoe)
+
+    a = await _seed_strava(db, strava_id=4242)
+    a.shoe_id = shoe.id
+    await db.commit()
+
+    resp = await client.get(f"/api/activities/{a.id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "strava"
+    assert body["shoe_id"] == shoe.id
+
+
+async def test_get_apple_workout_includes_shoe_id_when_tagged(client, db):
+    """Same contract for the Apple-Health (dual-resolved) path:
+    ``_apple_workout_summary`` must emit ``shoe_id`` from the Workout."""
+    from backend.models import Shoe
+
+    shoe = Shoe(name="Endorphin Speed")
+    db.add(shoe)
+    await db.commit()
+    await db.refresh(shoe)
+
+    w, dp = await _seed_apple(db, external_id="apple-shoe-detail")
+    w.shoe_id = shoe.id
+    await db.commit()
+
+    resp = await client.get(f"/api/activities/{dp.id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "apple_health"
+    assert body["shoe_id"] == shoe.id

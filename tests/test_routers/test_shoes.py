@@ -617,6 +617,77 @@ async def test_tag_activity_id_collision_strava_wins(
     assert body["shoe_id"] == shoe_id
 
 
+async def test_patch_shoe_then_get_activity_returns_shoe_id_strava(
+    combined_client, db_and_sessionmaker
+):
+    """Round-trip regression for the shoe-mileage-frontend QA bug:
+    after PATCH /api/activities/{id}/shoe persists the tag, a subsequent
+    GET /api/activities/{id} must include ``shoe_id`` in the JSON so
+    the frontend selector can rehydrate on reload (previously the field
+    was omitted entirely, so the selector silently reset to "— None —").
+    """
+    _, Session = db_and_sessionmaker
+    async with Session() as db:
+        activity = await _seed_strava(db, strava_id=5001, distance=5000.0)
+
+    create = await combined_client.post(
+        "/api/shoes", json={"name": "Round-trip shoe"}
+    )
+    shoe_id = create.json()["id"]
+
+    patch = await combined_client.patch(
+        f"/api/activities/{activity.id}/shoe", json={"shoe_id": shoe_id}
+    )
+    assert patch.status_code == 200
+    assert patch.json()["shoe_id"] == shoe_id
+
+    # The bug: GET response did not echo ``shoe_id``. Fix emits it.
+    detail = await combined_client.get(f"/api/activities/{activity.id}")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert "shoe_id" in body
+    assert body["shoe_id"] == shoe_id
+
+    # Untag — null clears, GET must reflect it.
+    untag = await combined_client.patch(
+        f"/api/activities/{activity.id}/shoe", json={"shoe_id": None}
+    )
+    assert untag.status_code == 200
+    after = await combined_client.get(f"/api/activities/{activity.id}")
+    assert after.json()["shoe_id"] is None
+
+
+async def test_patch_shoe_then_get_activity_returns_shoe_id_apple(
+    combined_client, db_and_sessionmaker
+):
+    """Same round-trip but for the Apple-Health (dual-resolved) path —
+    ``_apple_workout_summary`` must also emit ``shoe_id``."""
+    _, Session = db_and_sessionmaker
+    async with Session() as db:
+        _, dp = await _seed_apple(
+            db, external_id="apple-roundtrip", distance_m=4200.0
+        )
+
+    create = await combined_client.post(
+        "/api/shoes", json={"name": "Apple round-trip shoe"}
+    )
+    shoe_id = create.json()["id"]
+
+    patch = await combined_client.patch(
+        f"/api/activities/{dp.id}/shoe", json={"shoe_id": shoe_id}
+    )
+    assert patch.status_code == 200
+    assert patch.json()["source"] == "apple_health"
+    assert patch.json()["shoe_id"] == shoe_id
+
+    detail = await combined_client.get(f"/api/activities/{dp.id}")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["source"] == "apple_health"
+    assert "shoe_id" in body
+    assert body["shoe_id"] == shoe_id
+
+
 async def test_list_activities_for_shoe(client, db):
     shoe = Shoe(name="Listing shoe")
     db.add(shoe)

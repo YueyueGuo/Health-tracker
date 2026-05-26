@@ -559,6 +559,7 @@ def _activity_summary(a: Activity) -> dict:
         "source": a.source or "strava",
         "external_id": a.external_id,
         "superseded_by_id": a.superseded_by_id,
+        "shoe_id": a.shoe_id,
     }
 
 
@@ -639,6 +640,7 @@ def _apple_workout_summary(workout: Workout, dp: HealthDataPoint) -> dict:
         "source": "apple_health",
         "external_id": dp.external_id,
         "superseded_by_id": dp.superseded_by_id,
+        "shoe_id": workout.shoe_id,
     }
 
 

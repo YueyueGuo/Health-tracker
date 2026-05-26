@@ -6,6 +6,10 @@ vi.mock("../components/GoalsSection", () => ({
   default: () => <div>Goals stub</div>,
 }));
 
+vi.mock("../components/settings/ShoesSettingsCard", () => ({
+  default: () => <div>Shoes stub</div>,
+}));
+
 vi.mock("../api/locations", () => ({
   createLocation: vi.fn(),
   deleteLocation: vi.fn(),
@@ -93,6 +97,7 @@ describe("Settings", () => {
 
     await screen.findByText("Saved locations");
     expect(screen.getByText("Goals stub")).toBeInTheDocument();
+    expect(screen.getByText("Shoes stub")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Home" }));
     const renameInput = screen.getByDisplayValue("Home");

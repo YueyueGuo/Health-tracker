@@ -19,6 +19,7 @@ import ActivityHeader from "./activity/ActivityHeader";
 import WorkoutInsightView from "./activity/WorkoutInsightView";
 import LocationPicker from "./LocationPicker";
 import RPECard from "./RPECard";
+import ShoeSelector from "./shoes/ShoeSelector";
 
 export default function ActivityDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -125,6 +126,11 @@ export default function ActivityDetailPage() {
   if (!activity) return null;
 
   const SportView = pickSportView(activity);
+  // Foot-sport gate for the shoe selector — runs, hikes, walks, and the
+  // Other fall-through (treadmill, etc.) all render the Run-style detail
+  // view, so any of those should show a shoe row. Rides and strength
+  // workouts stay out.
+  const isFootSport = SportView === ActivityDetailRun;
 
   return (
     <div className="pb-24 pt-2">
@@ -142,6 +148,14 @@ export default function ActivityDetailPage() {
         onLoadStreams={handleLoadStreams}
       />
       <div className="space-y-3 mt-3">
+        {isFootSport && (
+          <ShoeSelector
+            activityId={activityId}
+            source={activity.source ?? null}
+            currentShoeId={activity.shoe_id ?? null}
+            onChange={reload}
+          />
+        )}
         {activity.source !== "apple_health" && (
           <RPECard
             activityId={activityId}

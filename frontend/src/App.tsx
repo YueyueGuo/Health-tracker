@@ -16,6 +16,8 @@ const Profile = lazy(() => import("./pages/Profile"));
 const Record = lazy(() => import("./pages/Record"));
 const History = lazy(() => import("./pages/History"));
 const LiftingDetail = lazy(() => import("./pages/LiftingDetail"));
+const Shoes = lazy(() => import("./pages/Shoes"));
+const ShoeDetail = lazy(() => import("./pages/ShoeDetail"));
 
 function routeElement(element: ReactElement) {
   return (
@@ -43,6 +45,8 @@ export default function App() {
           path="/workouts/lifting/:date"
           element={routeElement(<LiftingDetail />)}
         />
+        <Route path="/shoes" element={routeElement(<Shoes />)} />
+        <Route path="/shoes/:id" element={routeElement(<ShoeDetail />)} />
       </Route>
       <Route element={<Layout />}>
         <Route path="/ask" element={routeElement(<ChatPanel />)} />
