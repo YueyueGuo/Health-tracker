@@ -1,6 +1,9 @@
 import { Bike, Dumbbell, Flame, Mountain, Heart } from "lucide-react";
 import { Link, useOutletContext } from "react-router-dom";
 import { Card } from "../ui/Card";
+import SourceBadge, {
+  type SourceBadgeKind,
+} from "../activity/SourceBadge";
 import { useApi } from "../../hooks/useApi";
 import { fetchLatestWorkoutInsight } from "../../api/insights";
 import { fetchStrengthSessionOptional } from "../../api/strength";
@@ -75,6 +78,87 @@ export function YesterdayActivityCard() {
   const sport = workout.sport_type?.toLowerCase() ?? "";
   const isRide = sport.includes("ride");
   const SportIcon = isRide ? Bike : Heart;
+  const sourceBadge: SourceBadgeKind | undefined =
+    workout.source === "apple_health"
+      ? "apple"
+      : workout.source === "strava"
+        ? "strava"
+        : undefined;
+  const activityHref = `/activities/${workout.id}?source=${workout.source}`;
+
+  const cardioContent = (
+    <>
+      <div className="flex items-center gap-2 mb-3">
+        <SportIcon
+          size={16}
+          className={isRide ? "text-orange-500" : "text-brand-green"}
+        />
+        <span className="font-medium text-slate-200 text-sm">
+          {workout.name}
+        </span>
+        {workout.classification_type && (
+          <span className="text-[10px] px-1.5 py-0.5 bg-brand-green/10 text-brand-green rounded ml-auto capitalize">
+            {workout.classification_type}
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-4 gap-2 mb-3">
+        <Metric
+          label="Distance"
+          value={
+            workout.distance_m != null
+              ? formatDistanceShort(workout.distance_m, units)
+              : null
+          }
+        />
+        <Metric label="Time" value={formatDuration(workout.moving_time_s)} />
+        <Metric
+          label={isRide ? "TSS" : "RE"}
+          value={
+            workout.suffer_score != null
+              ? Math.round(workout.suffer_score).toString()
+              : null
+          }
+          valueClass="text-brand-amber"
+        />
+        <Metric
+          label={isRide ? "NP" : "Pace"}
+          value={
+            isRide
+              ? workout.weighted_avg_power_w != null
+                ? `${Math.round(workout.weighted_avg_power_w)}`
+                : null
+              : workout.pace
+          }
+          unit={isRide && workout.weighted_avg_power_w != null ? "W" : undefined}
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400">
+        {workout.avg_hr != null && (
+          <div className="flex items-center gap-1">
+            <Heart size={12} />{" "}
+            {Math.round(workout.avg_hr)}
+            {workout.max_hr != null
+              ? ` avg / ${Math.round(workout.max_hr)} max`
+              : " avg"}
+          </div>
+        )}
+        {workout.total_elevation_m != null && workout.total_elevation_m > 0 && (
+          <div className="flex items-center gap-1">
+            <Mountain size={12} />{" "}
+            {formatElevation(workout.total_elevation_m, units)}
+          </div>
+        )}
+        {workout.calories != null && (
+          <div className="flex items-center gap-1">
+            <Flame size={12} /> {Math.round(workout.calories)} kcal
+          </div>
+        )}
+      </div>
+    </>
+  );
 
   return (
     <Card className="p-4">
@@ -82,86 +166,18 @@ export function YesterdayActivityCard() {
         <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wider">
           {heading}
         </h3>
-        <span className="text-[10px] font-medium text-slate-500 bg-slate-800/50 px-2 py-0.5 rounded">
-          {strength.data ? "Strava + Strength" : "Strava"}
-        </span>
+        <SourceBadge source={sourceBadge} />
       </div>
 
-      <div
-        className={`${
+      <Link
+        to={activityHref}
+        className={`block rounded-lg -mx-1 px-1 py-1 hover:bg-cardBorder/20 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-green ${
           strength.data ? "mb-4 pb-4 border-b border-cardBorder" : ""
         }`}
+        aria-label={`View ${workout.name} detail`}
       >
-        <div className="flex items-center gap-2 mb-3">
-          <SportIcon
-            size={16}
-            className={isRide ? "text-orange-500" : "text-brand-green"}
-          />
-          <span className="font-medium text-slate-200 text-sm">
-            {workout.name}
-          </span>
-          {workout.classification_type && (
-            <span className="text-[10px] px-1.5 py-0.5 bg-brand-green/10 text-brand-green rounded ml-auto capitalize">
-              {workout.classification_type}
-            </span>
-          )}
-        </div>
-
-        <div className="grid grid-cols-4 gap-2 mb-3">
-          <Metric
-            label="Distance"
-            value={
-              workout.distance_m != null
-                ? formatDistanceShort(workout.distance_m, units)
-                : null
-            }
-          />
-          <Metric label="Time" value={formatDuration(workout.moving_time_s)} />
-          <Metric
-            label={isRide ? "TSS" : "RE"}
-            value={
-              workout.suffer_score != null
-                ? Math.round(workout.suffer_score).toString()
-                : null
-            }
-            valueClass="text-brand-amber"
-          />
-          <Metric
-            label={isRide ? "NP" : "Pace"}
-            value={
-              isRide
-                ? workout.weighted_avg_power_w != null
-                  ? `${Math.round(workout.weighted_avg_power_w)}`
-                  : null
-                : workout.pace
-            }
-            unit={isRide && workout.weighted_avg_power_w != null ? "W" : undefined}
-          />
-        </div>
-
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400">
-          {workout.avg_hr != null && (
-            <div className="flex items-center gap-1">
-              <Heart size={12} />{" "}
-              {Math.round(workout.avg_hr)}
-              {workout.max_hr != null
-                ? ` avg / ${Math.round(workout.max_hr)} max`
-                : " avg"}
-            </div>
-          )}
-          {workout.total_elevation_m != null && workout.total_elevation_m > 0 && (
-            <div className="flex items-center gap-1">
-              <Mountain size={12} />{" "}
-              {formatElevation(workout.total_elevation_m, units)}
-            </div>
-          )}
-          {workout.calories != null && (
-            <div className="flex items-center gap-1">
-              <Flame size={12} /> {Math.round(workout.calories)} kcal
-            </div>
-          )}
-        </div>
-      </div>
+        {cardioContent}
+      </Link>
 
       {strength.data && workoutDate && (
         <Link
