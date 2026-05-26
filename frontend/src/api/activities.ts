@@ -56,6 +56,8 @@ export interface ActivitySummary {
   rpe: number | null;
   user_notes: string | null;
   rated_at: string | null;
+  /** Tagged running-shoe id; null when no shoe is tagged on this run. */
+  shoe_id: number | null;
 }
 
 export interface ActivityLap {
@@ -151,5 +153,40 @@ export function fetchActivityStreams(
 export function reclassifyActivity(id: number) {
   return fetchJson<ActivityClassificationResult>(`/activities/${id}/classify`, {
     method: "POST",
+  });
+}
+
+/**
+ * Backend response shape for `PATCH /api/activities/{id}/shoe` — see
+ * `backend/routers/activities.py::patch_activity_shoe`. The endpoint
+ * dual-resolves to either a Strava `Activity` row or an Apple Health
+ * `Workout` row and echoes which side it touched in `source`.
+ */
+export interface ActivityShoeUpdate {
+  id: number;
+  source: "strava" | "apple_health";
+  shoe_id: number | null;
+}
+
+/**
+ * Tag or untag a running shoe on an activity. Pass `shoeId=null` to
+ * clear an existing tag.
+ *
+ * Note: unlike `fetchActivity`, the backend's `PATCH /shoe` endpoint
+ * does NOT accept a `?source=` query — it always does the
+ * Strava-first / Apple-fallback dual resolution. The `source` argument
+ * here is kept for symmetry with `fetchActivity` and is forwarded as
+ * `?source=` for forward-compat; the backend ignores unknown query
+ * params today.
+ */
+export function patchActivityShoe(
+  activityId: number,
+  shoeId: number | null,
+  source?: ActivitySource | null,
+) {
+  const qs = source ? `?source=${encodeURIComponent(source)}` : "";
+  return fetchJson<ActivityShoeUpdate>(`/activities/${activityId}/shoe${qs}`, {
+    method: "PATCH",
+    body: JSON.stringify({ shoe_id: shoeId }),
   });
 }

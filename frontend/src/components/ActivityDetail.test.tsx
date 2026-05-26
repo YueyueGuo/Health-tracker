@@ -54,6 +54,7 @@ vi.mock("../api/activities", () => ({
   fetchActivities: vi.fn(() => Promise.resolve([])),
   fetchActivityStreams: vi.fn(),
   reclassifyActivity: vi.fn(),
+  patchActivityShoe: vi.fn(),
 }));
 
 vi.mock("../api/insights", () => ({
@@ -87,6 +88,10 @@ vi.mock("./LocationPicker", () => ({
 
 vi.mock("./RPECard", () => ({
   default: () => <div>RPE card</div>,
+}));
+
+vi.mock("./shoes/ShoeSelector", () => ({
+  default: () => <div>Shoe selector</div>,
 }));
 
 vi.mock("./WeatherCard", () => ({
@@ -154,6 +159,7 @@ function makeActivity(
     rpe: null,
     user_notes: null,
     rated_at: null,
+    shoe_id: null,
     laps: [],
     zones: null,
     weather: null,
@@ -379,6 +385,34 @@ describe("ActivityDetailPage", () => {
     expect(screen.getByText("Avg Pace")).toBeInTheDocument();
   });
 
+  it("renders the shoe selector for foot sports (Run, Hike, Walk)", async () => {
+    for (const sport of ["Run", "Hike", "Walk"] as const) {
+      mockedFetchActivity.mockResolvedValueOnce(
+        makeActivity({ name: `Detail ${sport}`, sport_type: sport })
+      );
+      const { unmount } = renderWithQuery(<ActivityDetailPage />);
+      await screen.findByText(`Detail ${sport}`);
+      expect(screen.getByText("Shoe selector")).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("omits the shoe selector for Strength and Ride", async () => {
+    for (const sport of ["WeightTraining", "Ride"] as const) {
+      mockedFetchActivity.mockResolvedValueOnce(
+        makeActivity({
+          name: `Detail ${sport}`,
+          sport_type: sport,
+          distance: sport === "WeightTraining" ? null : 5000,
+        })
+      );
+      const { unmount } = renderWithQuery(<ActivityDetailPage />);
+      await screen.findByText(`Detail ${sport}`);
+      expect(screen.queryByText("Shoe selector")).not.toBeInTheDocument();
+      unmount();
+    }
+  });
+
   it("hides RPE, LocationPicker, and Insight panels for Apple Health workouts", async () => {
     mockedFetchActivity.mockResolvedValue(
       makeActivity({
@@ -598,6 +632,7 @@ describe("ActivityDetailPage", () => {
         rpe: null,
         user_notes: null,
         rated_at: null,
+        shoe_id: null,
       };
     }
 

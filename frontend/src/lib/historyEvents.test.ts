@@ -51,6 +51,7 @@ function makeActivity(over: Partial<ActivitySummary> = {}): ActivitySummary {
     rpe: null,
     user_notes: null,
     rated_at: null,
+    shoe_id: null,
     ...over,
   };
 }

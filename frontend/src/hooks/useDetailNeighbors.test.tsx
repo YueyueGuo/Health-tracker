@@ -128,6 +128,7 @@ function mkActivity(
     rpe: null,
     user_notes: null,
     rated_at: null,
+    shoe_id: null,
   };
 }
 
