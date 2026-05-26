@@ -8,6 +8,7 @@ PATCH merges partial updates and validates the merged document.
 from __future__ import annotations
 
 import copy
+import datetime as _dt
 import logging
 from typing import Any
 
@@ -60,6 +61,7 @@ LIMITATION_VALUES = frozenset(
 PROFILE_DEFAULTS: dict[str, Any] = {
     "displayName": "",
     "email": "",
+    "dateOfBirth": "",
     "focus": "Event Prep",
     "frequency": "4-5 Days/wk",
     "duration": "45-60m",
@@ -133,12 +135,30 @@ class ProfilePayload(BaseModel):
 
     display_name: str = Field(alias="displayName")
     email: str = Field(alias="email")
+    date_of_birth: str = Field("", alias="dateOfBirth")
     focus: str = Field(alias="focus")
     frequency: str = Field(alias="frequency")
     duration: str = Field(alias="duration")
     equipment: list[str]
     limitations: list[str]
     vitals: VitalsPayload
+
+    @field_validator("date_of_birth", mode="before")
+    @classmethod
+    def validate_date_of_birth(cls, v: Any) -> str:
+        # Coerce None -> "" first, then strip whitespace.
+        if v is None:
+            v = ""
+        if not isinstance(v, str):
+            v = str(v)
+        v = v.strip()
+        if v == "":
+            return ""
+        try:
+            _dt.date.fromisoformat(v)
+        except ValueError as exc:
+            raise ValueError(f"invalid dateOfBirth: {v!r}") from exc
+        return v
 
     @field_validator("focus")
     @classmethod
@@ -200,6 +220,7 @@ class ProfilePatch(BaseModel):
 
     display_name: str | None = Field(default=None, alias="displayName", max_length=512)
     email: str | None = Field(default=None, alias="email", max_length=512)
+    date_of_birth: str | None = Field(default=None, alias="dateOfBirth")
     focus: str | None = Field(default=None, alias="focus")
     frequency: str | None = Field(default=None, alias="frequency")
     duration: str | None = Field(default=None, alias="duration")
@@ -232,7 +253,7 @@ def _apply_patch(existing: dict[str, Any], patch: ProfilePatch) -> dict[str, Any
     result = merged_payload(existing)
     data = patch.model_dump(exclude_unset=True, by_alias=True)
 
-    for key in ("displayName", "email", "focus", "frequency", "duration"):
+    for key in ("displayName", "email", "dateOfBirth", "focus", "frequency", "duration"):
         if key in data and data[key] is not None:
             result[key] = data[key]
 
