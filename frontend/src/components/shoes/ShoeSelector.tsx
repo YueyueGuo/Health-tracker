@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ActivitySource } from "../../api/activities";
 import { patchActivityShoe } from "../../api/activities";
@@ -41,17 +41,42 @@ export default function ShoeSelector({
   const [actionError, setActionError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [partialFailure, setPartialFailure] = useState<string | null>(null);
+  // Optimistic state: holds the user's just-picked shoe id so the
+  // controlled <select> reflects their choice during the PATCH +
+  // refetch latency window. `undefined` means "no pending pick, fall
+  // back to the parent prop". Any other value (including `null` for
+  // "— None —") wins over `currentShoeId` until the parent catches up.
+  const [pendingShoeId, setPendingShoeId] = useState<
+    number | null | undefined
+  >(undefined);
 
   const activeShoes: Shoe[] = shoes ?? [];
+
+  const effectiveShoeId =
+    pendingShoeId !== undefined ? pendingShoeId : currentShoeId;
+
+  // Once the parent's currentShoeId catches up to the optimistic pick
+  // (i.e. the refetch landed), clear the pending state so the prop
+  // is the source of truth again. If the server silently rejects the
+  // change and the prop diverges, this also lets the real value win.
+  useEffect(() => {
+    if (pendingShoeId !== undefined && currentShoeId === pendingShoeId) {
+      setPendingShoeId(undefined);
+    }
+  }, [currentShoeId, pendingShoeId]);
 
   // If the activity is currently tagged to a retired (or otherwise
   // not-in-active-list) shoe, surface it as a disabled-styled option
   // so the user sees the truth without being able to re-select it.
   const tagToRetired =
-    currentShoeId != null &&
-    !activeShoes.some((s) => s.id === currentShoeId);
+    effectiveShoeId != null &&
+    !activeShoes.some((s) => s.id === effectiveShoeId);
 
   const handleChange = async (next: number | null) => {
+    // Apply the optimistic pick *synchronously* before any await so
+    // React's next render uses it as the <select value> rather than
+    // snapping back to the stale (lagging) currentShoeId prop.
+    setPendingShoeId(next);
     setBusy(true);
     setActionError(null);
     setPartialFailure(null);
@@ -60,6 +85,8 @@ export default function ShoeSelector({
       await invalidateShoes(queryClient);
       onChange();
     } catch (e) {
+      // Roll back the visual selection so the user sees the failure.
+      setPendingShoeId(undefined);
       setActionError(getErrorMessage(e));
     } finally {
       setBusy(false);
@@ -145,7 +172,7 @@ export default function ShoeSelector({
           {!creating && (activeShoes.length > 0 || tagToRetired) && (
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <select
-                value={currentShoeId ?? ""}
+                value={effectiveShoeId ?? ""}
                 disabled={busy}
                 onChange={(e) => {
                   const val = e.target.value;
@@ -164,8 +191,8 @@ export default function ShoeSelector({
                   // Render the retired tag as a disabled-styled current
                   // selection — the user can untag (pick None) or pick
                   // a different active shoe, but can't reselect it.
-                  <option value={currentShoeId ?? ""} disabled>
-                    (retired) #{currentShoeId}
+                  <option value={effectiveShoeId ?? ""} disabled>
+                    (retired) #{effectiveShoeId}
                   </option>
                 )}
               </select>

@@ -106,6 +106,68 @@ describe("ShoeSelector", () => {
       expect(mockedPatchActivityShoe).toHaveBeenCalledWith(42, 2, "strava"),
     );
     await waitFor(() => expect(onChange).toHaveBeenCalled());
+    // The visible dropdown value must reflect the user's pick, not the
+    // (lagging) parent-prop currentShoeId. The mocked PATCH returns
+    // {shoe_id: null} on purpose — we don't ingest the response into
+    // the controlled value; we apply the user's choice optimistically.
+    expect(select.value).toBe("2");
+  });
+
+  it("rolls back the selection if patchActivityShoe rejects", async () => {
+    mockedListShoes.mockResolvedValue([shoe(), shoe({ id: 2, name: "Pegasus" })]);
+    mockedPatchActivityShoe.mockRejectedValue(new Error("Network down"));
+    renderWithQuery(
+      <ShoeSelector
+        activityId={42}
+        source="strava"
+        currentShoeId={null}
+        onChange={vi.fn()}
+      />,
+    );
+    const select = (await screen.findByLabelText(
+      "Tag a shoe",
+    )) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "2" } });
+    await screen.findByText("Network down");
+    // Selection rolls back to the (still-null) parent prop.
+    expect(select.value).toBe("");
+  });
+
+  it("shows the user's pick during the PATCH+refetch latency window", async () => {
+    mockedListShoes.mockResolvedValue([shoe(), shoe({ id: 2, name: "Pegasus" })]);
+    // Deferred promise that we control — simulates the latency between
+    // the user's tap and the parent's eventual refetch landing.
+    let resolvePatch: (value: {
+      id: number;
+      source: "strava";
+      shoe_id: number | null;
+    }) => void = () => {};
+    mockedPatchActivityShoe.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePatch = resolve;
+      }),
+    );
+    renderWithQuery(
+      <ShoeSelector
+        activityId={42}
+        source="strava"
+        currentShoeId={null}
+        onChange={vi.fn()}
+      />,
+    );
+    const select = (await screen.findByLabelText(
+      "Tag a shoe",
+    )) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "2" } });
+    // Before the PATCH resolves, the optimistic pick must already be
+    // visible — this is the exact bug-mode the user hit.
+    expect(select.value).toBe("2");
+    // Resolve the PATCH and flush microtasks; the parent prop is still
+    // null (no refetch happened in this test), so the optimistic pick
+    // must continue to win.
+    resolvePatch({ id: 42, source: "strava", shoe_id: 2 });
+    await waitFor(() => expect(select.disabled).toBe(false));
+    expect(select.value).toBe("2");
   });
 
   it("calls patchActivityShoe with shoe_id=null when the user picks None", async () => {
