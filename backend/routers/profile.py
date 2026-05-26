@@ -157,7 +157,7 @@ class ProfilePayload(BaseModel):
         try:
             _dt.date.fromisoformat(v)
         except ValueError as exc:
-            raise ValueError(f"invalid dateOfBirth: {v!r}") from exc
+            raise ValueError("invalid dateOfBirth") from exc
         return v
 
     @field_validator("focus")

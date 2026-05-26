@@ -26,7 +26,7 @@ export default function GearCard() {
       >
         <div className="min-w-0">
           <div className="text-sm font-medium text-slate-200">Shoes</div>
-          <div className="text-[11px] text-slate-500">{summary}</div>
+          <div className="text-[11px] text-slate-400">{summary}</div>
         </div>
         <ChevronRight size={16} className="text-slate-500" />
       </Link>

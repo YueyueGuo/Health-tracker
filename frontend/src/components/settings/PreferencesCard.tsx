@@ -22,7 +22,7 @@ export default function PreferencesCard() {
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-sm font-medium text-slate-200">Units</div>
-          <div className="text-[11px] text-slate-500">
+          <div className="text-[11px] text-slate-400">
             Weight, distance, and speed
           </div>
         </div>

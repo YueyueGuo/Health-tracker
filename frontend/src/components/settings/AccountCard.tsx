@@ -40,7 +40,7 @@ export default function AccountCard() {
         <div>
           <label
             htmlFor="account-display-name"
-            className="block text-[10px] font-medium text-slate-500 uppercase tracking-wider mb-1"
+            className="block text-[10px] font-medium text-slate-400 uppercase tracking-wider mb-1"
           >
             Name
           </label>
@@ -58,7 +58,7 @@ export default function AccountCard() {
         <div>
           <label
             htmlFor="account-email"
-            className="block text-[10px] font-medium text-slate-500 uppercase tracking-wider mb-1"
+            className="block text-[10px] font-medium text-slate-400 uppercase tracking-wider mb-1"
           >
             Email
           </label>
@@ -76,7 +76,7 @@ export default function AccountCard() {
         <div>
           <label
             htmlFor="account-dob"
-            className="block text-[10px] font-medium text-slate-500 uppercase tracking-wider mb-1"
+            className="block text-[10px] font-medium text-slate-400 uppercase tracking-wider mb-1"
           >
             Date of birth
           </label>
@@ -89,7 +89,7 @@ export default function AccountCard() {
             placeholder="Not set"
             className="w-full bg-dashboard border border-cardBorder text-slate-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-brand-green"
           />
-          <p className="mt-1 text-[11px] text-slate-500">
+          <p className="mt-1 text-[11px] text-slate-400">
             {formatDob(preferences.dateOfBirth)}
           </p>
         </div>
