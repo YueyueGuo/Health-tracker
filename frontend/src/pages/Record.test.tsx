@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, screen, fireEvent, waitFor } from "@testing-library/react";
 import { renderWithQuery } from "../test/renderWithQuery";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 const navigateMock = vi.fn();
@@ -90,7 +90,7 @@ describe("Record page", () => {
       expect(navigateMock).toHaveBeenCalledWith("/history")
     );
     expect(
-      window.localStorage.getItem("health-tracker:record-draft:v1")
+      window.localStorage.getItem("health-tracker:record-draft:v2")
     ).toBeNull();
   });
 
@@ -113,7 +113,7 @@ describe("Record page", () => {
 
     await waitFor(() =>
       expect(
-        window.localStorage.getItem("health-tracker:record-draft:v1")
+        window.localStorage.getItem("health-tracker:record-draft:v2")
       ).toContain("Bench Press")
     );
 
@@ -205,5 +205,131 @@ describe("Record page", () => {
     expect(payload.ended_at).toMatch(
       /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/,
     );
+  });
+});
+
+// --- Timer regression suite (wall-clock fidelity across backgrounding) ---
+
+const DRAFT_KEY_V2 = "health-tracker:record-draft:v2";
+
+function getTimerText(): string {
+  // The header renders the MM:SS string in a `tabular-nums` span next to a
+  // Clock icon. Match the format directly to avoid coupling to markup.
+  const els = screen
+    .getAllByText(/^\d{2}:\d{2}$/)
+    .filter((el) => el.tagName.toLowerCase() === "span");
+  if (els.length === 0) throw new Error("timer display not found");
+  return els[0].textContent ?? "";
+}
+
+describe("Record timer wall-clock fidelity", () => {
+  beforeEach(() => {
+    navigateMock.mockReset();
+    createStrengthSession.mockClear();
+    window.localStorage.clear();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-26T10:00:00Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("timer reflects wall-clock time after a backgrounded interval", () => {
+    renderWithRouter();
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    // Simulate the tab being backgrounded for 60s: jump system time forward
+    // without letting the queued setInterval fire.
+    act(() => {
+      vi.setSystemTime(Date.now() + 60_000);
+    });
+    // Fire the next 1Hz tick so React re-renders with the new `now`.
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    // 60s skipped + 1s tick advance => 01:00 or 01:01 depending on rounding.
+    expect(getTimerText()).toMatch(/^01:0[01]$/);
+  });
+
+  it("mount restoration from persisted startedAtMs shows correct elapsed", () => {
+    const now = Date.now();
+    window.localStorage.setItem(
+      DRAFT_KEY_V2,
+      JSON.stringify({
+        version: 2,
+        date: "2026-05-26",
+        exercises: [
+          {
+            key: 1,
+            name: "",
+            notes: "",
+            showNotes: false,
+            linkedToNext: false,
+            sets: [
+              { key: 2, weight: "", reps: "", rpe: "", performed_at: null },
+              { key: 3, weight: "", reps: "", rpe: "", performed_at: null },
+              { key: 4, weight: "", reps: "", rpe: "", performed_at: null },
+            ],
+          },
+        ],
+        isRunning: true,
+        startedAtMs: now - 120_000,
+        accumulatedSecs: 0,
+      }),
+    );
+
+    renderWithRouter();
+
+    expect(getTimerText()).toBe("02:00");
+  });
+
+  it("visibilitychange to visible immediately resyncs elapsed", () => {
+    renderWithRouter();
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    // Background: bump wall-clock 30s without firing the interval.
+    act(() => {
+      vi.setSystemTime(Date.now() + 30_000);
+    });
+    // Tab becomes visible — fire the listener directly without advancing
+    // timers, so we prove the recompute didn't rely on the next tick.
+    act(() => {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => "visible",
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(getTimerText()).toBe("00:30");
+  });
+
+  it("pause then resume accumulates wall-clock time across pause", () => {
+    renderWithRouter();
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    // Run honestly for 30s: 30 ticks fire while system time advances.
+    act(() => {
+      vi.advanceTimersByTime(30_000);
+    });
+    expect(getTimerText()).toBe("00:30");
+
+    // Pause and let 5 minutes of wall-clock pass with no ticks needed.
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    act(() => {
+      vi.setSystemTime(Date.now() + 5 * 60_000);
+    });
+    // Still paused: timer should not have advanced beyond the committed 30s.
+    expect(getTimerText()).toBe("00:30");
+
+    // Resume and let 10s pass honestly.
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+
+    expect(getTimerText()).toBe("00:40");
   });
 });

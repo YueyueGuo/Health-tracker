@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useApi } from "../hooks/useApi";
+import { useWakeLock } from "../hooks/useWakeLock";
 import { invalidateAppDataQueries } from "../lib/queryCache";
 import {
   createStrengthSession,
@@ -18,7 +19,7 @@ import type { ExerciseDraft, SetDraft } from "../components/record/types";
 
 let nextKey = 1;
 const newKey = () => nextKey++;
-const DRAFT_STORAGE_KEY = "health-tracker:record-draft:v1";
+const DRAFT_STORAGE_KEY = "health-tracker:record-draft:v2";
 
 const emptySet = (): SetDraft => ({
   key: newKey(),
@@ -43,54 +44,62 @@ const containerVariants = {
 };
 
 type RecordDraft = {
-  version: 1;
+  version: 2;
   date: string;
   exercises: ExerciseDraft[];
   isRunning: boolean;
-  elapsed: number;
-  savedAt: number;
+  startedAtMs: number | null;
+  accumulatedSecs: number;
 };
 
-type InitialRecordDraft = Omit<RecordDraft, "version" | "savedAt">;
+type InitialRecordDraft = RecordDraft & { startedAt: string | null };
 
 function loadRecordDraft(today: string): InitialRecordDraft {
-  const fallback = {
+  const fallback: InitialRecordDraft = {
+    version: 2,
     date: today,
     exercises: [emptyExercise()],
     isRunning: false,
-    elapsed: 0,
+    startedAtMs: null,
+    accumulatedSecs: 0,
+    startedAt: null,
   };
   try {
     const raw = window.localStorage.getItem(DRAFT_STORAGE_KEY);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<RecordDraft>;
-    if (parsed.version !== 1 || !Array.isArray(parsed.exercises)) {
+    if (parsed.version !== 2 || !Array.isArray(parsed.exercises)) {
       return fallback;
     }
     const exercises = normalizeExercises(parsed.exercises);
-    const savedAt = readNonNegativeNumber(parsed.savedAt) ?? Date.now();
     const wasRunning = parsed.isRunning === true;
-    const storedElapsed = readNonNegativeNumber(parsed.elapsed) ?? 0;
-    const elapsed = wasRunning
-      ? storedElapsed + Math.max(0, Math.floor((Date.now() - savedAt) / 1000))
-      : storedElapsed;
+    const startedAtMs = readNonNegativeNumber(parsed.startedAtMs);
+    const accumulatedSecs = readNonNegativeNumber(parsed.accumulatedSecs) ?? 0;
+    // Reconstruct the naive-local ISO `startedAt` from the persisted epoch so
+    // a mid-workout reload still posts a correct `started_at` on save.
+    const startedAt =
+      startedAtMs != null ? toNaiveLocalIso(new Date(startedAtMs)) : null;
     return {
+      version: 2,
       date: typeof parsed.date === "string" && parsed.date ? parsed.date : today,
       exercises,
       isRunning: wasRunning,
-      elapsed,
+      startedAtMs,
+      accumulatedSecs,
+      startedAt,
     };
   } catch {
     return fallback;
   }
 }
 
-function saveRecordDraft(draft: InitialRecordDraft) {
+type DraftSnapshot = Omit<RecordDraft, "version">;
+
+function saveRecordDraft(draft: DraftSnapshot) {
   try {
     const snapshot: RecordDraft = {
-      version: 1,
+      version: 2,
       ...draft,
-      savedAt: Date.now(),
     };
     window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(snapshot));
   } catch {
@@ -106,9 +115,10 @@ function clearRecordDraft() {
   }
 }
 
-function isDraftDirty(draft: InitialRecordDraft): boolean {
+function isDraftDirty(draft: DraftSnapshot): boolean {
   if (draft.isRunning) return true;
-  if (draft.elapsed > 0) return true;
+  if (draft.accumulatedSecs > 0) return true;
+  if (draft.startedAtMs != null) return true;
   return draft.exercises.some(
     (ex) =>
       ex.name.trim() !== "" ||
@@ -279,53 +289,73 @@ export default function Record() {
     initialDraft.exercises,
   );
   const [isRunning, setIsRunning] = useState(initialDraft.isRunning);
-  const [elapsed, setElapsed] = useState(initialDraft.elapsed);
+  const [startedAtMs, setStartedAtMs] = useState<number | null>(
+    initialDraft.startedAtMs,
+  );
+  const [accumulatedSecs, setAccumulatedSecs] = useState<number>(
+    initialDraft.accumulatedSecs,
+  );
   const [now, setNow] = useState(() => Date.now());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Naive-local ISO captured on the first "Start" tap (or first auto-start
-  // when the user begins logging). Reset when a draft finishes saving.
-  const [startedAt, setStartedAt] = useState<string | null>(null);
+  // when the user begins logging). Reset when a draft finishes saving. We
+  // hydrate this from the persisted `startedAtMs` so a mid-workout reload
+  // still posts the original wall-clock moment on save.
+  const [startedAt, setStartedAt] = useState<string | null>(
+    initialDraft.startedAt,
+  );
 
   // Background data: known exercise names for the <datalist> autocomplete.
   const { data: knownExercises } = useApi(["strength", "exercises"], () =>
     fetchStrengthExercises(),
   );
 
-  // Persist only on user-driven transitions, not on the 1Hz `elapsed` tick.
-  // While running, the loader reconstructs `elapsed` from `savedAt` wallclock,
-  // so a stale snapshot is fine; on pause, `isRunning` flips and we re-save
-  // with the freshly-captured `elapsed`. The dirty check skips skeleton drafts
-  // (and clears any prior save) so empty visits don't litter localStorage.
+  // Derived elapsed: wall-clock truth, recomputed every render. While
+  // running we add live seconds since the current segment started; while
+  // paused we just show what's accumulated. Browser background-throttling
+  // can't desync this — the value falls out of `Date.now()`.
+  const elapsed = isRunning && startedAtMs != null
+    ? accumulatedSecs + Math.floor((now - startedAtMs) / 1000)
+    : accumulatedSecs;
+
+  // Persist the full draft on every meaningful change. With wall-clock
+  // derivation there's no 1Hz tick churn — `startedAtMs` only changes
+  // on user-driven start/pause/resume.
   useEffect(() => {
-    const draft = { date, exercises, isRunning, elapsed };
+    const draft = {
+      date,
+      exercises,
+      isRunning,
+      startedAtMs,
+      accumulatedSecs,
+    };
     if (!isDraftDirty(draft)) {
       clearRecordDraft();
       return;
     }
     saveRecordDraft(draft);
-  }, [date, exercises, isRunning]);
+  }, [date, exercises, isRunning, startedAtMs, accumulatedSecs]);
 
-  // Workout timer (1 Hz) — runs only while the session is active.
-  useEffect(() => {
-    if (!isRunning) return;
-    const id = window.setInterval(() => setElapsed((s) => s + 1), 1000);
-    return () => window.clearInterval(id);
-  }, [isRunning]);
-
-  // Stamp `startedAt` the first time the workout transitions to running.
-  // Subsequent pauses/resumes do not overwrite the start.
-  useEffect(() => {
-    if (isRunning && startedAt == null) {
-      setStartedAt(toNaiveLocalIso(new Date()));
-    }
-  }, [isRunning, startedAt]);
-
-  // Rest-timer clock. Cheap; ticks regardless so the rest chip stays live.
+  // Single re-render driver for both the workout clock (derived above)
+  // and the rest-timer chip (derived from `now - lastLoggedAt`).
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
+
+  // Snap to wall-clock truth the instant the tab regains focus, rather
+  // than waiting up to a second for the next tick.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") setNow(Date.now());
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
+
+  // Keep the screen awake while a workout is active (best effort).
+  useWakeLock(isRunning);
 
   const lastLoggedAt = useMemo(() => {
     let max: number | null = null;
@@ -346,6 +376,17 @@ export default function Record() {
   const hasStarted = isRunning || elapsed > 0;
   const hasLoggedSet = lastLoggedAt != null;
 
+  // Single entry point for stamping the workout as started — keeps
+  // `isRunning`, `startedAtMs`, and `startedAt` in lockstep so the three
+  // call sites (Start button, autoStartIfIdle, toggleSetComplete) can't
+  // drift.
+  const ensureWorkoutStarted = () => {
+    const stampMs = Date.now();
+    setIsRunning(true);
+    setStartedAtMs((prev) => (prev == null ? stampMs : prev));
+    setStartedAt((prev) => (prev == null ? toNaiveLocalIso(new Date(stampMs)) : prev));
+  };
+
   const autoStartIfIdle = (next: ExerciseDraft[]) => {
     if (isRunning || elapsed !== 0) return;
     const dirty = next.some(
@@ -353,7 +394,7 @@ export default function Record() {
         ex.name.trim() !== "" ||
         ex.sets.some((s) => s.weight !== "" || s.reps !== "")
     );
-    if (dirty) setIsRunning(true);
+    if (dirty) ensureWorkoutStarted();
   };
 
   const updateExercises = (
@@ -441,7 +482,7 @@ export default function Record() {
         // Auto-append a fresh row if this was the last set in the card.
         if (isLast) sets.push(emptySet());
         // Auto-start the workout timer if a set was just logged.
-        if (!isRunning && elapsed === 0) setIsRunning(true);
+        if (!isRunning && elapsed === 0) ensureWorkoutStarted();
         return { ...ex, sets };
       })
     );
@@ -459,8 +500,28 @@ export default function Record() {
       })
     );
 
-  const handleStart = () => setIsRunning(true);
-  const handlePause = () => setIsRunning(false);
+  const handleStart = () => {
+    if (isRunning) return;
+    if (startedAtMs == null) {
+      ensureWorkoutStarted();
+    } else {
+      // Resume from pause: re-stamp the current segment, leave accumulated.
+      setStartedAtMs(Date.now());
+      setIsRunning(true);
+    }
+  };
+
+  const handlePause = () => {
+    if (!isRunning) return;
+    // Commit the current run-segment into the accumulated total before
+    // stopping so resume picks up cleanly.
+    if (startedAtMs != null) {
+      const segment = Math.floor((Date.now() - startedAtMs) / 1000);
+      setAccumulatedSecs((prev) => prev + Math.max(0, segment));
+      setStartedAtMs(null);
+    }
+    setIsRunning(false);
+  };
 
   const canFinish = hasLoggedSet && !saving;
 
@@ -487,6 +548,13 @@ export default function Record() {
         started_at: startedAt,
         ended_at: endedAt,
       });
+      // Reset all draft state before the persistence effect runs so it
+      // sees a clean slate and clears (rather than re-saves) the draft.
+      setIsRunning(false);
+      setStartedAtMs(null);
+      setAccumulatedSecs(0);
+      setStartedAt(null);
+      setExercises([emptyExercise()]);
       clearRecordDraft();
       void invalidateAppDataQueries(queryClient);
       navigate("/history");
