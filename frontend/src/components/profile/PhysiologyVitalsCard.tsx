@@ -1,6 +1,7 @@
 import { Activity } from "lucide-react";
 import { Card } from "../ui/Card";
 import type { ProfileVitals } from "../../hooks/useProfilePreferences";
+import { useUnits } from "../../hooks/useUnits";
 
 interface PhysiologyVitalsCardProps {
   vitals: ProfileVitals;
@@ -9,16 +10,12 @@ interface PhysiologyVitalsCardProps {
 
 type VitalField = keyof ProfileVitals;
 
-const SUMMARY_FIELDS: Array<{
+interface SummaryField {
   key: VitalField;
   label: string;
   suffix?: string;
   inputMode?: "numeric" | "text";
-}> = [
-  { key: "age", label: "Age", inputMode: "numeric" },
-  { key: "weight", label: "Weight", suffix: "lb", inputMode: "numeric" },
-  { key: "height", label: "Height", inputMode: "text" },
-];
+}
 
 const HEART_RATE_FIELDS: Array<{
   key: VitalField;
@@ -32,6 +29,20 @@ export default function PhysiologyVitalsCard({
   vitals,
   onChange,
 }: PhysiologyVitalsCardProps) {
+  const { units } = useUnits();
+  const weightSuffix = units === "metric" ? "kg" : "lb";
+
+  const summaryFields: SummaryField[] = [
+    { key: "age", label: "Age", inputMode: "numeric" },
+    {
+      key: "weight",
+      label: "Weight",
+      suffix: weightSuffix,
+      inputMode: "numeric",
+    },
+    { key: "height", label: "Height", inputMode: "text" },
+  ];
+
   function update(key: VitalField, value: string) {
     onChange({ ...vitals, [key]: value });
   }
@@ -46,7 +57,7 @@ export default function PhysiologyVitalsCard({
       </div>
 
       <div className="grid grid-cols-3 gap-3 mb-4">
-        {SUMMARY_FIELDS.map((field) => (
+        {summaryFields.map((field) => (
           <label
             key={field.key}
             className="bg-dashboard/50 p-2 rounded-lg border border-cardBorder/50 text-center"

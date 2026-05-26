@@ -23,11 +23,63 @@ async def test_get_profile_creates_singleton(client, db):
     data = resp.json()
     assert data["displayName"] == ""
     assert data["email"] == ""
+    assert data["dateOfBirth"] == ""
     assert data["vitals"]["maxHr"] == "192"
 
     row = (await db.execute(select(UserProfile))).scalar_one()
     assert row.id == 1
     assert isinstance(row.payload, dict)
+
+
+async def test_get_profile_returns_empty_date_of_birth_on_fresh_db(client):
+    resp = await client.get("/api/profile")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "dateOfBirth" in data
+    assert data["dateOfBirth"] == ""
+
+
+async def test_patch_date_of_birth_round_trips(client):
+    resp = await client.patch(
+        "/api/profile",
+        json={"dateOfBirth": "1993-10-12"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["dateOfBirth"] == "1993-10-12"
+
+    follow_up = await client.get("/api/profile")
+    assert follow_up.status_code == 200
+    assert follow_up.json()["dateOfBirth"] == "1993-10-12"
+
+
+async def test_patch_date_of_birth_invalid_returns_422(client):
+    resp = await client.patch(
+        "/api/profile",
+        json={"dateOfBirth": "not-a-date"},
+    )
+    assert resp.status_code == 422
+
+
+async def test_patch_date_of_birth_empty_clears_value(client):
+    # First set to a real date.
+    initial = await client.patch(
+        "/api/profile",
+        json={"dateOfBirth": "1993-10-12"},
+    )
+    assert initial.status_code == 200
+    assert initial.json()["dateOfBirth"] == "1993-10-12"
+
+    # Then clear it.
+    cleared = await client.patch(
+        "/api/profile",
+        json={"dateOfBirth": ""},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["dateOfBirth"] == ""
+
+    follow_up = await client.get("/api/profile")
+    assert follow_up.status_code == 200
+    assert follow_up.json()["dateOfBirth"] == ""
 
 
 async def test_patch_profile_merges_vitals(client):

@@ -60,7 +60,7 @@ export default function DataSourcesCard() {
                 <div className="text-sm font-medium text-slate-300">
                   {source.label}
                 </div>
-                <div className="text-[10px] text-slate-500">{status.detail}</div>
+                <div className="text-[10px] text-slate-400">{status.detail}</div>
               </div>
               <span
                 className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded whitespace-nowrap ${status.badgeClassName}`}

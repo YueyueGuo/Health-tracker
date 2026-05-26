@@ -37,6 +37,7 @@ export default function App() {
         <Route path="/record" element={routeElement(<Record />)} />
         <Route path="/history" element={routeElement(<History />)} />
         <Route path="/profile" element={routeElement(<Profile />)} />
+        <Route path="/settings" element={routeElement(<Settings />)} />
         <Route path="/training" element={routeElement(<TrainingLoad />)} />
         <Route path="/sleep" element={routeElement(<Sleep />)} />
         <Route path="/recovery" element={routeElement(<RecoveryPanel />)} />
@@ -50,7 +51,6 @@ export default function App() {
       </Route>
       <Route element={<Layout />}>
         <Route path="/ask" element={routeElement(<ChatPanel />)} />
-        <Route path="/settings" element={routeElement(<Settings />)} />
       </Route>
     </Routes>
   );

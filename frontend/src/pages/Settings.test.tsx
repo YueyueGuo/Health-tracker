@@ -1,159 +1,169 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { renderWithQuery } from "../test/renderWithQuery";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../api/profile", () => ({
+  fetchProfile: vi.fn(),
+  patchProfile: vi.fn(),
+}));
+
+vi.mock("../api/sync", () => ({
+  fetchSyncStatus: vi.fn(),
+  fetchDebugDb: vi.fn(),
+  triggerSync: vi.fn(),
+}));
+
+vi.mock("../api/shoes", () => ({
+  listShoes: vi.fn(),
+}));
 
 vi.mock("../components/GoalsSection", () => ({
   default: () => <div>Goals stub</div>,
 }));
 
-vi.mock("../components/settings/ShoesSettingsCard", () => ({
-  default: () => <div>Shoes stub</div>,
+vi.mock("../components/settings/LocationSettingsSection", () => ({
+  default: () => <div>Locations stub</div>,
 }));
 
-vi.mock("../api/locations", () => ({
-  createLocation: vi.fn(),
-  deleteLocation: vi.fn(),
-  listLocations: vi.fn(),
-  patchLocation: vi.fn(),
-  setDefaultLocation: vi.fn(),
-}));
-
-vi.mock("../hooks/useUnits", () => ({
-  useUnits: () => ({ units: "metric" }),
-  formatElevation: (meters: number | null | undefined) =>
-    meters == null ? "—" : `${Math.round(meters)} m`,
-}));
-
-vi.mock("../api/sync", () => ({
-  fetchDebugDb: vi.fn(),
-  fetchSyncStatus: vi.fn(),
-  triggerSync: vi.fn(),
+vi.mock("../components/settings/SyncSection", () => ({
+  default: () => <div>Sync stub</div>,
 }));
 
 import Settings from "./Settings";
-import {
-  createLocation,
-  deleteLocation,
-  listLocations,
-  patchLocation,
-  setDefaultLocation,
-} from "../api/locations";
-import { fetchDebugDb, fetchSyncStatus } from "../api/sync";
+import { UnitsProvider } from "../hooks/useUnits";
+import { DEFAULT_PROFILE_PREFERENCES } from "../hooks/useProfilePreferences";
+import { fetchProfile, patchProfile } from "../api/profile";
+import { fetchSyncStatus } from "../api/sync";
+import { listShoes } from "../api/shoes";
 
-const mockedCreateLocation = vi.mocked(createLocation);
-const mockedDeleteLocation = vi.mocked(deleteLocation);
-const mockedListLocations = vi.mocked(listLocations);
-const mockedPatchLocation = vi.mocked(patchLocation);
-const mockedSetDefaultLocation = vi.mocked(setDefaultLocation);
-const mockedFetchDebugDb = vi.mocked(fetchDebugDb);
+const mockedFetchProfile = vi.mocked(fetchProfile);
+const mockedPatchProfile = vi.mocked(patchProfile);
 const mockedFetchSyncStatus = vi.mocked(fetchSyncStatus);
+const mockedListShoes = vi.mocked(listShoes);
 
-const locations = [
-  {
-    id: 1,
-    name: "Home",
-    lat: 40.0,
-    lng: -105.2,
-    elevation_m: 1650,
-    is_default: true,
-  },
-  {
-    id: 2,
-    name: "Gym",
-    lat: 39.9,
-    lng: -105.1,
-    elevation_m: null,
-    is_default: false,
-  },
-];
+function renderSettings() {
+  return renderWithQuery(
+    <MemoryRouter initialEntries={["/settings"]}>
+      <UnitsProvider>
+        <Settings />
+      </UnitsProvider>
+    </MemoryRouter>
+  );
+}
 
 describe("Settings", () => {
   beforeEach(() => {
-    mockedListLocations.mockResolvedValue(locations);
-    mockedFetchDebugDb.mockResolvedValue({
-      database_url: "sqlite://test",
-      sqlite_main_file: ":memory:",
-      database_list: [],
-      row_counts: {},
-    } as never);
+    window.localStorage.clear();
+    mockedFetchProfile.mockResolvedValue({ ...DEFAULT_PROFILE_PREFERENCES });
+    mockedPatchProfile.mockImplementation(async (prefs) => prefs);
     mockedFetchSyncStatus.mockResolvedValue({} as never);
-    vi.stubGlobal("confirm", vi.fn(() => true));
+    mockedListShoes.mockResolvedValue([]);
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
     vi.clearAllMocks();
+    window.localStorage.clear();
   });
 
-  it("renames, sets default, and deletes saved locations", async () => {
-    mockedPatchLocation.mockResolvedValue({ ...locations[0], name: "Home Base" });
-    mockedSetDefaultLocation.mockResolvedValue({
-      ...locations[1],
-      is_default: true,
-    });
-    mockedDeleteLocation.mockResolvedValue(undefined);
+  it("renders the four main cards under the Settings header", async () => {
+    renderSettings();
 
-    renderWithQuery(<Settings />);
+    expect(
+      screen.getByRole("heading", { name: "Settings", level: 1 })
+    ).toBeInTheDocument();
 
-    await screen.findByText("Saved locations");
+    await waitFor(() =>
+      expect(screen.queryByText("Loading account…")).not.toBeInTheDocument()
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Account" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Preferences" })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Gear" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Data Sources" })
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the Advanced section collapsed by default and expands on click", async () => {
+    renderSettings();
+
+    await screen.findByRole("heading", { name: "Account" });
+
+    expect(screen.queryByText("Goals stub")).not.toBeInTheDocument();
+    expect(screen.queryByText("Locations stub")).not.toBeInTheDocument();
+    expect(screen.queryByText("Sync stub")).not.toBeInTheDocument();
+
+    const trigger = screen.getByRole("button", { name: /Advanced/ });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(trigger);
+
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Goals stub")).toBeInTheDocument();
-    expect(screen.getByText("Shoes stub")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Home" }));
-    const renameInput = screen.getByDisplayValue("Home");
-    fireEvent.change(renameInput, { target: { value: "Home Base" } });
-    fireEvent.blur(renameInput);
-
-    await waitFor(() =>
-      expect(mockedPatchLocation).toHaveBeenCalledWith(1, { name: "Home Base" })
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Make default" }));
-    await waitFor(() => expect(mockedSetDefaultLocation).toHaveBeenCalledWith(2));
-
-    fireEvent.click(screen.getAllByRole("button", { name: "Delete" })[1]);
-    await waitFor(() => expect(mockedDeleteLocation).toHaveBeenCalledWith(2));
+    expect(screen.getByText("Locations stub")).toBeInTheDocument();
+    expect(screen.getByText("Sync stub")).toBeInTheDocument();
   });
 
-  it("creates a location through the advanced form", async () => {
-    mockedCreateLocation.mockResolvedValue({
-      id: 3,
-      name: "Track",
-      lat: 37.33,
-      lng: -121.89,
-      elevation_m: 25,
-      is_default: false,
-    });
+  it("persists name edits through patchProfile", async () => {
+    renderSettings();
 
-    renderWithQuery(<Settings />);
-
-    await screen.findByText("Saved locations");
-    fireEvent.click(screen.getByRole("button", { name: "Enter coords manually" }));
-
-    fireEvent.change(screen.getByPlaceholderText("Name"), {
-      target: { value: "Track" },
-    });
-    fireEvent.change(screen.getByPlaceholderText("Latitude (e.g. 37.7749)"), {
-      target: { value: "37.33" },
-    });
-    fireEvent.change(screen.getByPlaceholderText("Longitude (e.g. -122.4194)"), {
-      target: { value: "-121.89" },
-    });
-    fireEvent.change(
-      screen.getByPlaceholderText("Elevation in meters (optional)"),
-      {
-        target: { value: "25" },
-      }
+    await waitFor(() => expect(mockedFetchProfile).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.queryByText("Loading account…")).not.toBeInTheDocument()
     );
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Yueyue" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save account" }));
 
     await waitFor(() =>
-      expect(mockedCreateLocation).toHaveBeenCalledWith({
-        name: "Track",
-        lat: 37.33,
-        lng: -121.89,
-        elevation_m: 25,
-      })
+      expect(mockedPatchProfile).toHaveBeenCalledWith(
+        expect.objectContaining({ displayName: "Yueyue" })
+      )
     );
+  });
+
+  it("toggling Metric updates the ht.units localStorage entry", async () => {
+    renderSettings();
+
+    await screen.findByRole("heading", { name: "Preferences" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Metric" }));
+
+    await waitFor(() =>
+      expect(window.localStorage.getItem("ht.units")).toBe("metric")
+    );
+  });
+
+  it("accepts a YYYY-MM-DD value in the date-of-birth input", async () => {
+    renderSettings();
+
+    await waitFor(() =>
+      expect(screen.queryByText("Loading account…")).not.toBeInTheDocument()
+    );
+
+    const dob = screen.getByLabelText("Date of birth") as HTMLInputElement;
+    fireEvent.change(dob, { target: { value: "1993-10-12" } });
+    expect(dob.value).toBe("1993-10-12");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save account" }));
+    await waitFor(() =>
+      expect(mockedPatchProfile).toHaveBeenCalledWith(
+        expect.objectContaining({ dateOfBirth: "1993-10-12" })
+      )
+    );
+  });
+
+  it("links the Shoes gear row to /shoes", async () => {
+    renderSettings();
+
+    const link = await screen.findByRole("link", { name: /Shoes/ });
+    expect(link.getAttribute("href")).toBe("/shoes");
   });
 });
