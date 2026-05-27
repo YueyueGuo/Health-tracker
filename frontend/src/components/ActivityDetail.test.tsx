@@ -545,8 +545,10 @@ describe("ActivityDetailPage", () => {
     await screen.findByText("Apple Strength");
 
     // 1. The fetch was called with the explicit Apple-Health source so the
-    //    backend can disambiguate from a colliding Strava activity id.
-    expect(mockedFetchActivity).toHaveBeenCalledWith(123, "apple_health");
+    //    backend can disambiguate from a colliding Strava activity id. The
+    //    third argument is the user's unit preference, forwarded so the
+    //    backend can re-bin Apple splits in miles vs kilometers.
+    expect(mockedFetchActivity).toHaveBeenCalledWith(123, "apple_health", "imperial");
 
     // 2. The Apple branch renders: no RPE card, no LocationPicker, no
     //    "Analyze This Workout" insight button. (See ActivityDetail.tsx
@@ -579,7 +581,7 @@ describe("ActivityDetailPage", () => {
     renderWithQuery(<ActivityDetailPage />);
     await screen.findByText("Strava Run");
 
-    expect(mockedFetchActivity).toHaveBeenCalledWith(123, "strava");
+    expect(mockedFetchActivity).toHaveBeenCalledWith(123, "strava", "imperial");
   });
 
   describe("prev/next navigation arrows", () => {

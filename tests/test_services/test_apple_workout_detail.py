@@ -344,3 +344,199 @@ async def test_weather_none_for_apple_only_workout(db: AsyncSession):
     detail = await get_apple_workout_detail(db, dp.id)
     assert detail is not None
     assert detail["weather"] is None
+
+
+# ── units re-binning ───────────────────────────────────────────────
+
+
+async def test_apple_detail_returns_metric_km_splits_by_default(db: AsyncSession):
+    """8870 m run yields 8 full 1000 m laps + ~870 m remainder when
+    ``units`` is unspecified (default metric). The persisted laps are
+    returned verbatim — no re-binning."""
+    await _seed_profile(db)
+    # Synthesize km-bucket laps mirroring what apple_health_ingest writes.
+    total_m = 8870.0
+    total_s = 60 * 60  # 1 hour → easy math, avg speed = 2.464 m/s
+    laps_metric = []
+    for i in range(8):
+        laps_metric.append(
+            WorkoutLap(
+                lap_index=i,
+                name=f"Split {i + 1}",
+                elapsed_time_s=int(round(1000.0 * total_s / total_m)),
+                moving_time_s=int(round(1000.0 * total_s / total_m)),
+                distance_m=1000.0,
+                avg_speed_mps=total_m / total_s,
+                split=i + 1,
+            )
+        )
+    remainder_m = total_m - 8 * 1000.0
+    laps_metric.append(
+        WorkoutLap(
+            lap_index=8,
+            name="Split 9",
+            elapsed_time_s=int(round(remainder_m * total_s / total_m)),
+            moving_time_s=int(round(remainder_m * total_s / total_m)),
+            distance_m=remainder_m,
+            avg_speed_mps=total_m / total_s,
+            split=9,
+        )
+    )
+    _, dp = await _seed_apple_workout(
+        db,
+        external_id="apple-metric",
+        activity_type="run",
+        distance_m=total_m,
+        duration_s=total_s,
+        laps=laps_metric,
+    )
+
+    detail = await get_apple_workout_detail(db, dp.id)
+    assert detail is not None
+    laps = detail["laps"]
+    # 8 full 1 km laps + remainder
+    assert len(laps) == 9
+    full_laps = laps[:8]
+    for lap in full_laps:
+        assert lap["distance"] == 1000.0
+    remainder = laps[8]
+    assert remainder["distance"] == pytest.approx(870.0, abs=1.0)
+    # No re-binning should have happened (persisted rows returned).
+    assert detail["splits_synthetic"] is True
+
+
+async def test_apple_detail_returns_imperial_mile_splits_when_units_imperial(
+    db: AsyncSession,
+):
+    """A 8870 m run (≈ 5.51 mi) re-bins to 5 mile laps + remainder when
+    ``units='imperial'``. Total distance across rebinned laps equals the
+    workout distance; the per-lap pace (avg_speed) matches the workout
+    average (synthesized laps share total pace)."""
+    await _seed_profile(db)
+    total_m = 8870.0
+    total_s = 60 * 60  # 1 hour, avg_speed = 2.464 m/s
+    # Seed metric km laps in DB (mirrors ingest output). Re-binning
+    # ignores them when units=imperial.
+    laps_metric = [
+        WorkoutLap(
+            lap_index=i,
+            name=f"Split {i + 1}",
+            elapsed_time_s=int(round(1000.0 * total_s / total_m)),
+            moving_time_s=int(round(1000.0 * total_s / total_m)),
+            distance_m=1000.0,
+            avg_speed_mps=total_m / total_s,
+            split=i + 1,
+        )
+        for i in range(8)
+    ]
+    _, dp = await _seed_apple_workout(
+        db,
+        external_id="apple-imperial",
+        activity_type="run",
+        distance_m=total_m,
+        duration_s=total_s,
+        laps=laps_metric,
+    )
+
+    detail = await get_apple_workout_detail(db, dp.id, units="imperial")
+    assert detail is not None
+    laps = detail["laps"]
+
+    mile_m = 1609.344
+    # 5 full mile laps + one remainder
+    assert len(laps) == 6
+    for lap in laps[:5]:
+        assert lap["distance"] == pytest.approx(mile_m, rel=1e-9)
+        # Field names match Strava lap dicts.
+        assert lap["average_heartrate"] is None
+        assert lap["average_watts"] is None
+    # Remainder: 8870 - 5 * 1609.344 = 823.28 m
+    expected_remainder = total_m - 5 * mile_m
+    assert laps[5]["distance"] == pytest.approx(expected_remainder, abs=0.5)
+    # Sum of distances ≈ workout total.
+    total_lap_m = sum(lap["distance"] for lap in laps)
+    assert total_lap_m == pytest.approx(total_m, abs=1.0)
+
+    # Pace consistency: each lap's avg_speed should equal the workout avg
+    # (synthetic laps share total pace). avg_speed × elapsed ≈ distance.
+    avg_speed = total_m / total_s
+    for lap in laps:
+        assert lap["average_speed"] == pytest.approx(avg_speed, rel=1e-3)
+        # elapsed × speed ≈ distance (rounding tolerance for int seconds).
+        assert lap["average_speed"] * lap["elapsed_time"] == pytest.approx(
+            lap["distance"], abs=avg_speed * 0.5
+        )
+    # Total elapsed ≈ workout duration.
+    total_elapsed = sum(lap["elapsed_time"] for lap in laps)
+    assert total_elapsed == pytest.approx(total_s, abs=2)
+
+    assert detail["splits_synthetic"] is True
+
+
+async def test_apple_detail_imperial_swim_keeps_100m_buckets(db: AsyncSession):
+    """Swim splits stay at 100 m in both metric and imperial — yards ≈ meters
+    for short pool laps, and there's no obvious mile-equivalent for the UI."""
+    await _seed_profile(db)
+    total_m = 1500.0
+    total_s = 30 * 60
+    swim_laps = [
+        WorkoutLap(
+            lap_index=i,
+            name=f"Split {i + 1}",
+            elapsed_time_s=int(round(100.0 * total_s / total_m)),
+            moving_time_s=int(round(100.0 * total_s / total_m)),
+            distance_m=100.0,
+            avg_speed_mps=total_m / total_s,
+            split=i + 1,
+        )
+        for i in range(15)
+    ]
+    _, dp = await _seed_apple_workout(
+        db,
+        external_id="apple-swim-imperial",
+        activity_type="swim",
+        distance_m=total_m,
+        duration_s=total_s,
+        laps=swim_laps,
+    )
+
+    detail = await get_apple_workout_detail(db, dp.id, units="imperial")
+    assert detail is not None
+    # Re-binned at 100 m buckets too.
+    laps = detail["laps"]
+    assert len(laps) == 15
+    for lap in laps:
+        assert lap["distance"] == pytest.approx(100.0, rel=1e-9)
+
+
+async def test_apple_detail_imperial_falls_back_to_persisted_when_totals_missing(
+    db: AsyncSession,
+):
+    """If a workout's persisted laps exist but distance/duration are missing
+    on the parent row, the re-binner has nothing to compute against —
+    fall back to the persisted laps rather than dropping them."""
+    await _seed_profile(db)
+    laps_metric = [
+        WorkoutLap(
+            lap_index=0,
+            name="Split 1",
+            elapsed_time_s=300,
+            moving_time_s=300,
+            distance_m=1000.0,
+            avg_speed_mps=3.33,
+            split=1,
+        )
+    ]
+    _, dp = await _seed_apple_workout(
+        db,
+        external_id="apple-no-totals",
+        activity_type="run",
+        distance_m=None,
+        duration_s=None,
+        laps=laps_metric,
+    )
+    detail = await get_apple_workout_detail(db, dp.id, units="imperial")
+    assert detail is not None
+    # Falls back to the persisted km laps.
+    assert len(detail["laps"]) == 1
+    assert detail["laps"][0]["distance"] == 1000.0

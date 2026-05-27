@@ -135,9 +135,18 @@ export function fetchActivities(params?: {
   );
 }
 
-export function fetchActivity(id: number, source?: ActivitySource | null) {
-  const qs = source ? `?source=${encodeURIComponent(source)}` : "";
-  return fetchJson<ActivityDetail>(`/activities/${id}${qs}`);
+export function fetchActivity(
+  id: number,
+  source?: ActivitySource | null,
+  units?: "metric" | "imperial" | null,
+) {
+  const params = new URLSearchParams();
+  if (source) params.set("source", source);
+  if (units) params.set("units", units);
+  const qs = params.toString();
+  return fetchJson<ActivityDetail>(
+    `/activities/${id}${qs ? `?${qs}` : ""}`,
+  );
 }
 
 export function fetchActivityStreams(

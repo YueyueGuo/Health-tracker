@@ -15,7 +15,7 @@ from datetime import timedelta
 
 import pytest
 
-from backend.models import Activity, HealthDataPoint, Workout
+from backend.models import Activity, HealthDataPoint, Workout, WorkoutLap
 from backend.routers.activities import router as activities_router
 from backend.services.time_utils import utc_now_naive
 
@@ -265,6 +265,83 @@ async def test_get_activity_404_when_neither_strava_nor_apple(client, db):
     assert resp.status_code == 404
 
 
+# ── units query param for Apple splits ─────────────────────────────
+
+
+async def test_get_apple_activity_passes_units_query_param(client, db):
+    """``?units=imperial`` re-bins synthetic Apple splits into mile buckets
+    at request time. The DB rows stay metric; the response changes."""
+    # Seed an Apple run with the km-bucket laps the ingest pipeline writes.
+    total_m = 8870.0
+    total_s = 60 * 60
+    start = utc_now_naive() - timedelta(days=1)
+    dp = HealthDataPoint(
+        source="apple_health",
+        data_type="workout",
+        external_id="apple-units",
+        start_time=start,
+    )
+    db.add(dp)
+    await db.flush()
+    w = Workout(
+        id=dp.id,
+        activity_type="run",
+        duration_s=total_s,
+        distance_m=total_m,
+        avg_speed_mps=total_m / total_s,
+        activity_id=None,
+    )
+    db.add(w)
+    await db.flush()
+    for i in range(8):
+        db.add(
+            WorkoutLap(
+                workout_id=w.id,
+                lap_index=i,
+                name=f"Split {i + 1}",
+                elapsed_time_s=int(round(1000.0 * total_s / total_m)),
+                moving_time_s=int(round(1000.0 * total_s / total_m)),
+                distance_m=1000.0,
+                avg_speed_mps=total_m / total_s,
+                split=i + 1,
+            )
+        )
+    await db.commit()
+
+    # Default (metric) — persisted km buckets.
+    resp_metric = await client.get(
+        f"/api/activities/{dp.id}?source=apple_health"
+    )
+    assert resp_metric.status_code == 200
+    metric_laps = resp_metric.json()["laps"]
+    assert len(metric_laps) == 8
+    for lap in metric_laps:
+        assert lap["distance"] == 1000.0
+
+    # Imperial — mile buckets, sum to total.
+    resp_imperial = await client.get(
+        f"/api/activities/{dp.id}?source=apple_health&units=imperial"
+    )
+    assert resp_imperial.status_code == 200
+    imp_laps = resp_imperial.json()["laps"]
+    mile_m = 1609.344
+    assert len(imp_laps) == 6
+    for lap in imp_laps[:5]:
+        assert lap["distance"] == pytest.approx(mile_m, rel=1e-9)
+    total = sum(lap["distance"] for lap in imp_laps)
+    assert total == pytest.approx(total_m, abs=1.0)
+
+
+async def test_get_apple_activity_rejects_invalid_units_value(client, db):
+    """``units`` is a Literal in the signature; FastAPI returns 422 for
+    values outside ``metric`` / ``imperial``."""
+    _, dp = await _seed_apple(db, external_id="apple-units-bad")
+    resp = await client.get(
+        f"/api/activities/{dp.id}?source=apple_health&units=bogus"
+    )
+    assert resp.status_code == 422
+
+
 # ── GET /activities/{id}/streams — Apple reconstruction ─────────────
 
 
@@ -302,6 +379,27 @@ async def test_streams_for_apple_returns_empty_dict_when_no_series(client, db):
     resp = await client.get(f"/api/activities/{dp.id}/streams")
     assert resp.status_code == 200
     assert resp.json() == {}
+
+
+async def test_streams_for_apple_handles_scalar_heartrate_dict_shape(client, db):
+    """HAE's "Aggregate workout data" mode ships ``heartRateData`` as a scalar
+    ``{"qty": ..., "units": ...}`` dict rather than a per-sample list. The
+    previous code only matched ``isinstance(list)`` and silently dropped the
+    series, so the chart fell through to the empty state. Mirror the dual-shape
+    handling in ``derive_hr_samples_from_raw_payload`` so at least a single
+    sample at ``time=0`` surfaces.
+    """
+    _, dp = await _seed_apple(db, external_id="apple-scalar-hr")
+    dp.raw_payload = {
+        "heartRateData": {"qty": 142.0, "units": "count/min"},
+    }
+    await db.commit()
+
+    resp = await client.get(f"/api/activities/{dp.id}/streams")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body.get("heartrate") == [142.0]
+    assert body.get("time") == [0.0]
 
 
 async def test_streams_for_apple_reconstructs_velocity_smooth_from_route(client, db):

@@ -10,6 +10,7 @@ import {
 import { fetchLatestWorkoutInsight, type WorkoutInsight } from "../api/insights";
 import { getActivityWeather } from "../api/weather";
 import { useApi } from "../hooks/useApi";
+import { useUnits } from "../hooks/useUnits";
 import { classifyActivity } from "../lib/historyEvents";
 import { getErrorMessage } from "../utils/errors";
 import ActivityDetailRide from "./activity/ActivityDetailRide";
@@ -33,9 +34,14 @@ export default function ActivityDetailPage() {
     sourceParam === "apple_health" || sourceParam === "strava"
       ? sourceParam
       : null;
+  // Splits for Apple Health workouts are re-binned on the backend based on
+  // the user's unit preference (mile splits when imperial, km splits when
+  // metric). Forward `units` so the splits redraw in the correct system,
+  // and include it in the cache key so a toggle from Settings re-fetches.
+  const { units } = useUnits();
   const { data: activity, loading, error, reload } = useApi(
-    ["activities", "detail", activityId, source],
-    () => fetchActivity(activityId, source),
+    ["activities", "detail", activityId, source, units],
+    () => fetchActivity(activityId, source, units),
   );
   // The /activities/{id}/weather endpoint is Strava-only; for Apple Health
   // workouts it always 404s. Wait until the activity payload arrives so we
