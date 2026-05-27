@@ -33,7 +33,8 @@ export default function SplitsTable({ variant, laps, splitsSynthetic }: Props) {
         <h3 className="text-sm font-semibold text-slate-200">Splits</h3>
         {splitsSynthetic && (
           <p className="mt-0.5 text-[10px] text-slate-500">
-            Auto-split — Apple Health did not provide lap markers
+            Auto-split — Apple Health doesn&apos;t expose lap markers. Showing{" "}
+            {units === "imperial" ? "1 mi" : "1 km"} splits computed from totals.
           </p>
         )}
       </div>
