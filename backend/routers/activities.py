@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -135,6 +136,16 @@ async def get_activity(
             "the legacy Strava-first / Apple-fallback resolution."
         ),
     ),
+    units: Literal["metric", "imperial"] = Query(
+        "metric",
+        description=(
+            "Unit preference used when re-binning Apple Health synthetic "
+            "splits. ``metric`` (default) returns the persisted "
+            "kilometre-bucket laps verbatim; ``imperial`` re-bins from "
+            "the workout totals using mile-sized buckets. Has no effect "
+            "on Strava activities, whose laps come from the sensor."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """Get full activity detail including laps, zones, and weather.
@@ -161,7 +172,9 @@ async def get_activity(
             get_apple_workout_detail,
         )
 
-        apple_detail = await get_apple_workout_detail(db, activity_id)
+        apple_detail = await get_apple_workout_detail(
+            db, activity_id, units=units
+        )
         if apple_detail is None:
             raise HTTPException(status_code=404, detail="Activity not found")
         return apple_detail
@@ -176,7 +189,9 @@ async def get_activity(
             get_apple_workout_detail,
         )
 
-        apple_detail = await get_apple_workout_detail(db, activity_id)
+        apple_detail = await get_apple_workout_detail(
+            db, activity_id, units=units
+        )
         if apple_detail is not None:
             return apple_detail
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -741,8 +756,22 @@ async def _maybe_apple_streams(
     # convert ``date`` into seconds-since-first-sample to populate a
     # parallel ``time`` array. Falls back to a 0..N index when dates
     # are unparseable so the chart can still render.
+    #
+    # HAE also emits a scalar shape ``{"qty": <bpm>, "units": "count/min"}``
+    # when "Aggregate workout data" is enabled — surface that as a single
+    # sample at ``time=0`` so the chart can render at least one point
+    # rather than silently dropping the series. Parity with
+    # ``derive_hr_samples_from_raw_payload`` in ``backend/services/hr_zones.py``.
     hr_series = payload.get("heartRateData")
-    if isinstance(hr_series, list) and hr_series:
+    if isinstance(hr_series, dict):
+        qty = hr_series.get("qty")
+        if qty is not None:
+            try:
+                streams["heartrate"] = [float(qty)]
+                streams["time"] = [0.0]
+            except (TypeError, ValueError):
+                pass
+    elif isinstance(hr_series, list) and hr_series:
         hr_values: list[float] = []
         time_values: list[float] = []
         base_ts: float | None = None

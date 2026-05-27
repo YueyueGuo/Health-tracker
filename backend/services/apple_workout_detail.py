@@ -15,6 +15,8 @@ miss.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -30,9 +32,32 @@ from backend.services.hr_zones import (
     synthesize_hr_zones_from_samples,
 )
 
+# Bucket sizes for request-time re-binning (meters). The metric values
+# mirror ``apple_health_ingest._SPLIT_METERS`` so the persisted laps and
+# the metric re-binning agree exactly; the imperial values are mile /
+# block-of-five-miles equivalents.
+_SPLIT_METERS_METRIC: dict[str, float] = {
+    "run": 1000.0,
+    "walk": 1000.0,
+    "hike": 1000.0,
+    "ride": 5000.0,
+    "swim": 100.0,
+}
+_SPLIT_METERS_IMPERIAL: dict[str, float] = {
+    "run": 1609.344,
+    "walk": 1609.344,
+    "hike": 1609.344,
+    "ride": 8046.72,  # 5 miles
+    # Swim splits stay at 100 (yard ≈ meter for UI purposes).
+    "swim": 100.0,
+}
+
 
 async def get_apple_workout_detail(
-    db: AsyncSession, hdp_id: int
+    db: AsyncSession,
+    hdp_id: int,
+    *,
+    units: Literal["metric", "imperial"] = "metric",
 ) -> dict | None:
     """Return the detail-page dict for an Apple workout, or ``None``.
 
@@ -60,6 +85,14 @@ async def get_apple_workout_detail(
     * ``zones_synthetic`` / ``splits_synthetic`` — flags the frontend
       uses to disclose "computed from raw HR samples" / "auto-split"
       captions.
+
+    ``units`` controls the lap bucket size used when re-binning the
+    synthetic splits. ``"metric"`` (default) returns the persisted
+    ``WorkoutLap`` rows verbatim — they were generated with km buckets
+    by ``apple_health_ingest._derive_laps``. ``"imperial"`` re-bins the
+    laps at request time using mile-sized buckets (1609.344 m for
+    run/walk/hike, 8046.72 m for ride). Swim stays at the 100 m bucket
+    in both modes. The DB stays metric; only the response changes.
     """
     # The router calls this with the dp id; pull both rows in one go via
     # the inheritance join. Eager-load laps so the merge stays in one
@@ -86,8 +119,26 @@ async def get_apple_workout_detail(
     detail = _apple_workout_summary(workout, dp)
 
     # Laps — Workout.laps is already ordered by lap_index via the
-    # relationship's order_by.
-    detail["laps"] = [_workout_lap_dict(lap) for lap in workout.laps]
+    # relationship's order_by. For imperial we re-bin from the workout
+    # totals using mile-sized buckets; metric returns the persisted
+    # km-bucket rows verbatim.
+    if units == "imperial" and workout.laps:
+        rebinned = _rebin_laps_for_units(
+            total_distance_m=workout.distance_m,
+            total_duration_s=workout.duration_s,
+            total_elev_gain_m=workout.total_elevation_m,
+            activity_type=workout.activity_type,
+            units=units,
+        )
+        # Fall back to the persisted laps if the totals couldn't be
+        # re-binned (e.g. unknown sport, missing distance/duration).
+        detail["laps"] = (
+            rebinned
+            if rebinned is not None
+            else [_workout_lap_dict(lap) for lap in workout.laps]
+        )
+    else:
+        detail["laps"] = [_workout_lap_dict(lap) for lap in workout.laps]
 
     # Zones — only synthesize when we actually have a series. HAE may
     # ship a scalar avg-HR, which is fine to surface but useless as a
@@ -153,6 +204,111 @@ def _workout_lap_dict(lap: WorkoutLap) -> dict:
         "start_index": None,
         "end_index": None,
     }
+
+
+def _rebin_laps_for_units(
+    *,
+    total_distance_m: float | None,
+    total_duration_s: int | None,
+    total_elev_gain_m: float | None,
+    activity_type: str,
+    units: Literal["metric", "imperial"],
+) -> list[dict] | None:
+    """Re-bin synthetic laps from the workout totals for ``units``.
+
+    Mirrors the math in ``apple_health_ingest._derive_laps`` (distance
+    bucketed into ``_SPLIT_METERS[sport]`` chunks, time / elevation
+    distributed proportionally) but uses an imperial bucket table when
+    ``units="imperial"``. Returns ``None`` when the workout can't be
+    split (unknown sport, missing distance / duration, zero totals);
+    the caller falls back to the persisted lap rows.
+
+    Per-lap HR is ``None`` because we don't slice the HR stream per
+    bucket here — this matches the persisted-lap behavior.
+    """
+    table = (
+        _SPLIT_METERS_IMPERIAL if units == "imperial" else _SPLIT_METERS_METRIC
+    )
+    split_m = table.get(activity_type)
+    if (
+        split_m is None
+        or total_distance_m is None
+        or total_distance_m <= 0
+        or total_duration_s is None
+        or total_duration_s <= 0
+    ):
+        return None
+
+    total_distance = float(total_distance_m)
+    total_seconds = float(total_duration_s)
+    n_full = int(total_distance // split_m)
+    remainder = total_distance - n_full * split_m
+
+    # Per-meter time / elevation so partial-final laps share the same
+    # pace and the same proportional elev gain.
+    seconds_per_meter = total_seconds / total_distance
+    elev_total = float(total_elev_gain_m) if total_elev_gain_m else 0.0
+    elev_per_meter = (elev_total / total_distance) if total_distance > 0 else 0.0
+
+    laps: list[dict] = []
+
+    for i in range(n_full):
+        lap_seconds = split_m * seconds_per_meter
+        laps.append(
+            {
+                "lap_index": i,
+                "name": f"Split {i + 1}",
+                "elapsed_time": int(round(lap_seconds)),
+                "moving_time": int(round(lap_seconds)),
+                "distance": split_m,
+                "start_date": None,
+                "average_speed": split_m / lap_seconds if lap_seconds > 0 else None,
+                "max_speed": None,
+                "average_heartrate": None,
+                "max_heartrate": None,
+                "average_cadence": None,
+                "average_watts": None,
+                "total_elevation_gain": (
+                    elev_per_meter * split_m if elev_total else None
+                ),
+                "pace_zone": None,
+                "hr_zone": None,
+                "split": i + 1,
+                "start_index": None,
+                "end_index": None,
+            }
+        )
+
+    if remainder > 0.5:  # ignore sub-meter rounding artifacts
+        lap_seconds = remainder * seconds_per_meter
+        laps.append(
+            {
+                "lap_index": n_full,
+                "name": f"Split {n_full + 1}",
+                "elapsed_time": int(round(lap_seconds)),
+                "moving_time": int(round(lap_seconds)),
+                "distance": remainder,
+                "start_date": None,
+                "average_speed": (
+                    remainder / lap_seconds if lap_seconds > 0 else None
+                ),
+                "max_speed": None,
+                "average_heartrate": None,
+                "max_heartrate": None,
+                "average_cadence": None,
+                "average_watts": None,
+                "total_elevation_gain": (
+                    elev_per_meter * remainder if elev_total else None
+                ),
+                "pace_zone": None,
+                "hr_zone": None,
+                "split": n_full + 1,
+                "start_index": None,
+                "end_index": None,
+            }
+        )
+
+    return laps
 
 
 async def _maybe_weather_for_apple(
