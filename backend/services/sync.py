@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.clients.eight_sleep import EightSleepClient
 from backend.clients.strava import StravaClient, StravaRateLimitError
+from backend.services.strava_streams import fetch_and_cache_streams
 from backend.clients.weather import WeatherClient, WeatherRateLimitError
 from backend.clients.whoop import WhoopClient
 from backend.models import (
@@ -284,6 +285,27 @@ class SyncEngine:
                 logger.warning(
                     f"Classifier failed for activity {activity.strava_id}: {e}"
                 )
+
+            # Fetch and cache streams (HR, pace, etc.) so they're
+            # available immediately in the UI without a "Load Streams"
+            # click. Skip manual activities (no GPS/sensor data — Strava
+            # returns 404). Failures must NOT prevent the activity from
+            # being marked complete — detail+zones are more important.
+            if not detail.get("manual"):
+                try:
+                    await fetch_and_cache_streams(self.db, activity, self.strava)
+                except StravaRateLimitError:
+                    logger.warning(
+                        "Strava 429 during stream fetch for activity %s; "
+                        "skipping streams, enrichment continues.",
+                        activity.strava_id,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Stream fetch failed for activity %s: %s",
+                        activity.strava_id,
+                        e,
+                    )
 
             await self.db.commit()
             enriched += 1

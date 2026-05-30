@@ -38,16 +38,23 @@ class StravaStreamFetchError(Exception):
     """
 
 
-async def load_streams_for_activity(
-    db: AsyncSession, activity: Activity
+async def fetch_and_cache_streams(
+    db: AsyncSession,
+    activity: Activity,
+    strava_client: Any,
 ) -> dict[str, list[Any]]:
-    """Return ``{stream_type: data}`` for a Strava ``Activity``.
+    """Fetch streams from Strava and cache as ``ActivityStream`` rows.
 
-    Reads ``activity_streams`` first; on a miss, calls
-    ``StravaClient.get_activity_streams`` and persists non-empty
-    series. The mapping returned on a miss is exactly what Strava
-    returned, in the same shape the router endpoint emits.
+    Accepts an already-authenticated ``StravaClient`` instance so callers
+    (e.g. the Phase B enrichment loop) can reuse their existing client.
+
+    Returns ``{stream_type: data}`` for the activity. If streams are
+    already cached, returns them immediately without calling Strava.
+
+    Does NOT catch exceptions internally -- callers are responsible for
+    error handling (rate limits, network failures, etc.).
     """
+    # Check cache first.
     cached = (
         (
             await db.execute(
@@ -60,18 +67,8 @@ async def load_streams_for_activity(
     if cached:
         return {s.stream_type: s.data for s in cached}
 
-    # Cache miss: hit Strava (lazy fetch path).
-    from backend.clients.strava import StravaClient
-
-    client = StravaClient()
-    try:
-        streams = await client.get_activity_streams(activity.strava_id)
-    except Exception as e:
-        # Surface the underlying exception via ``__cause__`` so callers
-        # can do ``isinstance(e.__cause__, StravaRateLimitError)``.
-        raise StravaStreamFetchError(str(e)) from e
-    finally:
-        await client.close()
+    # Cache miss: hit Strava.
+    streams = await strava_client.get_activity_streams(activity.strava_id)
 
     for stream_type, data in streams.items():
         if data:
@@ -84,3 +81,26 @@ async def load_streams_for_activity(
             )
     await db.commit()
     return streams
+
+
+async def load_streams_for_activity(
+    db: AsyncSession, activity: Activity
+) -> dict[str, list[Any]]:
+    """Return ``{stream_type: data}`` for a Strava ``Activity``.
+
+    Reads ``activity_streams`` first; on a miss, calls
+    ``StravaClient.get_activity_streams`` and persists non-empty
+    series. The mapping returned on a miss is exactly what Strava
+    returned, in the same shape the router endpoint emits.
+    """
+    from backend.clients.strava import StravaClient
+
+    client = StravaClient()
+    try:
+        return await fetch_and_cache_streams(db, activity, client)
+    except Exception as e:
+        # Surface the underlying exception via ``__cause__`` so callers
+        # can do ``isinstance(e.__cause__, StravaRateLimitError)``.
+        raise StravaStreamFetchError(str(e)) from e
+    finally:
+        await client.close()

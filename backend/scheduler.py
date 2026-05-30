@@ -12,7 +12,7 @@ from backend.models.activity import Activity
 logger = logging.getLogger(__name__)
 
 
-async def _run_strava_enrichment_drain(*, batch: int = 40):
+async def _run_strava_enrichment_drain(*, batch: int = 30):
     """Drain pending Strava activity enrichments.
 
     Runs periodically. Skips when:
