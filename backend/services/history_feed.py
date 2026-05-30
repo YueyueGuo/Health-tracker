@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import base64
 import binascii
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -207,7 +207,16 @@ async def list_history_feed(
     activity_cutoff = datetime(1970, 1, 1, tzinfo=timezone.utc)
     activity_before: datetime | None = None
     if cutoff_ts is not None:
-        activity_before = cutoff_ts.replace(tzinfo=timezone.utc)
+        # The composite key sorts activities on ``start_date_local`` (to
+        # match the client), but the SQL ``before`` bound is on the UTC
+        # ``start_date`` column. For a non-UTC activity those differ by the
+        # tz offset, so a row whose ``start_date_local`` is older than the
+        # cursor can have a ``start_date`` slightly newer — a bound at the
+        # exact cursor instant would drop it at the page boundary. Widen the
+        # SQL bound by a full day (> any real tz offset) so every candidate
+        # survives SQL; the strict Python composite filter below then trims
+        # to exactly the rows older than the cursor.
+        activity_before = (cutoff_ts + timedelta(days=1)).replace(tzinfo=timezone.utc)
     activity_rows = await list_activity_feed(
         db,
         cutoff=activity_cutoff,

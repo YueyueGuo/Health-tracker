@@ -47,13 +47,18 @@ async def _seed_activity(
     strava_id: int,
     start: datetime,
     name: str | None = None,
+    start_local: datetime | None = None,
 ) -> Activity:
     a = Activity(
         strava_id=strava_id,
         name=name or f"act-{strava_id}",
         sport_type="Run",
         start_date=start,
-        start_date_local=start,
+        # Strava stores ``start_date_local`` as the local wall-clock time,
+        # which differs from the UTC ``start_date`` by the activity's tz
+        # offset. Tests that need to exercise that gap pass ``start_local``;
+        # the default keeps them equal (UTC user).
+        start_date_local=start_local if start_local is not None else start,
         enrichment_status="complete",
     )
     db.add(a)
@@ -236,6 +241,43 @@ class TestPageBoundaryIntegrity:
         for chunk in (1, 3, 6, 11):
             paged = await _page_all(db, chunk=chunk)
             assert paged == one_shot, f"chunk={chunk} drifted from one-shot order"
+            assert len(set(paged)) == len(paged)
+
+
+class TestLocalTimezoneOffset:
+    """Regression: activities are keyed on ``start_date_local`` but the SQL
+    ``before`` bound is on the UTC ``start_date`` column. For a non-UTC user
+    those differ by the tz offset, so a too-tight SQL bound (at the exact
+    cursor instant) drops rows whose local key is older than the cursor but
+    whose UTC ``start_date`` is slightly newer. This walks a non-UTC feed at
+    a page boundary between every row; it fails on the un-widened bound and
+    passes once the activity ``before`` bound is widened past any tz offset.
+    """
+
+    async def test_pacific_offset_feed_pages_without_dropping_rows(self, db):
+        # Simulate a US-Pacific user: local wall clock is 7h behind UTC, so
+        # start_date (UTC) = start_date_local + 7h. Space activities ~3h
+        # apart so several rows fall inside the 7h offset band just below any
+        # cursor — those are exactly the rows a too-tight SQL bound (on the
+        # UTC column) silently drops at the page boundary.
+        base_local = datetime(2026, 5, 1, 6, 0, 0)
+        offset = timedelta(hours=7)
+        for i in range(15):
+            local = base_local + timedelta(hours=3 * i)
+            await _seed_activity(
+                db,
+                strava_id=700 + i,
+                start=local + offset,  # UTC start_date
+                start_local=local,  # local wall clock (the sort key)
+            )
+
+        big = await list_history_feed(db, cursor=None, limit=100, include_superseded=False)
+        one_shot = _event_ids(big)
+        assert len(one_shot) == 15
+
+        for chunk in (1, 2, 4):
+            paged = await _page_all(db, chunk=chunk)
+            assert paged == one_shot, f"chunk={chunk} dropped or reordered rows"
             assert len(set(paged)) == len(paged)
 
 
