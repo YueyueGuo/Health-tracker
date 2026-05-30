@@ -9,7 +9,7 @@ single code path. Behaviour is unchanged from the original implementation:
   cached mapping ``{stream_type: data}`` directly.
 * Otherwise hit ``StravaClient.get_activity_streams`` (which propagates
   the shared module-level 429 quota state), insert one
-  ``ActivityStream`` row per non-empty series, and commit.
+  ``ActivityStream`` row per non-empty series, and flush.
 
 Errors propagate as :class:`StravaStreamFetchError` carrying the
 underlying exception. The router endpoint translates that into HTTP
@@ -79,7 +79,7 @@ async def fetch_and_cache_streams(
                     data=data,
                 )
             )
-    await db.commit()
+    await db.flush()
     return streams
 
 
@@ -97,7 +97,9 @@ async def load_streams_for_activity(
 
     client = StravaClient()
     try:
-        return await fetch_and_cache_streams(db, activity, client)
+        result = await fetch_and_cache_streams(db, activity, client)
+        await db.commit()
+        return result
     except Exception as e:
         # Surface the underlying exception via ``__cause__`` so callers
         # can do ``isinstance(e.__cause__, StravaRateLimitError)``.

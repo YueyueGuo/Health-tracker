@@ -151,8 +151,9 @@ export const HR_ZONE_COLORS = [
  * E.g. 7.5 → "7:30", 6.0 → "6:00".
  */
 export function formatPaceTick(decimal: number): string {
-  const m = Math.floor(decimal);
-  const s = Math.round((decimal - m) * 60);
+  let m = Math.floor(decimal);
+  let s = Math.round((decimal - m) * 60);
+  if (s === 60) { m += 1; s = 0; }
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
