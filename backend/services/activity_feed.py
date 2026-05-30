@@ -33,6 +33,7 @@ async def list_activity_feed(
     offset: int = 0,
     sport_type: str | None = None,
     include_superseded: bool = False,
+    before: datetime | None = None,
 ) -> list[dict]:
     """Merged Strava + Apple feed shaped as ``ActivitySummary``.
 
@@ -41,6 +42,15 @@ async def list_activity_feed(
     ``start_time`` (Apple) at or after the cutoff are eligible. The
     columns are ``timestamptz``, so the cutoff must be tz-aware to compare
     correctly on Postgres regardless of the session ``TimeZone`` setting.
+
+    ``before`` (additive; default ``None`` preserves prior behavior) is an
+    optional inclusive *upper* bound on the same timestamps — rows at or
+    before it are eligible. It exists for the cursor-paginated history
+    feed (``backend/services/history_feed.py``): keyset paging walks
+    *backward* in time, so it needs the ``limit`` newest rows **at or
+    before** the cursor, which a lower-bound ``cutoff`` alone cannot
+    express. Existing callers (``/api/activities``, ``/api/dashboard/*``)
+    pass ``None`` and are unaffected.
     """
     # Import lazily to avoid a circular import: ``activities.py``
     # imports from this module, but its row shape helpers live there.
@@ -52,6 +62,8 @@ async def list_activity_feed(
     # ── Strava (existing activities table) ──────────────────────────
     query = select(Activity).order_by(Activity.start_date.desc())
     query = query.where(Activity.start_date >= cutoff)
+    if before is not None:
+        query = query.where(Activity.start_date <= before)
     if not include_superseded:
         query = query.where(Activity.superseded_by_id.is_(None))
     if sport_type:
@@ -80,6 +92,8 @@ async def list_activity_feed(
             .order_by(HealthDataPoint.start_time.desc())
             .limit(limit + offset)
         )
+        if before is not None:
+            apple_only_q = apple_only_q.where(HealthDataPoint.start_time <= before)
         for workout, dp in (await db.execute(apple_only_q)).all():
             apple_rows.append(_apple_workout_summary(workout, dp))
 
@@ -103,6 +117,8 @@ async def list_activity_feed(
             .order_by(HealthDataPoint.start_time.desc())
             .limit(limit + offset)
         )
+        if before is not None:
+            apple_winner_q = apple_winner_q.where(HealthDataPoint.start_time <= before)
         for workout, dp in (await db.execute(apple_winner_q)).all():
             apple_rows.append(_apple_workout_summary(workout, dp))
 

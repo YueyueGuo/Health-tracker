@@ -54,7 +54,7 @@ def estimate_1rm(weight_kg: float, reps: int) -> float | None:
 
 
 async def list_sessions(
-    db: AsyncSession, limit: int = 20
+    db: AsyncSession, limit: int = 20, *, before_date: date_type | None = None
 ) -> list[dict[str, Any]]:
     """Newest-first list of sessions (one row per `date`).
 
@@ -69,6 +69,12 @@ async def list_sessions(
       keeps working when source is Strava).
     * ``hr_linked`` is True when a ``strength_session_links`` row exists
       for that date.
+
+    ``before_date`` (additive; default ``None`` preserves prior
+    behavior) restricts results to sessions on or before that calendar
+    date — used by the cursor-paginated history feed so deep scroll
+    stays cheap. Sessions exactly on ``before_date`` are included; the
+    caller applies the strict composite cursor filter in Python.
     """
     # Group strength_sets → one row per date, LEFT JOIN to
     # strength_session_links so we can emit the hr_linked flag without
@@ -85,6 +91,8 @@ async def list_sessions(
         .order_by(StrengthSet.date.desc())
         .limit(limit)
     )
+    if before_date is not None:
+        stmt = stmt.where(StrengthSet.date <= before_date)
     result = await db.execute(stmt)
     rows = result.all()
     if not rows:

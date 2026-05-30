@@ -15,6 +15,7 @@ from backend.models import SleepSession
 from backend.routers.sleep import _sleep_dict
 from backend.services import sleep_recovery_snapshot, training_load_snapshot
 from backend.services.activity_feed import list_activity_feed
+from backend.services.history_feed import list_history_feed
 from backend.services.metrics import (
     get_recovery_trends,
     get_sleep_trends,
@@ -122,6 +123,43 @@ async def dashboard_history(
         "sleep": [_sleep_dict(s) for s in sleep],
         "strength": await list_sessions(db, limit=200),
     }
+
+
+@router.get("/history-feed")
+async def dashboard_history_feed(
+    cursor: str | None = Query(
+        None,
+        description=(
+            "Opaque cursor from a previous page's ``next_cursor``. Omit "
+            "for the first (newest) page. Malformed cursors fall back to "
+            "the first page."
+        ),
+    ),
+    limit: int = Query(50, ge=1, le=100),
+    include_superseded: bool = Query(
+        False,
+        description=(
+            "When False (default), hide Strava activities that an Apple "
+            "Health workout has superseded."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cursor-paginated, newest-first blended history feed.
+
+    Merges activities (Strava + Apple), sleep, and strength sessions
+    behind ONE cursor so a run, a sleep night, and a strength session
+    from the same week stay interleaved correctly across page
+    boundaries. Returns the three typed arrays for the page window plus
+    ``next_cursor`` / ``has_more``; the client keeps ``buildHistoryEvents``
+    as the source of truth for event shaping and cross-source dedup.
+    """
+    return await list_history_feed(
+        db,
+        cursor=cursor,
+        limit=limit,
+        include_superseded=include_superseded,
+    )
 
 
 @router.get("/training-trends")
