@@ -1,4 +1,4 @@
-import type { ActivitySummary } from "../api/activities";
+import type { ActivitySummary, ClassificationType } from "../api/activities";
 import type { SleepSession } from "../api/sleep";
 import type { StrengthSession } from "../api/strength";
 
@@ -42,6 +42,13 @@ export interface HistoryEvent {
   /** True when this is a strength session linked to a device workout.
    *  Drives a small heart icon next to the title in the history view. */
   hrLinked?: boolean;
+  /** Rules-based classification (`easy`, `intervals`, …) carried from the
+   *  underlying activity. Null for unclassified rows (Apple Health workouts,
+   *  strength sessions, sleep). Drives the type tag + the type filter. */
+  classificationType?: ClassificationType;
+  /** Classification flags (`is_long`, `has_speed_component`, …) passed
+   *  through to the type badge. Null/undefined when unclassified. */
+  classificationFlags?: string[] | null;
 }
 
 export type FilterId = "All" | "Workout" | "Health" | "Ride" | "Run" | "Strength";
@@ -53,6 +60,34 @@ export const FILTERS: { id: FilterId; label: string }[] = [
   { id: "Ride", label: "Rides" },
   { id: "Run", label: "Runs" },
   { id: "Strength", label: "Strength" },
+];
+
+/** Second, independent filter dimension: the activity's rules-based
+ *  classification type, plus an `"unclassified"` bucket for null types
+ *  (Apple Health workouts, strength sessions, sleep). `"AllTypes"` is the
+ *  no-op default. Kept separate from `FilterId` (sport/category) on purpose
+ *  so the two dimensions compose. */
+export type TypeFilterId =
+  | "AllTypes"
+  | "easy"
+  | "tempo"
+  | "intervals"
+  | "race"
+  | "recovery"
+  | "endurance"
+  | "mixed"
+  | "unclassified";
+
+export const TYPE_FILTERS: { id: TypeFilterId; label: string }[] = [
+  { id: "AllTypes", label: "All Types" },
+  { id: "easy", label: "Easy" },
+  { id: "tempo", label: "Tempo" },
+  { id: "intervals", label: "Intervals" },
+  { id: "race", label: "Race" },
+  { id: "recovery", label: "Recovery" },
+  { id: "endurance", label: "Endurance" },
+  { id: "mixed", label: "Mixed" },
+  { id: "unclassified", label: "Unclassified" },
 ];
 
 // Strava arrives in CamelCase (`Run`, `TrailRun`, `Ride`, `WeightTraining`).
@@ -187,6 +222,8 @@ function activityToEvent(a: ActivitySummary): HistoryEvent {
     metrics,
     navigateTo,
     sourceBadge: activitySourceToBadge(a.source),
+    classificationType: a.classification_type,
+    classificationFlags: a.classification_flags,
   };
 }
 
@@ -304,6 +341,21 @@ export function applyHistoryFilter(
   if (filter === "Workout") return events.filter((e) => e.category === "Workout");
   if (filter === "Health") return events.filter((e) => e.category === "Health");
   return events.filter((e) => e.type === filter);
+}
+
+/** Filter the timeline by classification type. Independent of the
+ *  sport/category `applyHistoryFilter`; compose the two for both dimensions.
+ *  Null/undefined `classificationType` (Apple Health, strength, sleep) maps
+ *  to the `"unclassified"` bucket. `"AllTypes"` is a no-op. */
+export function applyTypeFilter(
+  events: HistoryEvent[],
+  typeFilter: TypeFilterId
+): HistoryEvent[] {
+  if (typeFilter === "AllTypes") return events;
+  if (typeFilter === "unclassified") {
+    return events.filter((e) => e.classificationType == null);
+  }
+  return events.filter((e) => e.classificationType === typeFilter);
 }
 
 /** "Today, 6:30 AM" / "Yesterday, 4:15 PM" / "Mon, Apr 24, 5:30 PM". */

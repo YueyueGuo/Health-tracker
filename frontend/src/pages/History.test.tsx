@@ -51,6 +51,48 @@ vi.mock("../api/dashboard", async (importOriginal) => ({
         user_notes: null,
         rated_at: null,
       },
+      {
+        id: 2,
+        strava_id: 1002,
+        name: "Track Intervals",
+        sport_type: "Run",
+        start_date: "2026-04-25T12:00:00Z",
+        start_date_local: "2026-04-25T05:30:00",
+        elapsed_time: 3600,
+        moving_time: 3600,
+        distance: 10000,
+        total_elevation: 20,
+        average_hr: 160,
+        max_hr: 185,
+        average_speed: 3.5,
+        max_speed: 6.0,
+        average_power: null,
+        max_power: null,
+        weighted_avg_power: null,
+        average_cadence: null,
+        calories: null,
+        kilojoules: null,
+        suffer_score: 95,
+        device_watts: null,
+        workout_type: null,
+        available_zones: null,
+        enrichment_status: "complete",
+        enriched_at: null,
+        classification_type: "intervals",
+        classification_flags: null,
+        classified_at: null,
+        weather_enriched: false,
+        elev_high_m: null,
+        elev_low_m: null,
+        base_elevation_m: null,
+        elevation_enriched: false,
+        location_id: null,
+        start_lat: null,
+        start_lng: null,
+        rpe: null,
+        user_notes: null,
+        rated_at: null,
+      },
       ],
       sleep: [
       {
@@ -135,6 +177,20 @@ describe("History page", () => {
       expect(screen.queryByText("Morning Ride")).not.toBeInTheDocument();
       expect(screen.queryByText("Strength Session")).not.toBeInTheDocument();
       expect(screen.getAllByText("Sleep & Recovery").length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it('type pill "Intervals" narrows to matching workouts', async () => {
+    renderWithRouter();
+    await screen.findByText("Morning Ride");
+    expect(screen.getByText("Track Intervals")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Intervals" }));
+    await waitFor(() => {
+      expect(screen.getByText("Track Intervals")).toBeInTheDocument();
+      // The endurance ride, sleep and strength rows are not "intervals".
+      expect(screen.queryByText("Morning Ride")).not.toBeInTheDocument();
+      expect(screen.queryByText("Strength Session")).not.toBeInTheDocument();
+      expect(screen.queryByText("Sleep & Recovery")).not.toBeInTheDocument();
     });
   });
 

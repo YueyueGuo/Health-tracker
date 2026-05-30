@@ -6,8 +6,10 @@ import { useApi } from "../hooks/useApi";
 import { fetchDashboardHistory } from "../api/dashboard";
 import {
   applyHistoryFilter,
+  applyTypeFilter,
   buildHistoryEvents,
   type FilterId,
+  type TypeFilterId,
 } from "../lib/historyEvents";
 import { HistoryFilters } from "../components/history/HistoryFilters";
 import { HistoryEventCard } from "../components/history/HistoryEventCard";
@@ -20,6 +22,7 @@ const containerVariants = {
 export default function History() {
   const navigate = useNavigate();
   const [activeFilter, setActiveFilter] = useState<FilterId>("All");
+  const [activeType, setActiveType] = useState<TypeFilterId>("AllTypes");
   const [days, setDays] = useState(30);
 
   const history = useApi(
@@ -40,8 +43,8 @@ export default function History() {
     [history.data]
   );
   const filtered = useMemo(
-    () => applyHistoryFilter(allEvents, activeFilter),
-    [allEvents, activeFilter]
+    () => applyTypeFilter(applyHistoryFilter(allEvents, activeFilter), activeType),
+    [allEvents, activeFilter, activeType]
   );
 
   return (
@@ -72,7 +75,12 @@ export default function History() {
             </button>
           </div>
         </div>
-        <HistoryFilters active={activeFilter} onChange={setActiveFilter} />
+        <HistoryFilters
+          active={activeFilter}
+          onChange={setActiveFilter}
+          activeType={activeType}
+          onTypeChange={setActiveType}
+        />
       </div>
 
       {loading && (

@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { Card } from "../ui/Card";
 import SourceBadge from "../activity/SourceBadge";
+import ClassificationBadge from "../ClassificationBadge";
 import {
   formatRelativeDate,
   type EventType,
@@ -73,6 +74,13 @@ export function HistoryEventCard({ event, onClick }: Props) {
               <h3 className="text-sm font-semibold text-slate-200">
                 {event.title}
               </h3>
+              {event.classificationType && (
+                <ClassificationBadge
+                  type={event.classificationType}
+                  flags={event.classificationFlags}
+                  compact
+                />
+              )}
               <SourceBadge source={event.sourceBadge} />
               {event.type === "Strength" && event.hrLinked && (
                 <HeartPulse

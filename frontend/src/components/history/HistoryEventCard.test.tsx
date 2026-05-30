@@ -109,6 +109,51 @@ describe("HistoryEventCard", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders the type tag when classificationType is set", () => {
+    render(
+      <HistoryEventCard
+        event={makeEvent({
+          title: "Track Workout",
+          classificationType: "intervals",
+          classificationFlags: ["has_speed_component"],
+          sourceBadge: "strava",
+        })}
+      />
+    );
+    expect(screen.getByText("intervals")).toBeInTheDocument();
+  });
+
+  it("renders no type tag (and does not crash) when classificationType is null", () => {
+    render(
+      <HistoryEventCard
+        event={makeEvent({
+          title: "Apple Workout",
+          classificationType: null,
+          classificationFlags: null,
+          sourceBadge: "apple",
+        })}
+      />
+    );
+    expect(screen.getByRole("heading", { name: "Apple Workout" })).toBeInTheDocument();
+    // No classification text and, importantly, no fallback em-dash badge.
+    expect(screen.queryByText("intervals")).not.toBeInTheDocument();
+    expect(screen.queryByText("—")).not.toBeInTheDocument();
+  });
+
+  it("renders the type tag alongside the source pill", () => {
+    render(
+      <HistoryEventCard
+        event={makeEvent({
+          title: "Tempo Run",
+          classificationType: "tempo",
+          sourceBadge: "strava",
+        })}
+      />
+    );
+    expect(screen.getByText("tempo")).toBeInTheDocument();
+    expect(screen.getByTestId("source-badge-strava")).toBeInTheDocument();
+  });
+
   it("renders no clickable container for Apple-only workouts (no onClick)", () => {
     // Mirrors the wiring in History.tsx: when `navigateTo` is null, the
     // page does not pass an `onClick`. The card must then render as a
