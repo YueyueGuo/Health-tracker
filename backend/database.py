@@ -35,7 +35,14 @@ def _ensure_sqlite_dir(url: str) -> None:
 
 _ensure_sqlite_dir(db_url)
 
-connect_args = {"timeout": 30} if db_url.startswith("sqlite") else {}
+if db_url.startswith("sqlite"):
+    connect_args = {"timeout": 30}
+else:
+    # Pin the asyncpg session to UTC so naive/aware ``timestamptz``
+    # comparisons (e.g. the activity-feed cutoff) never shift by the
+    # server's local offset. Defense-in-depth: callers already pass
+    # tz-aware UTC cutoffs, but this removes the environment dependency.
+    connect_args = {"server_settings": {"timezone": "UTC"}}
 
 engine = create_async_engine(
     db_url,

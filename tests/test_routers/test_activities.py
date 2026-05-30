@@ -720,3 +720,31 @@ async def test_get_apple_workout_includes_shoe_id_when_tagged(client, db):
     body = resp.json()
     assert body["source"] == "apple_health"
     assert body["shoe_id"] == shoe.id
+
+
+async def test_list_activities_cutoff_is_timezone_aware(client, monkeypatch):
+    """Regression for the April-cutoff bug on ``GET /api/activities``.
+
+    ``activities.start_date`` is ``DateTime(timezone=True)`` (``timestamptz``
+    on Postgres). The endpoint previously built its window cutoff with
+    ``utc_now_naive()``; comparing that naive value against a ``timestamptz``
+    column makes Postgres coerce it via the session ``TimeZone``, shifting the
+    boundary and dropping recent rows. SQLite discards tzinfo on storage so it
+    cannot reproduce the mismatch — instead we pin the surfaced contract: the
+    cutoff handed to ``list_activity_feed`` must be tz-aware UTC. Fails on
+    ``main`` (naive cutoff), passes on the branch.
+    """
+    captured: dict = {}
+
+    async def _spy(db, *, cutoff, **kwargs):
+        captured["cutoff"] = cutoff
+        return []
+
+    monkeypatch.setattr("backend.routers.activities.list_activity_feed", _spy)
+
+    resp = await client.get("/api/activities?days=30")
+
+    assert resp.status_code == 200
+    cutoff = captured["cutoff"]
+    assert cutoff.tzinfo is not None, "activities cutoff must be tz-aware"
+    assert cutoff.utcoffset() == timedelta(0), "activities cutoff must be UTC"

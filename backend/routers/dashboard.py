@@ -23,7 +23,7 @@ from backend.services.metrics import (
 )
 from backend.services.snapshot_models import EnvironmentTodaySnapshot
 from backend.services.strength import list_sessions, progression, search_exercises
-from backend.services.time_utils import local_today, utc_now_naive
+from backend.services.time_utils import local_today, utc_now
 
 if find_spec("backend.services.environment"):
     from backend.services.environment import fetch_environment_today
@@ -103,7 +103,7 @@ async def dashboard_history(
     db: AsyncSession = Depends(get_db),
 ):
     """Bundle the History page's cold-load data into one API request."""
-    cutoff = utc_now_naive() - timedelta(days=days)
+    cutoff = utc_now() - timedelta(days=days)
     activities = await list_activity_feed(
         db,
         cutoff=cutoff,
@@ -144,7 +144,7 @@ async def dashboard_training_trends(
     changes, but the initial page load avoids six independent Railway
     round trips.
     """
-    cutoff = utc_now_naive() - timedelta(days=days)
+    cutoff = utc_now() - timedelta(days=days)
     activities = await list_activity_feed(
         db,
         cutoff=cutoff,

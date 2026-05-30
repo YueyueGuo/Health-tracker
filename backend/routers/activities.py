@@ -24,7 +24,7 @@ from backend.services.hr_zones import (
     compute_pace_hr_decoupling,
     compute_power_hr_decoupling,
 )
-from backend.services.time_utils import utc_now_naive
+from backend.services.time_utils import utc_now, utc_now_naive
 
 _RUN_SPORTS = {"Run", "TrailRun", "VirtualRun"}
 _RIDE_SPORTS = {"Ride", "VirtualRide", "GravelRide", "MountainBikeRide", "EBikeRide"}
@@ -93,7 +93,7 @@ async def list_activities(
     """
     from datetime import timedelta
 
-    cutoff = utc_now_naive() - timedelta(days=days)
+    cutoff = utc_now() - timedelta(days=days)
     return await list_activity_feed(
         db,
         cutoff=cutoff,

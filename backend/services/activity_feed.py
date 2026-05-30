@@ -37,8 +37,10 @@ async def list_activity_feed(
     """Merged Strava + Apple feed shaped as ``ActivitySummary``.
 
     Parameters mirror the three callers' query params. ``cutoff`` is a
-    naive UTC datetime; rows with ``start_date`` (Strava) or
-    ``start_time`` (Apple) at or after the cutoff are eligible.
+    timezone-aware UTC datetime; rows with ``start_date`` (Strava) or
+    ``start_time`` (Apple) at or after the cutoff are eligible. The
+    columns are ``timestamptz``, so the cutoff must be tz-aware to compare
+    correctly on Postgres regardless of the session ``TimeZone`` setting.
     """
     # Import lazily to avoid a circular import: ``activities.py``
     # imports from this module, but its row shape helpers live there.

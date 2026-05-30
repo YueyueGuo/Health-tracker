@@ -169,6 +169,57 @@ class TestDashboardHistoryAppleMerge:
         assert external_ids == ["apple-only", "apple-winner"]
 
 
+class TestActivityFeedCutoffIsTimezoneAware:
+    """Regression for the April-cutoff bug.
+
+    The Strava ``activities.start_date`` and Apple
+    ``health_data_points.start_time`` columns are ``DateTime(timezone=True)``
+    (``timestamptz`` on Postgres). The dashboard/activities endpoints used to
+    build the window cutoff with ``utc_now_naive()`` (tzinfo stripped). On
+    Postgres, comparing a naive ``timestamp`` against a ``timestamptz`` makes
+    the DB coerce the cutoff using the session ``TimeZone`` setting, shifting
+    the window boundary and dropping recent rows — the user saw nothing after
+    April even though the rows existed.
+
+    SQLite stores ``DateTime(timezone=True)`` by discarding tzinfo, so a
+    query-level assertion cannot reproduce the Postgres-only mismatch. Instead
+    we pin the contract that surfaced it: the cutoff passed into
+    ``list_activity_feed`` must be timezone-aware UTC. This fails on ``main``
+    (naive cutoff → ``tzinfo is None``) and passes on the branch.
+    """
+
+    @staticmethod
+    def _install_spy(monkeypatch, module_path: str):
+        captured: dict = {}
+
+        async def _spy(db, *, cutoff, **kwargs):
+            captured["cutoff"] = cutoff
+            return []
+
+        monkeypatch.setattr(f"{module_path}.list_activity_feed", _spy)
+        return captured
+
+    async def test_history_cutoff_is_timezone_aware(self, client, monkeypatch):
+        captured = self._install_spy(monkeypatch, "backend.routers.dashboard")
+
+        resp = await client.get("/api/dashboard/history?days=30")
+
+        assert resp.status_code == 200
+        cutoff = captured["cutoff"]
+        assert cutoff.tzinfo is not None, "history cutoff must be tz-aware"
+        assert cutoff.utcoffset() == timedelta(0), "history cutoff must be UTC"
+
+    async def test_training_trends_cutoff_is_timezone_aware(self, client, monkeypatch):
+        captured = self._install_spy(monkeypatch, "backend.routers.dashboard")
+
+        resp = await client.get("/api/dashboard/training-trends?days=30")
+
+        assert resp.status_code == 200
+        cutoff = captured["cutoff"]
+        assert cutoff.tzinfo is not None, "training-trends cutoff must be tz-aware"
+        assert cutoff.utcoffset() == timedelta(0), "training-trends cutoff must be UTC"
+
+
 class TestDashboardTrainingTrendsAppleMerge:
     """Same three assertions for ``GET /api/dashboard/training-trends``."""
 
