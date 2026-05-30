@@ -500,7 +500,7 @@ describe("applyTypeFilter", () => {
     [
       makeActivity({ id: 1, sport_type: "Run", name: "Easy Run", classification_type: "easy" }),
       makeActivity({ id: 2, sport_type: "Run", name: "Intervals", classification_type: "intervals" }),
-      makeActivity({ id: 3, sport_type: "Ride", name: "Endurance Ride", classification_type: "endurance" }),
+      makeActivity({ id: 3, sport_type: "Run", name: "Tempo Run", classification_type: "tempo" }),
       makeActivity({
         id: 4,
         sport_type: "run",
@@ -524,24 +524,17 @@ describe("applyTypeFilter", () => {
     expect(got[0].classificationType).toBe("intervals");
   });
 
-  it("matches another classification (endurance)", () => {
-    const got = applyTypeFilter(events, "endurance");
+  it("matches another run classification (tempo)", () => {
+    const got = applyTypeFilter(events, "tempo");
     expect(got).toHaveLength(1);
-    expect(got[0].title).toBe("Endurance Ride");
+    expect(got[0].title).toBe("Tempo Run");
   });
 
-  it("maps null classification to the unclassified bucket", () => {
-    const got = applyTypeFilter(events, "unclassified");
-    // Apple run (null) + strength + sleep all lack a classification type.
-    expect(got.length).toBeGreaterThanOrEqual(1);
-    expect(got.every((e) => e.classificationType == null)).toBe(true);
-    expect(got.map((e) => e.title)).toContain("Apple Run");
-  });
-
-  it("excludes sleep and strength rows when filtering to a classified type", () => {
+  it("drops unclassified rows (Apple run, sleep, strength) for a typed filter", () => {
     const got = applyTypeFilter(events, "easy");
     expect(got).toHaveLength(1);
     expect(got[0].title).toBe("Easy Run");
+    expect(got.map((e) => e.title)).not.toContain("Apple Run");
     expect(got.some((e) => e.type === "MorningStatus")).toBe(false);
     expect(got.some((e) => e.type === "Strength")).toBe(false);
   });

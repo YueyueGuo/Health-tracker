@@ -180,14 +180,37 @@ describe("History page", () => {
     });
   });
 
-  it('type pill "Intervals" narrows to matching workouts', async () => {
+  it("hides the run-type filter row until the Runs filter is active", async () => {
     renderWithRouter();
     await screen.findByText("Morning Ride");
-    expect(screen.getByText("Track Intervals")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Intervals" }));
+    // No run-type pills on the default "All" view.
+    expect(
+      screen.queryByRole("button", { name: "Intervals" })
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Runs" }));
+    expect(
+      await screen.findByRole("button", { name: "Intervals" })
+    ).toBeInTheDocument();
+
+    // Switching away from Runs hides the row again.
+    fireEvent.click(screen.getByRole("button", { name: "Strength" }));
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "Intervals" })
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it('type pill "Intervals" narrows runs to matching workouts', async () => {
+    renderWithRouter();
+    await screen.findByText("Morning Ride");
+    // Reveal the run-type row, then drill into intervals.
+    fireEvent.click(screen.getByRole("button", { name: "Runs" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Intervals" }));
     await waitFor(() => {
       expect(screen.getByText("Track Intervals")).toBeInTheDocument();
-      // The endurance ride, sleep and strength rows are not "intervals".
+      // The ride, sleep and strength rows are not "intervals" runs.
       expect(screen.queryByText("Morning Ride")).not.toBeInTheDocument();
       expect(screen.queryByText("Strength Session")).not.toBeInTheDocument();
       expect(screen.queryByText("Sleep & Recovery")).not.toBeInTheDocument();

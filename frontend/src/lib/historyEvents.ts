@@ -62,21 +62,17 @@ export const FILTERS: { id: FilterId; label: string }[] = [
   { id: "Strength", label: "Strength" },
 ];
 
-/** Second, independent filter dimension: the activity's rules-based
- *  classification type, plus an `"unclassified"` bucket for null types
- *  (Apple Health workouts, strength sessions, sleep). `"AllTypes"` is the
- *  no-op default. Kept separate from `FilterId` (sport/category) on purpose
- *  so the two dimensions compose. */
+/** Second filter dimension: the run's rules-based classification type.
+ *  Only meaningful for runs (the classifier emits these for runs), so the
+ *  History page surfaces this row only when the "Runs" sport filter is
+ *  active. `"AllTypes"` is the no-op default. Kept separate from `FilterId`
+ *  (sport/category) on purpose so the two dimensions compose. */
 export type TypeFilterId =
   | "AllTypes"
   | "easy"
   | "tempo"
   | "intervals"
-  | "race"
-  | "recovery"
-  | "endurance"
-  | "mixed"
-  | "unclassified";
+  | "race";
 
 export const TYPE_FILTERS: { id: TypeFilterId; label: string }[] = [
   { id: "AllTypes", label: "All Types" },
@@ -84,10 +80,6 @@ export const TYPE_FILTERS: { id: TypeFilterId; label: string }[] = [
   { id: "tempo", label: "Tempo" },
   { id: "intervals", label: "Intervals" },
   { id: "race", label: "Race" },
-  { id: "recovery", label: "Recovery" },
-  { id: "endurance", label: "Endurance" },
-  { id: "mixed", label: "Mixed" },
-  { id: "unclassified", label: "Unclassified" },
 ];
 
 // Strava arrives in CamelCase (`Run`, `TrailRun`, `Ride`, `WeightTraining`).
@@ -343,18 +335,15 @@ export function applyHistoryFilter(
   return events.filter((e) => e.type === filter);
 }
 
-/** Filter the timeline by classification type. Independent of the
+/** Filter the timeline by run classification type. Independent of the
  *  sport/category `applyHistoryFilter`; compose the two for both dimensions.
- *  Null/undefined `classificationType` (Apple Health, strength, sleep) maps
- *  to the `"unclassified"` bucket. `"AllTypes"` is a no-op. */
+ *  `"AllTypes"` is a no-op; any other value keeps only rows whose
+ *  `classificationType` matches exactly (dropping unclassified rows). */
 export function applyTypeFilter(
   events: HistoryEvent[],
   typeFilter: TypeFilterId
 ): HistoryEvent[] {
   if (typeFilter === "AllTypes") return events;
-  if (typeFilter === "unclassified") {
-    return events.filter((e) => e.classificationType == null);
-  }
   return events.filter((e) => e.classificationType === typeFilter);
 }
 

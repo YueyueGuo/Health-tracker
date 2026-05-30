@@ -66,26 +66,26 @@ export function HistoryEventCard({ event, onClick }: Props) {
     <>
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-2.5">
-          <div className={`p-2 rounded-lg border ${iconBg}`}>
+          <div className={`p-2 rounded-lg border shrink-0 ${iconBg}`}>
             <TypeIcon type={event.type} />
           </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <h3 className="text-sm font-semibold text-slate-200">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <h3 className="text-sm font-semibold text-slate-200 truncate">
                 {event.title}
               </h3>
               {event.classificationType && (
-                <ClassificationBadge
-                  type={event.classificationType}
-                  flags={event.classificationFlags}
-                  compact
-                />
+                <span className="shrink-0">
+                  <ClassificationBadge type={event.classificationType} />
+                </span>
               )}
-              <SourceBadge source={event.sourceBadge} />
+              <span className="shrink-0">
+                <SourceBadge source={event.sourceBadge} />
+              </span>
               {event.type === "Strength" && event.hrLinked && (
                 <HeartPulse
                   size={14}
-                  className="text-brand-red"
+                  className="text-brand-red shrink-0"
                   aria-label="HR-linked"
                   data-testid="hr-linked-indicator"
                 />

@@ -39,25 +39,27 @@ export function HistoryFilters({
           );
         })}
       </div>
-      <div className="flex overflow-x-auto gap-2 pb-1 scrollbar-hide">
-        {TYPE_FILTERS.map((filter) => {
-          const isActive = activeType === filter.id;
-          return (
-            <button
-              key={filter.id}
-              type="button"
-              onClick={() => onTypeChange(filter.id)}
-              className={`whitespace-nowrap px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                isActive
-                  ? "bg-brand-green text-dashboard"
-                  : "bg-cardBorder/50 text-slate-400 hover:text-slate-200 hover:bg-cardBorder"
-              }`}
-            >
-              {filter.label}
-            </button>
-          );
-        })}
-      </div>
+      {active === "Run" && (
+        <div className="flex overflow-x-auto gap-2 pb-1 scrollbar-hide">
+          {TYPE_FILTERS.map((filter) => {
+            const isActive = activeType === filter.id;
+            return (
+              <button
+                key={filter.id}
+                type="button"
+                onClick={() => onTypeChange(filter.id)}
+                className={`whitespace-nowrap px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                  isActive
+                    ? "bg-brand-green text-dashboard"
+                    : "bg-cardBorder/50 text-slate-400 hover:text-slate-200 hover:bg-cardBorder"
+                }`}
+              >
+                {filter.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

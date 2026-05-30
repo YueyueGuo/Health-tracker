@@ -1,7 +1,9 @@
 # Plan: History page type filter + type tag on cards
 
 ## 1. Feature summary
-On the History page, users can filter the timeline by workout *type* — the existing rules-based classification (`easy | tempo | intervals | race` for runs; `recovery | endurance | mixed | race` for rides). Each history card also gains a prominent type tag (badge) next to the title, alongside the existing source pill, since the user considers type more important than source. This is a **frontend-only** change: the classification data already lives on every activity row and is already returned by the History feed endpoint, so no backend or database work is required.
+On the History page, users can filter **runs** by their existing rules-based classification type (`easy | tempo | intervals | race`). Because the type taxonomy is run-specific, this second filter row is **contextual** — it only appears once the "Runs" sport filter is active, and resets when the user navigates away from Runs. Each history card also gains a prominent type tag (badge) next to the title, alongside the existing source pill, since the user considers type more important than source. The badge shows **only the classification label** — the underlying `classification_flags` (is_long, has_speed_component, …) are *not* rendered as chips (they were noisy and caused the title row to wrap). This is a **frontend-only** change: the classification data already lives on every activity row and is already returned by the History feed endpoint, so no backend or database work is required.
+
+> **Revision note (post-review feedback):** the type filter row was originally always visible and offered run+ride+unclassified buckets, and the card badge rendered every flag as a cryptic single-char icon. Per user feedback this was narrowed to: run-types-only, contextual to the Runs filter, label-only badge (no flag chips), with a tidied title row.
 
 ## 2. Affected surfaces
 

@@ -109,18 +109,21 @@ describe("HistoryEventCard", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders the type tag when classificationType is set", () => {
+  it("renders the type tag but no flag chips when classificationType is set", () => {
     render(
       <HistoryEventCard
         event={makeEvent({
           title: "Track Workout",
           classificationType: "intervals",
-          classificationFlags: ["has_speed_component"],
+          classificationFlags: ["has_speed_component", "is_long"],
           sourceBadge: "strava",
         })}
       />
     );
     expect(screen.getByText("intervals")).toBeInTheDocument();
+    // Only the type label shows — the cryptic flag icons (⚡, L, …) must not.
+    expect(screen.queryByText("⚡")).not.toBeInTheDocument();
+    expect(screen.queryByText("L")).not.toBeInTheDocument();
   });
 
   it("renders no type tag (and does not crash) when classificationType is null", () => {

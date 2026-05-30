@@ -42,10 +42,21 @@ export default function History() {
       ),
     [history.data]
   );
-  const filtered = useMemo(
-    () => applyTypeFilter(applyHistoryFilter(allEvents, activeFilter), activeType),
-    [allEvents, activeFilter, activeType]
-  );
+  // The run-type filter only applies to runs, so it's composed in only when
+  // the "Runs" sport filter is active (and its row is the only one shown).
+  const filtered = useMemo(() => {
+    const bySport = applyHistoryFilter(allEvents, activeFilter);
+    return activeFilter === "Run"
+      ? applyTypeFilter(bySport, activeType)
+      : bySport;
+  }, [allEvents, activeFilter, activeType]);
+
+  // Reset the run-type sub-filter whenever we leave the Runs view so a stale
+  // selection can't silently hide rows once the type row is hidden again.
+  const handleFilterChange = (id: FilterId) => {
+    setActiveFilter(id);
+    if (id !== "Run") setActiveType("AllTypes");
+  };
 
   return (
     <div className="pb-4 pt-4">
@@ -77,7 +88,7 @@ export default function History() {
         </div>
         <HistoryFilters
           active={activeFilter}
-          onChange={setActiveFilter}
+          onChange={handleFilterChange}
           activeType={activeType}
           onTypeChange={setActiveType}
         />
