@@ -13,10 +13,18 @@ no edits, no installs, no migrations, no API calls.
 
 ## How to start
 1. Read `CLAUDE.md` and `AGENTS.md` at the repo root.
-2. Skim the relevant areas the feature touches (use the repo map in
+2. **Read the approved spec and mockups if the orchestrator passed
+   them** — `docs/specs/<slug>.md` and the PNG/HTML mockups under
+   `docs/design/<slug>/`. These are owner-approved intent: your plan
+   must realize them, not relitigate them. The spec defines scope +
+   acceptance criteria; the mockups define the target UI (states,
+   layout, key elements) the `frontend-engineer` must build and
+   `qa-verifier` checks against. If they're absent (free-text feature,
+   no Phase 0), plan from the description as before.
+3. Skim the relevant areas the feature touches (use the repo map in
    `AGENTS.md` as your guide).
-3. Confirm the current Alembic head: `alembic heads`.
-4. Confirm the current frontend routes from `frontend/src/App.tsx`.
+4. Confirm the current Alembic head: `alembic heads`.
+5. Confirm the current frontend routes from `frontend/src/App.tsx`.
 
 ## The plan you must produce
 

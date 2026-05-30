@@ -20,6 +20,13 @@ boot the real app, hit it like a user would, and report what's broken.
    for the DB URL fallback (SQLite for local).
 4. Read the plan's "Affected surfaces" + "External integration"
    sections to figure out **what external clients you must mock**.
+5. **Load the approved mockups, if any.** Check `docs/design/<slug>/`
+   for the PNG mockups `ux-designer` produced (and the source HTML +
+   any `README.md` notes). These are the agreed visual intent for this
+   feature. If they exist, you verify the built UI **against them**,
+   not just against the plan's prose. If the folder is absent (fast
+   path, backend-only change, or design phase was skipped), proceed
+   with plan-only verification as before.
 
 ## Decide your test scope
 
@@ -128,6 +135,30 @@ endpoints with `httpx` directly. Verify:
 - Response shape matches the contract in the plan.
 - Side effects landed (e.g. row inserted — check via the API).
 
+## Compare against the mockups (only if `docs/design/<slug>/` exists)
+
+For each scenario whose screen has a corresponding mockup, compare your
+freshly-captured screenshot against the approved mockup for the same
+state (e.g. your `dashboard-loaded.png` vs the mockup
+`dashboard-loaded.png`). This is a **structural / intent** comparison,
+not a pixel diff — placeholder data and minor spacing will differ by
+design. Flag a defect only for a meaningful divergence from agreed
+intent, such as:
+- A key element from the mockup is **missing** or in a clearly
+  different place (e.g. the Sync button moved out of the header).
+- A state the mockup specified is **not handled** (e.g. mockup shows an
+  empty-state message, the build renders a blank card).
+- The layout/hierarchy differs enough that the screen reads
+  differently from what the owner approved.
+
+Do **not** flag: placeholder vs real data, exact pixel spacing, font
+anti-aliasing, or color shifts within the same palette token.
+
+If a divergence looks **intentional and better** than the mockup (the
+spec evolved, the engineer made a sensible call), don't fail it — note
+it under "Mockup comparison" as an accepted deviation so the owner sees
+it at PR review.
+
 ## Tear down
 Always:
 ```bash
@@ -155,6 +186,12 @@ Table: scenario | result | screenshot path | a11y (crit/serious counts).
 - Keyboard / label checks: `PASS` per scenario or a one-line note on
   what failed.
 
+### Mockup comparison (only if mockups existed)
+Per compared scenario, one line: `<scenario>: matches mockup` or
+`<scenario>: diverges — <what differs>`. List accepted deviations
+(intentional + better) separately from defects. If no mockups were
+present, state `no mockups — verified against plan only`.
+
 ### Findings (FAIL or BLOCK)
 For each defect, emit **exactly these four lines** so the orchestrator
 can route the fix mechanically:
@@ -167,8 +204,9 @@ can route the fix mechanically:
 ```
 
 If the defect is purely visual (layout, missing element, console
-error), Owner is almost always `frontend-engineer`. If the API
-returned the wrong data, Owner is `backend-engineer`. Accessibility
+error) — including a meaningful divergence from the approved mockup —
+Owner is almost always `frontend-engineer`. If the API returned the
+wrong data, Owner is `backend-engineer`. Accessibility
 violations (axe critical/serious, unreachable keyboard target, missing
 label) are `frontend-engineer` unless the markup originates from a
 backend-rendered template.

@@ -52,15 +52,18 @@ orchestrated by three slash commands:
 - `/spec <rough idea>` — interactive Q&A to turn a vague idea into a
   concrete spec at `docs/specs/<slug>.md`. Stops at the spec; opt into
   `/feature` from there.
-- `/feature <description | spec path>` — plan → research + migration
-  (parallel) → backend + frontend (parallel) → tests → review → PR →
-  subscribe.
+- `/feature <description | spec path>` — spec + UX mockups (each behind
+  a human approval gate) → plan → research + migration (parallel) →
+  backend + frontend (parallel) → tests → review → PR → subscribe. The
+  spec/design gates run on the full lane only; the fast path skips them.
+  Mockups land in `docs/design/<slug>/`.
 - `/bug <description>` — investigate → fix + regression test →
   tests → review → PR → subscribe.
 
 See `.claude/README.md` for the full agent roster and parallelism plan.
-Specs land in `docs/specs/`, plans in `docs/plans/`, bug diagnoses in
-`docs/bugs/`, architectural decisions in `docs/decisions/`.
+Specs land in `docs/specs/`, UX mockups in `docs/design/`, plans in
+`docs/plans/`, bug diagnoses in `docs/bugs/`, architectural decisions
+in `docs/decisions/`.
 
 ---
 

@@ -35,7 +35,9 @@ the **fast path** (skips the planner + the entire review cascade).
   about agents", "skip the cascade" — **or** the description itself
   is unambiguously trivial (e.g. "rename heading X to Y").
 
-If any condition fails, take the full lane (Steps 1-5 as written).
+If any condition fails, take the full lane (Phase 0 + Steps 1-5 as
+written). The full lane opens with **Phase 0** (spec + UX design, each
+behind a human gate) before the planner runs — see below.
 
 **Fast-path workflow (replaces Steps 1-5):**
 1. Make the edit yourself, or spawn a single `frontend-engineer` /
@@ -61,8 +63,79 @@ If any condition fails, take the full lane (Steps 1-5 as written).
 public-surface change, or > 2-file scope, drop the fast path and
 restart from Step 1 (planner). Tell the user in one line.
 
+### Phase 0 — Spec + UX design (full lane only, two human gates)
+
+Phase 0 runs **only on the full lane** — the fast path skips it
+entirely. It produces two reviewed artifacts (an approved spec and
+approved mockups) that the planner consumes. Each artifact is gated:
+the orchestrator stops, surfaces it, ends the turn, and resumes on the
+owner's reply — the same stop/resume pattern as the final PR gate
+(Step 8).
+
+Derive `<slug>` once here (kebab-case from the feature) and reuse it
+across the spec, design, and plan files.
+
+**Phase 0a — Spec (`product-spec`) → GATE 1**
+
+1. **If the argument is a path to an existing `docs/specs/<slug>.md`**
+   (i.e. the user already ran `/spec`), treat the spec as
+   already-approved: skip to Phase 0b. Otherwise continue.
+2. Spawn `product-spec` in Mode A (draft) with the feature description.
+   It returns a draft spec + a multiple-choice open-questions block.
+3. Surface the questions via `AskUserQuestion`. Spawn `product-spec`
+   again in Mode B (refine) with the draft + answers. It returns the
+   final spec.
+4. Persist it to `docs/specs/<slug>.md` and commit:
+   `git add docs/specs/<slug>.md && git commit -m "spec: <slug>"`.
+5. **GATE 1.** Surface the spec to the owner and end the turn with this
+   shape:
+   ```
+   Spec ready for review: <feature title>
+   docs/specs/<slug>.md
+
+   <paste the spec's Problem + Outcome + In/Out-of-scope so it's
+   readable without opening the file>
+
+   Reply with one of:
+     • `approve`         — lock the spec, move to UX mockups
+     • `changes: <text>` — revise the spec and re-gate
+   ```
+   On `changes: <text>`, re-invoke `product-spec` (Mode B) with the
+   feedback, re-commit, re-gate. On `approve`, continue to Phase 0b.
+
+**Phase 0b — UX design (`ux-designer`) → GATE 2**
+
+1. Spawn `ux-designer` with the approved `docs/specs/<slug>.md`. It
+   writes HTML mockups + PNG renders under `docs/design/<slug>/` and
+   reports a render status (`rendered` or `[render skipped: chromium
+   unavailable]`).
+2. Commit: `git add docs/design/<slug> && git commit -m "design: <slug> mockups"`.
+3. **GATE 2.** Surface the mockups and end the turn:
+   ```
+   Mockups ready for review: <feature title>
+   docs/design/<slug>/   (<render status>)
+
+   <list each frame: screen — state — file>
+   <designer's design notes>
+
+   Reply with one of:
+     • `approve`         — lock the design, start planning + build
+     • `changes: <text>` — revise the mockups and re-gate
+   ```
+   Use `SendUserFile` to surface the rendered PNGs at this gate so they
+   reach the owner's review inline (skip if render was skipped — point
+   at the HTML sources instead). On `changes: <text>`, re-invoke
+   `ux-designer` with the feedback (it revises frames in place),
+   re-commit, re-gate. On `approve`, continue to Step 1.
+
+After both gates pass, proceed to the planner. The planner and
+`qa-verifier` both read `docs/specs/<slug>.md` and `docs/design/<slug>/`.
+
 ### Step 1 — Plan (single agent)
-Spawn the `feature-planner` agent. Pass the full feature description.
+Spawn the `feature-planner` agent. Pass the full feature description
+**plus the approved spec and the path to the mockups**
+(`docs/specs/<slug>.md`, `docs/design/<slug>/`) so the plan is built
+against agreed intent, not just the raw description.
 When it returns the plan, **persist it to `docs/plans/<slug>.md`**
 (the agent prints the plan; you write the file). Commit:
 `git add docs/plans/<slug>.md && git commit -m "plan: <slug>"`.

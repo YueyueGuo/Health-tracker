@@ -7,13 +7,16 @@ Specialized agents and slash commands for the Health Tracker project.
 | Command | Purpose |
 |---------|---------|
 | `/spec <rough idea>` | Refinement workflow: draft → interactive Q&A → final spec at `docs/specs/<slug>.md`. Stops at a spec file — does **not** run planner or implementation. Hand off to `/feature` when ready. |
-| `/feature <desc \| spec path>` | Full feature workflow: plan → research + migration (parallel) → backend + frontend (parallel) → tests → review → PR → subscribe. Accepts a free-text description or a path to a spec file produced by `/spec`. |
+| `/feature <desc \| spec path>` | Full feature workflow: **Phase 0 (spec + UX mockups, each behind a human approval gate)** → plan → research + migration (parallel) → backend + frontend (parallel) → tests → review → PR → subscribe. Accepts a free-text description or a path to a spec file produced by `/spec` (a passed spec is treated as already-approved, skipping Gate 1). Phase 0 runs on the full lane only — the fast path skips it. |
 | `/bug <desc \| #N \| issue-url>` | Bug workflow: investigate → fix → regression test → tests → review → PR → subscribe. Accepts a free-text description **or** a GitHub issue reference (`#42`, `owner/repo#42`, or a github.com issue URL) — the orchestrator fetches the issue and uses it as the bug description, then adds `Closes #N` to the PR. |
 
-Both commands run in fully-autonomous mode by default. The orchestrator
-(top-level Claude in the session) spawns sub-agents and only pauses if
-something is genuinely ambiguous or a hard limit is hit (3 test loops,
-2 review loops, `BLOCK` verdict).
+Both commands run in fully-autonomous mode by default — with one
+exception: on the full lane, `/feature` **deliberately pauses at two
+review gates** (after the spec, after the UX mockups) so the owner can
+steer direction before the build. Apart from those gates, the
+orchestrator (top-level Claude in the session) spawns sub-agents
+autonomously and only pauses if something is genuinely ambiguous or a
+hard limit is hit (3 test loops, 2 review loops, `BLOCK` verdict).
 
 ## Fast path (lightweight workflow)
 
@@ -38,8 +41,9 @@ Choose workflow lane" section.
 
 | Agent | Role | Read-only? | Use phase |
 |-------|------|------------|-----------|
-| `product-spec` | Refines a rough feature idea into a concrete spec via an interactive Q&A loop. | Yes | Spec (pre-Plan) |
-| `feature-planner` | Produces written implementation plan from a feature description or refined spec. | Yes | Plan |
+| `product-spec` | Refines a rough feature idea into a concrete spec via an interactive Q&A loop. Spec is human-gated before design/planning. | Yes | Phase 0a (spec) |
+| `ux-designer` | Turns the approved spec into HTML/CSS mockups rendered to PNG (Chromium, with an HTML-only fallback), committed under `docs/design/<slug>/`. Human-gated before planning. | No (writes only `docs/design/`) | Phase 0b (design) |
+| `feature-planner` | Produces written implementation plan from the approved spec + mockups (or a free-text description). | Yes | Plan |
 | `bug-investigator` | Ranks root-cause hypotheses with file:line evidence. | Yes | Plan |
 | `integration-researcher` | Fetches external API docs; answers open questions from the plan. | Yes (WebFetch/Search) | Phase 1 (parallel) |
 | `db-migrator` | Writes Alembic revisions, DAG-aware, SQLite+Postgres safe. | No | Phase 1 (parallel) |
@@ -47,7 +51,7 @@ Choose workflow lane" section.
 | `frontend-engineer` | React 19 / Vite / TS / Tailwind + typecheck/build. | No | Phase 2 (parallel) |
 | `test-runner` | Runs ruff + pytest + npm typecheck + npm build; routes failures. | Yes | Verify |
 | `migration-safety-checker` | Audits new Alembic revisions for Postgres production safety (drift, locks, NOT NULL hazards, backfill). | Yes | Phase 1 (sequential after `db-migrator`); re-run in Review if migrations exist |
-| `qa-verifier` | Boots backend + frontend, drives golden-path scenarios via Playwright, captures screenshots, runs axe-core a11y scan on each page. Mocks external APIs at the client boundary. | Yes | Review (parallel) |
+| `qa-verifier` | Boots backend + frontend, drives golden-path scenarios via Playwright, captures screenshots, runs axe-core a11y scan on each page, and **compares the built UI against the approved mockups in `docs/design/<slug>/`** when present. Mocks external APIs at the client boundary. | Yes | Review (parallel) |
 | `code-reviewer` | Reviews branch diff against the plan for correctness + conventions + scope. | Yes | Review (parallel) |
 | `security-reviewer` | Reviews diff for secrets, auth/authz, injection, unsafe deserialization, dep CVEs, prompt injection. | Yes | Review (parallel) |
 | `performance-sentinel` | Inspects diff for N+1, missing indexes, blocking I/O in async, frontend bundle bloat / re-renders. | Yes | Review (parallel) |
@@ -71,9 +75,27 @@ multiple `Agent` tool uses**. Real parallelism points:
   preamble before spawning, naming the agents that will run and the
   reason for any skip.
 
-Sequential by design: planner → phase 1 (incl. migration audit when
+Sequential by design: **phase 0 (spec → Gate 1 → UX mockups → Gate 2,
+full lane only)** → planner → phase 1 (incl. migration audit when
 warranted) → phase 2 → tests → review (multi-agent parallel) → PR →
 subscribe.
+
+## Human review gates
+
+The full lane has **three** human checkpoints, not one. Each uses the
+same stop/resume pattern: the orchestrator surfaces the artifact, ends
+the turn, and resumes on the owner's reply.
+
+| Gate | After | Artifact | Approve / revise |
+|------|-------|----------|------------------|
+| Gate 1 | `product-spec` | `docs/specs/<slug>.md` | `approve` / `changes: <text>` |
+| Gate 2 | `ux-designer` | `docs/design/<slug>/*.png` (mockups) | `approve` / `changes: <text>` |
+| PR gate | PR opened | the PR itself | `merge` / `changes: <text>` / `hold` |
+
+The point of Gates 1 and 2 is to catch a wrong direction while it's
+cheap to change — at the spec and mockup stage — instead of after a
+full build. The fast path skips Gates 1 and 2 (it has no spec/design
+phase); the PR gate always applies.
 
 ## Triggering rules (when each review-phase agent runs)
 
