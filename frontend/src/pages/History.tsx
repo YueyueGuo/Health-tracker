@@ -24,6 +24,12 @@ const containerVariants = {
 // user on a near-empty view that actually has older matches further back.
 const FILTER_AUTOLOAD_THRESHOLD = 5;
 
+// Hard cap on how many pages a single filter activation may auto-fetch. A
+// sparse or zero-match filter would otherwise cascade fetchNextPage all the
+// way to end-of-history (a fetch storm); past this many auto-loads the user
+// scrolls to pull more via the IntersectionObserver sentinel instead.
+const MAX_FILTER_AUTOLOADS = 5;
+
 export default function History() {
   const navigate = useNavigate();
   const [activeFilter, setActiveFilter] = useState<FilterId>("All");
@@ -68,16 +74,27 @@ export default function History() {
 
   const filterActive = activeFilter !== "All" || activeType !== "AllTypes";
 
+  // Reset the auto-load budget whenever the active filter changes, so each
+  // filter activation gets a fresh allowance of eager page fetches.
+  const autoloadsRef = useRef(0);
+  useEffect(() => {
+    autoloadsRef.current = 0;
+  }, [activeFilter, activeType]);
+
   // Filter-vs-pagination UX: with a filter active, a short filtered list that
   // still has older pages should keep loading so matches aren't hidden behind
-  // the cursor. Guard against loops by only firing when not already fetching.
+  // the cursor. Bounded by MAX_FILTER_AUTOLOADS per activation so a sparse
+  // filter can't cascade fetchNextPage through all of history; the sentinel
+  // still loads more once the user scrolls.
   useEffect(() => {
     if (
       filterActive &&
       filtered.length < FILTER_AUTOLOAD_THRESHOLD &&
       hasNextPage &&
-      !isFetchingNextPage
+      !isFetchingNextPage &&
+      autoloadsRef.current < MAX_FILTER_AUTOLOADS
     ) {
+      autoloadsRef.current += 1;
       fetchNextPage();
     }
   }, [

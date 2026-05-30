@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithQuery } from "../test/renderWithQuery";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -190,6 +190,44 @@ describe("History page (infinite scroll)", () => {
     triggerIntersection();
     // No additional fetch since there is no next page.
     await waitFor(() => expect(fetchHistoryFeed).toHaveBeenCalledTimes(1));
+  });
+
+  it("bounds the filter auto-load instead of cascading through all history", async () => {
+    // Every page reports has_more=true with a fresh cursor and only Run
+    // activities, so a "Rides" filter matches nothing and the filtered list
+    // stays under the auto-load threshold indefinitely. Without a cap this
+    // would walk fetchNextPage to end-of-history; it must stop at
+    // 1 initial + MAX_FILTER_AUTOLOADS (5) = 6 fetches.
+    let n = 0;
+    fetchHistoryFeed.mockImplementation(
+      () =>
+        // Defer to a macrotask so the isFetchingNextPage transition commits
+        // between renders (microtask Promise.resolve coalesces it away),
+        // letting the auto-load effect chain page-by-page as it would over a
+        // real network — which is what the cap must rein in.
+        new Promise((resolve) => {
+          n += 1;
+          setTimeout(
+            () =>
+              resolve(
+                page([activity(n, `Run ${n}`, "2026-04-25T12:00:00Z")], `c${n}`, true),
+              ),
+            0,
+          );
+        }),
+    );
+
+    renderWithRouter();
+    await screen.findByText("Run 1");
+    expect(fetchHistoryFeed).toHaveBeenCalledTimes(1);
+
+    // Activate a zero-match filter.
+    fireEvent.click(screen.getByRole("button", { name: "Rides" }));
+
+    // Auto-load fires up to the cap, then stops and stays put.
+    await waitFor(() => expect(fetchHistoryFeed).toHaveBeenCalledTimes(6));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(fetchHistoryFeed).toHaveBeenCalledTimes(6);
   });
 
   it("does not render the time-range select", async () => {
