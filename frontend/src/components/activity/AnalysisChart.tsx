@@ -12,6 +12,8 @@ import { Card } from "../ui/Card";
 import { useUnits } from "../../hooks/useUnits";
 import type { ActivitySource } from "../../api/activities";
 import {
+  formatPaceTick,
+  niceTickRange,
   paceDecimal,
   paceUnitLabel,
   speedUnitLabel,
@@ -112,6 +114,60 @@ export default function AnalysisChart({
 
   const reverseSecondary = mode === "run";
 
+  // --- Computed axis domains and tick arrays ---------------------------------
+
+  /** X-axis (time in minutes): evenly-spaced ticks based on total duration. */
+  const xTicks = useMemo(() => {
+    if (chartData.length === 0) return undefined;
+    const maxTime = chartData[chartData.length - 1].time;
+    let interval: number;
+    if (maxTime <= 20) interval = 2;
+    else if (maxTime <= 40) interval = 5;
+    else if (maxTime <= 90) interval = 10;
+    else interval = 15;
+    return niceTickRange(0, maxTime, interval);
+  }, [chartData]);
+
+  /** HR Y-axis: snap to nice round numbers with 20 bpm spacing. */
+  const hrAxisConfig = useMemo(() => {
+    const hrValues = chartData.map((d) => d.hr).filter((v): v is number => v != null);
+    if (hrValues.length === 0) return { domain: undefined, ticks: undefined };
+    const min = Math.min(...hrValues);
+    const max = Math.max(...hrValues);
+    const lo = Math.floor(min / 20) * 20;
+    const hi = Math.ceil(max / 20) * 20;
+    return {
+      domain: [lo, hi] as [number, number],
+      ticks: niceTickRange(lo, hi, 20),
+    };
+  }, [chartData]);
+
+  /** Pace / power / speed Y-axis: zoom to data range for pace; auto for others. */
+  const secondaryAxisConfig = useMemo(() => {
+    const vals = chartData
+      .map((d) => d.secondary)
+      .filter((v): v is number => v != null);
+    if (vals.length === 0) return { domain: undefined, ticks: undefined, formatter: undefined };
+
+    if (mode === "run") {
+      // Pace values are in decimal minutes (e.g. 7.5 = 7:30/mi).
+      const min = Math.min(...vals);
+      const max = Math.max(...vals);
+      // Pad by 0.5 min on each side, snapped to 0.5 boundaries
+      const lo = Math.floor((min - 0.5) * 2) / 2;
+      const hi = Math.ceil((max + 0.5) * 2) / 2;
+      // Ticks every 0.5 min (30 seconds of pace)
+      const ticks = niceTickRange(lo * 2, hi * 2, 1).map((v) => v / 2);
+      return {
+        domain: [lo, hi] as [number, number],
+        ticks,
+        formatter: formatPaceTick,
+      };
+    }
+    // Power / speed: let Recharts auto-scale
+    return { domain: undefined, ticks: undefined, formatter: undefined };
+  }, [chartData, mode]);
+
   return (
     <Card className="!p-3">
       <div className="flex items-center justify-between mb-4">
@@ -197,24 +253,29 @@ export default function AnalysisChart({
                 axisLine={false}
                 tickLine={false}
                 tick={{ fontSize: 10, fill: "#64748b" }}
-                minTickGap={30}
+                ticks={xTicks}
+                type="number"
+                domain={["dataMin", "dataMax"]}
               />
               {showSecondary && hasSecondary && mode !== "strength" && (
                 <YAxis
                   yAxisId="left"
-                  domain={["auto", "auto"]}
+                  domain={secondaryAxisConfig.domain ?? ["auto", "auto"]}
+                  ticks={secondaryAxisConfig.ticks}
+                  tickFormatter={secondaryAxisConfig.formatter}
                   reversed={reverseSecondary}
                   axisLine={false}
                   tickLine={false}
                   tick={{ fontSize: 9, fill: "#38bdf8" }}
-                  width={35}
+                  width={40}
                 />
               )}
               {showHR && hasHR && (
                 <YAxis
                   yAxisId="right"
                   orientation="right"
-                  domain={["dataMin - 10", "dataMax + 10"]}
+                  domain={hrAxisConfig.domain}
+                  ticks={hrAxisConfig.ticks}
                   axisLine={false}
                   tickLine={false}
                   tick={{ fontSize: 9, fill: "#fb7185" }}
