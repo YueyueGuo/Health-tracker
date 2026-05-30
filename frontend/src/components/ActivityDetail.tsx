@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import {
   fetchActivity,
@@ -116,6 +116,31 @@ export default function ActivityDetailPage() {
       void handleLoadStreams();
     }
   }, [activity?.source, streams, streamsLoading, streamsError, handleLoadStreams]);
+
+  // For Strava activities whose streams are already cached in the DB,
+  // auto-load them so the user sees the chart immediately without
+  // clicking "Load Streams". A ref prevents retrying after a failed
+  // attempt (which would create an infinite loop via streamsError).
+  const autoLoadAttempted = useRef(false);
+
+  // Reset the auto-load guard when the activity changes.
+  useEffect(() => {
+    autoLoadAttempted.current = false;
+  }, [activityId]);
+
+  useEffect(() => {
+    if (
+      activity?.source === "strava" &&
+      activity.streams_cached &&
+      streams === null &&
+      !streamsLoading &&
+      !streamsError &&
+      !autoLoadAttempted.current
+    ) {
+      autoLoadAttempted.current = true;
+      void handleLoadStreams();
+    }
+  }, [activity?.source, activity?.streams_cached, streams, streamsLoading, streamsError, handleLoadStreams]);
 
   const handleReclassify = async () => {
     setReclassifying(true);

@@ -146,6 +146,34 @@ export const HR_ZONE_COLORS = [
   "#fb7185", // Z5 Anaerobic
 ];
 
+/**
+ * Format a decimal-minutes pace value as "m:ss" for chart tick labels.
+ * E.g. 7.5 → "7:30", 6.0 → "6:00".
+ */
+export function formatPaceTick(decimal: number): string {
+  const m = Math.floor(decimal);
+  const s = Math.round((decimal - m) * 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/**
+ * Generate an array of evenly-spaced "nice" tick values covering `[min, max]`.
+ * Snaps start/end to the chosen interval so ticks land on round numbers.
+ */
+export function niceTickRange(
+  min: number,
+  max: number,
+  interval: number,
+): number[] {
+  const lo = Math.floor(min / interval) * interval;
+  const hi = Math.ceil(max / interval) * interval;
+  const ticks: number[] = [];
+  for (let v = lo; v <= hi; v += interval) {
+    ticks.push(v);
+  }
+  return ticks;
+}
+
 export const HR_ZONE_LABELS = [
   "Recovery",
   "Aerobic",
