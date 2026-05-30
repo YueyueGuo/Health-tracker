@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyHistoryFilter,
+  applyTypeFilter,
   buildHistoryEvents,
   classifyActivity,
   formatRelativeDate,
@@ -453,6 +454,97 @@ describe("applyHistoryFilter", () => {
     const got = applyHistoryFilter(events, "Strength");
     expect(got).toHaveLength(1);
     expect(got[0].type).toBe("Strength");
+  });
+});
+
+describe("activityToEvent carries classification fields", () => {
+  it("copies classification_type and classification_flags onto the event", () => {
+    const events = buildHistoryEvents(
+      [
+        makeActivity({
+          id: 1,
+          source: "strava",
+          classification_type: "intervals",
+          classification_flags: ["has_speed_component", "is_long"],
+        }),
+      ],
+      [],
+      []
+    );
+    expect(events[0].classificationType).toBe("intervals");
+    expect(events[0].classificationFlags).toEqual([
+      "has_speed_component",
+      "is_long",
+    ]);
+  });
+
+  it("carries a null classification_type through as null/undefined", () => {
+    const events = buildHistoryEvents(
+      [
+        makeActivity({
+          id: 2,
+          source: "apple_health",
+          classification_type: null,
+          classification_flags: null,
+        }),
+      ],
+      [],
+      []
+    );
+    expect(events[0].classificationType).toBeNull();
+  });
+});
+
+describe("applyTypeFilter", () => {
+  const events = buildHistoryEvents(
+    [
+      makeActivity({ id: 1, sport_type: "Run", name: "Easy Run", classification_type: "easy" }),
+      makeActivity({ id: 2, sport_type: "Run", name: "Intervals", classification_type: "intervals" }),
+      makeActivity({ id: 3, sport_type: "Run", name: "Tempo Run", classification_type: "tempo" }),
+      makeActivity({
+        id: 4,
+        sport_type: "run",
+        source: "apple_health",
+        name: "Apple Run",
+        classification_type: null,
+      }),
+    ],
+    [makeSleep({ id: 1 })],
+    [makeStrength()]
+  );
+
+  it("AllTypes returns everything", () => {
+    expect(applyTypeFilter(events, "AllTypes")).toHaveLength(events.length);
+  });
+
+  it("matches a specific classification (intervals)", () => {
+    const got = applyTypeFilter(events, "intervals");
+    expect(got).toHaveLength(1);
+    expect(got[0].title).toBe("Intervals");
+    expect(got[0].classificationType).toBe("intervals");
+  });
+
+  it("matches another run classification (tempo)", () => {
+    const got = applyTypeFilter(events, "tempo");
+    expect(got).toHaveLength(1);
+    expect(got[0].title).toBe("Tempo Run");
+  });
+
+  it("drops unclassified rows (Apple run, sleep, strength) for a typed filter", () => {
+    const got = applyTypeFilter(events, "easy");
+    expect(got).toHaveLength(1);
+    expect(got[0].title).toBe("Easy Run");
+    expect(got.map((e) => e.title)).not.toContain("Apple Run");
+    expect(got.some((e) => e.type === "MorningStatus")).toBe(false);
+    expect(got.some((e) => e.type === "Strength")).toBe(false);
+  });
+
+  it("composes with applyHistoryFilter as two independent dimensions", () => {
+    // Sport filter = Run, type filter = easy -> just the easy run.
+    const sportFiltered = applyHistoryFilter(events, "Run");
+    const got = applyTypeFilter(sportFiltered, "easy");
+    expect(got).toHaveLength(1);
+    expect(got[0].title).toBe("Easy Run");
   });
 });
 

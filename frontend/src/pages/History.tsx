@@ -6,8 +6,10 @@ import { useApi } from "../hooks/useApi";
 import { fetchDashboardHistory } from "../api/dashboard";
 import {
   applyHistoryFilter,
+  applyTypeFilter,
   buildHistoryEvents,
   type FilterId,
+  type TypeFilterId,
 } from "../lib/historyEvents";
 import { HistoryFilters } from "../components/history/HistoryFilters";
 import { HistoryEventCard } from "../components/history/HistoryEventCard";
@@ -20,6 +22,7 @@ const containerVariants = {
 export default function History() {
   const navigate = useNavigate();
   const [activeFilter, setActiveFilter] = useState<FilterId>("All");
+  const [activeType, setActiveType] = useState<TypeFilterId>("AllTypes");
   const [days, setDays] = useState(30);
 
   const history = useApi(
@@ -39,10 +42,21 @@ export default function History() {
       ),
     [history.data]
   );
-  const filtered = useMemo(
-    () => applyHistoryFilter(allEvents, activeFilter),
-    [allEvents, activeFilter]
-  );
+  // The run-type filter only applies to runs, so it's composed in only when
+  // the "Runs" sport filter is active (and its row is the only one shown).
+  const filtered = useMemo(() => {
+    const bySport = applyHistoryFilter(allEvents, activeFilter);
+    return activeFilter === "Run"
+      ? applyTypeFilter(bySport, activeType)
+      : bySport;
+  }, [allEvents, activeFilter, activeType]);
+
+  // Reset the run-type sub-filter whenever we leave the Runs view so a stale
+  // selection can't silently hide rows once the type row is hidden again.
+  const handleFilterChange = (id: FilterId) => {
+    setActiveFilter(id);
+    if (id !== "Run") setActiveType("AllTypes");
+  };
 
   return (
     <div className="pb-4 pt-4">
@@ -72,7 +86,12 @@ export default function History() {
             </button>
           </div>
         </div>
-        <HistoryFilters active={activeFilter} onChange={setActiveFilter} />
+        <HistoryFilters
+          active={activeFilter}
+          onChange={handleFilterChange}
+          activeType={activeType}
+          onTypeChange={setActiveType}
+        />
       </div>
 
       {loading && (

@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { Card } from "../ui/Card";
 import SourceBadge from "../activity/SourceBadge";
+import ClassificationBadge from "../ClassificationBadge";
 import {
   formatRelativeDate,
   type EventType,
@@ -65,19 +66,26 @@ export function HistoryEventCard({ event, onClick }: Props) {
     <>
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-2.5">
-          <div className={`p-2 rounded-lg border ${iconBg}`}>
+          <div className={`p-2 rounded-lg border shrink-0 ${iconBg}`}>
             <TypeIcon type={event.type} />
           </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <h3 className="text-sm font-semibold text-slate-200">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <h3 className="text-sm font-semibold text-slate-200 truncate">
                 {event.title}
               </h3>
-              <SourceBadge source={event.sourceBadge} />
+              {event.classificationType && (
+                <span className="shrink-0">
+                  <ClassificationBadge type={event.classificationType} />
+                </span>
+              )}
+              <span className="shrink-0">
+                <SourceBadge source={event.sourceBadge} />
+              </span>
               {event.type === "Strength" && event.hrLinked && (
                 <HeartPulse
                   size={14}
-                  className="text-brand-red"
+                  className="text-brand-red shrink-0"
                   aria-label="HR-linked"
                   data-testid="hr-linked-indicator"
                 />
