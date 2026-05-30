@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Astera Labs (ALAB) — Research Briefing</title>
+<style>
+  :root{
+    --bg:#0b1020; --panel:#131a2e; --panel2:#1b2440; --ink:#e9eefb; --mut:#97a3c4;
+    --acc:#5b8cff; --acc2:#22d3a6; --warn:#ffb454; --bad:#ff6b6b; --good:#2dd4a7;
+    --line:#26314f; --chip:#1f2a47;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+       background:linear-gradient(180deg,#0a0e1c,#0b1020 40%);color:var(--ink);line-height:1.55;}
+  .wrap{max-width:1080px;margin:0 auto;padding:28px 20px 80px;}
+  header.hero{display:flex;flex-wrap:wrap;align-items:flex-end;gap:18px;justify-content:space-between;
+    border-bottom:1px solid var(--line);padding-bottom:22px;margin-bottom:10px;}
+  .hero h1{font-size:30px;margin:0 0 4px;letter-spacing:.3px;}
+  .hero .sub{color:var(--mut);font-size:14px;}
+  .price-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 18px;min-width:230px;}
+  .price-card .px{font-size:30px;font-weight:700;}
+  .price-card .meta{color:var(--mut);font-size:12.5px;margin-top:2px;}
+  .pill{display:inline-block;background:var(--chip);border:1px solid var(--line);border-radius:999px;
+    padding:3px 11px;font-size:12px;color:var(--mut);margin:3px 6px 0 0;}
+  .pill.up{color:var(--good);border-color:#1f5e4d}
+  /* tabs */
+  nav.tabs{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0 18px;}
+  nav.tabs button{background:var(--panel);color:var(--mut);border:1px solid var(--line);
+    padding:9px 15px;border-radius:10px;cursor:pointer;font-size:13.5px;font-weight:600;transition:.15s;}
+  nav.tabs button:hover{color:var(--ink);border-color:var(--acc)}
+  nav.tabs button.active{background:var(--acc);color:#06122e;border-color:var(--acc)}
+  section.tab{display:none;animation:fade .25s ease;}
+  section.tab.active{display:block;}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  h2{font-size:21px;margin:8px 0 14px;}
+  h3{font-size:16px;margin:20px 0 8px;color:#cdd8f5;}
+  p{color:#d4dcf2;font-size:14.5px}
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:1fr 1fr 1fr}
+  @media(max-width:760px){.g2,.g3{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px;}
+  .card h4{margin:0 0 6px;font-size:15px;color:#fff}
+  .card .tag{font-size:11.5px;color:var(--acc2);text-transform:uppercase;letter-spacing:.7px;font-weight:700;}
+  .card p{margin:6px 0 0;font-size:13.5px;color:var(--mut)}
+  .kpi{display:flex;flex-direction:column;gap:2px}
+  .kpi .v{font-size:24px;font-weight:700}
+  .kpi .l{font-size:12px;color:var(--mut)}
+  .good{color:var(--good)} .bad{color:var(--bad)} .warn{color:var(--warn)}
+  ul.clean{padding-left:18px;margin:8px 0} ul.clean li{margin:5px 0;font-size:14px;color:#d4dcf2}
+  /* bar chart */
+  .bars{display:flex;align-items:flex-end;gap:18px;height:200px;padding:10px 6px 0;border-bottom:1px solid var(--line)}
+  .bar{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:6px;height:100%}
+  .bar .col{width:60%;background:linear-gradient(180deg,var(--acc),#2c4fb0);border-radius:6px 6px 0 0;transition:height .8s ease;position:relative}
+  .bar .col.rev{background:linear-gradient(180deg,var(--acc2),#138a6b)}
+  .bar .val{font-size:12px;font-weight:700;color:#cfe}
+  .bar .lab{font-size:11.5px;color:var(--mut);margin-top:4px}
+  .legend{font-size:12px;color:var(--mut);margin-top:10px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:8px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+  td.r,th.r{text-align:right}
+  /* calculator */
+  .calc{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+  .calc label{display:block;font-size:12.5px;color:var(--mut);margin:12px 0 4px}
+  .calc input{width:100%;background:#0c1326;border:1px solid var(--line);color:var(--ink);
+    border-radius:8px;padding:9px 11px;font-size:14px}
+  .calc input[type=range]{padding:0}
+  .out{margin-top:18px;display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .out .box{background:#0c1326;border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .out .box .l{font-size:11.5px;color:var(--mut)}
+  .out .box .v{font-size:22px;font-weight:700;margin-top:3px}
+  .note{font-size:12px;color:var(--mut);margin-top:10px;font-style:italic}
+  .disclaimer{background:#1a1326;border:1px solid #4a2f55;border-radius:12px;padding:14px 18px;margin-top:26px;color:#e7d4f5;font-size:13px}
+  a{color:var(--acc)}
+  .verdict{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px}
+  .verdict .v{flex:1;min-width:220px;border-radius:12px;padding:14px 16px;border:1px solid var(--line)}
+  .verdict .bull{background:rgba(45,212,167,.08);border-color:#1f5e4d}
+  .verdict .bear{background:rgba(255,107,107,.07);border-color:#5e2b2b}
+  .scrollx{overflow-x:auto}
+  footer{color:var(--mut);font-size:12px;margin-top:30px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div>
+      <h1>Astera Labs <span style="color:var(--mut);font-weight:500">· NASDAQ: ALAB</span></h1>
+      <div class="sub">AI Connectivity Research Briefing · prepared 30 May 2026</div>
+      <div style="margin-top:8px">
+        <span class="pill up">Consensus: Buy</span>
+        <span class="pill">10 of 12 analysts Strong&nbsp;Buy / Buy</span>
+        <span class="pill">Avg PT ~$243</span>
+      </div>
+    </div>
+    <div class="price-card">
+      <div class="px">$341.02</div>
+      <div class="meta">Mkt cap ≈ $58.8B · 52-wk $84.78–$354.53</div>
+      <div class="meta">P/E ≈ 231 (≈165 normalized) · near all-time high</div>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="active" data-tab="biz">What they do</button>
+    <button data-tab="prod">Products</button>
+    <button data-tab="fin">Financials</button>
+    <button data-tab="out">Outlook & TAM</button>
+    <button data-tab="risk">Risks</button>
+    <button data-tab="leap">Your LEAP</button>
+  </nav>
+
+  <!-- ============ BUSINESS ============ -->
+  <section class="tab active" id="biz">
+    <h2>The role Astera plays in AI</h2>
+    <p>Astera Labs makes the <strong>"plumbing" of AI data centers</strong> — the silicon, modules and software that
+      move data between GPUs, CPUs, memory and storage at very high speed with low latency. As AI clusters scale to
+      tens of thousands of accelerators, the bottleneck has shifted from raw compute to <em>connectivity</em>: keeping
+      expensive GPUs fed with data so they aren't sitting idle. That is precisely the problem Astera sells into.</p>
+
+    <div class="grid g3" style="margin-top:14px">
+      <div class="card"><div class="tag">Position</div><h4>Connectivity specialist</h4>
+        <p>Pure-play on PCIe / CXL / Ethernet / UALink interconnect — an arms-dealer to every hyperscaler rather than a bet on one GPU vendor.</p></div>
+      <div class="card"><div class="tag">Standards</div><h4>Open-standard champion</h4>
+        <p>Builds on open protocols (PCIe, CXL, Ethernet, UALink) — positioned as the open alternative to NVIDIA's proprietary NVLink walled garden.</p></div>
+      <div class="card"><div class="tag">Stickiness</div><h4>Hardware + software (COSMOS)</h4>
+        <p>Its COSMOS fleet-management software layer adds observability and lock-in on top of the silicon — a margin and moat lever.</p></div>
+    </div>
+
+    <h3>Why it matters now</h3>
+    <ul class="clean">
+      <li>The transition to <strong>PCIe 6</strong> and rack-scale "scale-up" architectures is a generational upgrade cycle Astera is riding directly.</li>
+      <li>Content per accelerator is <strong>rising sharply</strong> — e.g. potential ~$1,000 of Astera content per AWS Trainium chip vs. $150–200 in the prior generation.</li>
+      <li>Hyperscalers building custom AI silicon (AWS, Google, Microsoft, Meta) still need third-party connectivity — Astera is a default supplier.</li>
+    </ul>
+  </section>
+
+  <!-- ============ PRODUCTS ============ -->
+  <section class="tab" id="prod">
+    <h2>Key product families</h2>
+    <p>Four product lines, all built on industry-standard protocols, plus the COSMOS software suite that ties them together.</p>
+    <div class="grid g2" style="margin-top:6px">
+      <div class="card"><div class="tag">Aries</div><h4>PCIe / CXL Smart DSP Retimers & Smart Cable Modules</h4>
+        <p>The cash cow — shipping in the millions, extends signal reach so PCIe links stay reliable across boards and cables. The established, high-volume franchise.</p></div>
+      <div class="card"><div class="tag">Scorpio ⭐</div><h4>Smart Fabric Switches (P-Series & X-Series)</h4>
+        <p>The growth engine. New <strong>X-Series 320-lane</strong> switch — billed as the industry's largest open memory-semantic fabric switch for large GPU scale-up clusters. Scorpio + PCIe 6 now drive 30%+ of quarterly revenue growth.</p></div>
+      <div class="card"><div class="tag">Leo</div><h4>CXL Memory Connectivity Controllers</h4>
+        <p>Tackles the memory bottleneck; rising interest for AI inference. Notable hyperscaler design win for a customized Leo in an inferencing appliance.</p></div>
+      <div class="card"><div class="tag">Taurus</div><h4>Ethernet Smart Cable Modules</h4>
+        <p>Active electrical cables for Ethernet "scale-out" connectivity between racks/nodes.</p></div>
+    </div>
+    <h3>What's new in 2026</h3>
+    <ul class="clean">
+      <li><strong>PCIe 6 portfolio ramping to production</strong> across multiple AI platforms; initial shipments to major hyperscalers.</li>
+      <li><strong>PCIe 6 over Optics</strong> — optical scale-up clustering over longer distances, expanding rack-scale flexibility.</li>
+      <li>Expansion into <strong>custom / semi-custom</strong> connectivity solutions — higher content, deeper lock-in.</li>
+      <li>Computex 2026 demos (June) and a new Israel design center signal continued R&D investment.</li>
+    </ul>
+  </section>
+
+  <!-- ============ FINANCIALS ============ -->
+  <section class="tab" id="fin">
+    <h2>Financials & momentum</h2>
+    <div class="grid g3">
+      <div class="card kpi"><span class="v">$308.4M</span><span class="l">Q1'26 revenue</span><span class="l good">+93% YoY · +14% QoQ</span></div>
+      <div class="card kpi"><span class="v">$0.61</span><span class="l">Q1'26 adj. EPS</span><span class="l good">beat $0.54 est.</span></div>
+      <div class="card kpi"><span class="v">76.3%</span><span class="l">GAAP gross margin</span><span class="l">20.1% op. margin</span></div>
+    </div>
+
+    <h3>Quarterly revenue trajectory ($M)</h3>
+    <div class="bars" id="revBars">
+      <div class="bar"><div class="val">~160</div><div class="col rev" style="height:38%"></div><div class="lab">Q1'25</div></div>
+      <div class="bar"><div class="val">~191</div><div class="col rev" style="height:46%"></div><div class="lab">Q2'25</div></div>
+      <div class="bar"><div class="val">~230</div><div class="col rev" style="height:55%"></div><div class="lab">Q3'25</div></div>
+      <div class="bar"><div class="val">270</div><div class="col rev" style="height:65%"></div><div class="lab">Q4'25</div></div>
+      <div class="bar"><div class="val">308</div><div class="col rev" style="height:74%"></div><div class="lab">Q1'26</div></div>
+      <div class="bar"><div class="val">~360</div><div class="col" style="height:87%"></div><div class="lab">Q2'26 g*</div></div>
+    </div>
+    <div class="legend">Green = reported · Blue = company guidance midpoint. *Q2'26 guide $355–365M, EPS $0.68–0.70. Earlier-quarter figures are approximate.</div>
+
+    <h3>Analyst forecasts</h3>
+    <div class="scrollx">
+    <table>
+      <tr><th>Metric</th><th class="r">FY2026E</th><th class="r">FY2027E</th></tr>
+      <tr><td>Revenue</td><td class="r">~$1.54B (↑ from $1.36B)</td><td class="r">strong continued growth</td></tr>
+      <tr><td>Revenue growth</td><td class="r good">~81%</td><td class="r">—</td></tr>
+      <tr><td>EPS (consensus)</td><td class="r">$2.41 (range $1.96–2.96)</td><td class="r">$3.32 (range $2.86–4.23)</td></tr>
+    </table>
+    </div>
+    <p class="note">Even on FY2027 EPS of ~$3.32, the stock at $341 trades around 100x forward earnings — priced for years of flawless execution.</p>
+  </section>
+
+  <!-- ============ OUTLOOK ============ -->
+  <section class="tab" id="out">
+    <h2>Future outlook & addressable market</h2>
+    <div class="verdict">
+      <div class="v bull">
+        <h4 style="margin:0 0 6px">Bull case</h4>
+        <ul class="clean">
+          <li>Scale-up TAM est. <strong>~$20B by 2030</strong> (split UALink / Ethernet).</li>
+          <li><strong>$17B UALink-switch TAM</strong> tied to AMD GPUs by 2027–28; Astera positioned to ship into it.</li>
+          <li>AWS content could reach <strong>$2–3B/yr by 2027</strong> as per-accelerator content jumps to ~$1,000.</li>
+          <li>PCIe 6 + Scorpio ramp early; open-standard tailwinds vs. proprietary lock-in.</li>
+          <li>Analyst PTs rising — RBC $270, BofA $240, max Street estimate $297.</li>
+        </ul>
+      </div>
+      <div class="v bear">
+        <h4 style="margin:0 0 6px">Bear / caution</h4>
+        <ul class="clean">
+          <li>Avg analyst PT (~$243) sits <strong>below</strong> the current $341 price — Street targets already lag the rally.</li>
+          <li>Valuation ~165–230x earnings leaves little room for a stumble.</li>
+          <li>TAM figures are projections that assume UALink/open standards win meaningful share vs. NVLink.</li>
+        </ul>
+      </div>
+    </div>
+    <h3>Catalysts to watch</h3>
+    <ul class="clean">
+      <li>Computex 2026 (June 3) product demos & customer signals.</li>
+      <li>Scorpio X-Series production ramp and new hyperscaler design wins.</li>
+      <li>First UALink-based switch shipments (the 2027–28 AMD opportunity).</li>
+      <li>NVIDIA's posture on opening vs. closing NVLink Fusion to partners.</li>
+    </ul>
+  </section>
+
+  <!-- ============ RISKS ============ -->
+  <section class="tab" id="risk">
+    <h2>Risks to a long-dated position</h2>
+    <div class="grid g2">
+      <div class="card"><div class="tag" style="color:var(--bad)">Valuation</div><h4>Priced for perfection</h4>
+        <p>~165–230x earnings near all-time highs. A single soft guide or AI-capex wobble can compress the multiple hard — the asymmetry at $341 is less favorable than it was 200%+ ago.</p></div>
+      <div class="card"><div class="tag" style="color:var(--bad)">Competition</div><h4>Broadcom, Marvell, NVIDIA</h4>
+        <p>Broadcom pushes "Scale-Up Ethernet" as a rival fabric; Marvell bought XConn (CXL/PCIe switching); NVIDIA's NVLink is a proprietary walled garden. Astera is the smaller open-standard challenger.</p></div>
+      <div class="card"><div class="tag" style="color:var(--bad)">Concentration</div><h4>Hyperscaler dependence</h4>
+        <p>Revenue concentrated among a handful of large cloud customers. A strategy shift at one (e.g. AWS Trainium 4 with integrated NVLink Fusion) could dent demand for Astera's parts.</p></div>
+      <div class="card"><div class="tag" style="color:var(--warn)">Cyclicality</div><h4>AI-capex sensitivity</h4>
+        <p>Fortunes are tied to hyperscaler AI build-outs. Any pause in the capex super-cycle hits Astera directly and quickly.</p></div>
+    </div>
+  </section>
+
+  <!-- ============ LEAP ============ -->
+  <section class="tab" id="leap">
+    <h2>Your Jan-2028 LEAP — framework, not a recommendation</h2>
+    <p>You're up ~300% on a Jan 2028 call. With ~19 months to expiry you still own meaningful time value, but a position
+       this far in the money behaves more and more like stock — and the stock is at a stretched valuation near its
+       all-time high. Use the calculator to pressure-test outcomes, then weigh the decision framework below.</p>
+
+    <div class="calc">
+      <h3 style="margin-top:0">Interactive payoff calculator</h3>
+      <div class="grid g2">
+        <div>
+          <label>Strike price ($)</label>
+          <input id="strike" type="number" value="120" />
+          <label>Premium you paid per share ($)</label>
+          <input id="prem" type="number" value="40" />
+          <label># of contracts (×100 shares)</label>
+          <input id="contracts" type="number" value="1" />
+        </div>
+        <div>
+          <label>Projected ALAB price at exit: <strong id="spotLbl">$341</strong></label>
+          <input id="spot" type="range" min="80" max="700" value="341" step="1" />
+          <label>Current intrinsic value vs. cost</label>
+          <div class="out" style="margin-top:4px">
+            <div class="box"><div class="l">Intrinsic value / position</div><div class="v" id="iv">—</div></div>
+            <div class="box"><div class="l">Profit vs. premium paid</div><div class="v" id="pl">—</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="out">
+        <div class="box"><div class="l">Return on premium</div><div class="v" id="roi">—</div></div>
+        <div class="box"><div class="l">Breakeven at expiry</div><div class="v" id="be">—</div></div>
+      </div>
+      <p class="note">Intrinsic value only (max(0, price − strike) × 100 × contracts). It ignores remaining time value, IV, and
+        early-exercise — actual mark before expiry will be higher when out months remain. Adjust the inputs to match your real fill.</p>
+    </div>
+
+    <h3>Decision framework</h3>
+    <div class="verdict">
+      <div class="v bull">
+        <h4 style="margin:0 0 6px">Reasons to keep holding</h4>
+        <ul class="clean">
+          <li>Fundamental momentum is genuinely strong (revenue +93% YoY, raised guidance, margin-rich).</li>
+          <li>Multi-year secular TAM expansion (PCIe 6, Scorpio, UALink 2027–28) lines up with your 2028 expiry.</li>
+          <li>A deep-ITM LEAP still has time premium; cutting now forfeits convexity if the AI build-out keeps running.</li>
+        </ul>
+      </div>
+      <div class="v bear">
+        <h4 style="margin:0 0 6px">Reasons to trim / de-risk</h4>
+        <ul class="clean">
+          <li>A 300% gain on a single leveraged, single-name position is large concentration + leverage risk stacked together.</li>
+          <li>Valuation is rich and the average analyst target ($243) is <em>below</em> today's price — limited consensus headroom.</li>
+          <li>Common risk-management move: <strong>sell enough to recover your original premium</strong> ("house money"), let the rest ride. Or roll to a higher strike to bank gains and reset leverage.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="note" style="margin-top:14px">Theta on a Jan-2028 LEAP is still modest today but accelerates through 2027 — the "hold vs. trim" question gets sharper the closer you get to expiry.</p>
+  </section>
+
+  <div class="disclaimer">
+    ⚠️ <strong>Not financial advice.</strong> This is an educational research summary compiled from public sources on 30 May 2026,
+    not a recommendation to buy, sell, or hold any security or option. Options are leveraged and can expire worthless. Figures
+    (especially pre-Q1'26 quarterly revenue and any values you didn't enter yourself) are approximate. Verify current prices and
+    your own contract terms, and consider consulting a licensed financial advisor before acting.
+  </div>
+
+  <footer>
+    <strong>Sources:</strong>
+    <a href="https://www.asteralabs.com/products/">Astera Labs — Products</a> ·
+    <a href="https://www.fool.com/earnings/call-transcripts/2026/05/05/astera-labs-alab-q1-2026-earnings-transcript/">Q1'26 earnings transcript (Motley Fool)</a> ·
+    <a href="https://www.stocktitan.net/sec-filings/ALAB/8-k-astera-labs-inc-reports-material-event-4f8166500735.html">Q1'26 8-K results (StockTitan)</a> ·
+    <a href="https://www.asteralabs.com/products/scorpio-smart-fabric-switch/">Scorpio Smart Fabric Switch</a> ·
+    <a href="https://finance.yahoo.com/sectors/technology/articles/astera-labs-targets-10b-ai-170803431.html">Astera targets $10B AI connectivity opportunity (Yahoo)</a> ·
+    <a href="https://www.marketbeat.com/stocks/NASDAQ/ALAB/forecast/">Analyst forecasts (MarketBeat)</a> ·
+    <a href="https://www.wallstreetzen.com/stocks/us/nasdaq/alab/stock-forecast">Price targets (WallStreetZen)</a> ·
+    <a href="https://stockanalysis.com/stocks/alab/">Quote & valuation (StockAnalysis)</a> ·
+    <a href="https://seekingalpha.com/article/4800387-astera-labs-breaking-ai-connectivitys-duopoly">Competitive landscape (Seeking Alpha)</a> ·
+    <a href="https://www.investing.com/news/swot-analysis/astera-labs-swot-analysis-stock-navigates-ai-infrastructure-growth-93CH-4697451">SWOT (Investing.com)</a> ·
+    <a href="https://www.ainvest.com/news/astera-labs-strategic-upgrades-sector-positioning-drive-valuation-potential-ai-chiplet-revolution-2511/">UALink TAM (AInvest)</a>
+  </footer>
+</div>
+
+<script>
+  // tabs
+  document.querySelectorAll('nav.tabs button').forEach(b=>{
+    b.addEventListener('click',()=>{
+      document.querySelectorAll('nav.tabs button').forEach(x=>x.classList.remove('active'));
+      document.querySelectorAll('section.tab').forEach(x=>x.classList.remove('active'));
+      b.classList.add('active');
+      document.getElementById(b.dataset.tab).classList.add('active');
+    });
+  });
+
+  // LEAP calculator
+  const $ = id => document.getElementById(id);
+  const fmt = n => (n<0?'-$':'$') + Math.abs(n).toLocaleString(undefined,{maximumFractionDigits:0});
+  function calc(){
+    const strike = parseFloat($('strike').value)||0;
+    const prem   = parseFloat($('prem').value)||0;
+    const ct     = parseFloat($('contracts').value)||0;
+    const spot   = parseFloat($('spot').value)||0;
+    $('spotLbl').textContent = '$'+spot;
+    const shares = ct*100;
+    const intrinsic = Math.max(0, spot-strike)*shares;
+    const cost = prem*shares;
+    const pl = intrinsic - cost;
+    const roi = cost>0 ? (pl/cost*100) : 0;
+    $('iv').textContent = fmt(intrinsic);
+    $('pl').textContent = fmt(pl);
+    $('pl').className = 'v ' + (pl>=0?'good':'bad');
+    $('roi').textContent = (roi>=0?'+':'') + roi.toFixed(0) + '%';
+    $('roi').className = 'v ' + (roi>=0?'good':'bad');
+    $('be').textContent = '$' + (strike+prem).toFixed(2);
+  }
+  ['strike','prem','contracts','spot'].forEach(id=>{
+    $(id).addEventListener('input',calc);
+  });
+  calc();
+</script>
+</body>
+</html>
