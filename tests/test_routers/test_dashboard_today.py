@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -148,8 +148,8 @@ async def test_dashboard_history_bundles_full_timeline_payload(
     monkeypatch.setattr(dashboard_router_module, "local_today", lambda: today)
     monkeypatch.setattr(
         dashboard_router_module,
-        "utc_now_naive",
-        lambda: datetime.combine(today, datetime.min.time()),
+        "utc_now",
+        lambda: datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc),
     )
 
     activity = _activity(101, today - timedelta(days=1), suffer_score=20)
@@ -189,8 +189,8 @@ async def test_dashboard_training_trends_bundles_initial_trends(
     monkeypatch.setattr(dashboard_router_module, "local_today", lambda: today)
     monkeypatch.setattr(
         dashboard_router_module,
-        "utc_now_naive",
-        lambda: datetime.combine(today, datetime.min.time()),
+        "utc_now",
+        lambda: datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc),
     )
 
     db.add_all(
