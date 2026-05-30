@@ -296,4 +296,50 @@ describe("ShoeSelector", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save & tag" }));
     await screen.findByText(/Created Brand new but failed to tag/);
   });
+
+  // Regression: once at least one shoe existed the dropdown dropped the
+  // "add a shoe" affordance entirely, so there was no way to add another
+  // pair from the workout. "Add another pair" must always be the LAST
+  // option, no matter how many pairs already exist.
+  it("always offers 'Add another pair' as the last dropdown option", async () => {
+    mockedListShoes.mockResolvedValue([
+      shoe(),
+      shoe({ id: 2, name: "Pegasus" }),
+    ]);
+    renderWithQuery(
+      <ShoeSelector
+        activityId={42}
+        source="strava"
+        currentShoeId={null}
+        onChange={vi.fn()}
+      />,
+    );
+    const select = (await screen.findByLabelText(
+      "Tag a shoe",
+    )) as HTMLSelectElement;
+    const options = Array.from(select.options).map((o) => o.textContent);
+    expect(options).toContain("+ Add another pair…");
+    expect(options[options.length - 1]).toBe("+ Add another pair…");
+  });
+
+  it("opens the inline create form when 'Add another pair' is picked", async () => {
+    mockedListShoes.mockResolvedValue([shoe()]);
+    renderWithQuery(
+      <ShoeSelector
+        activityId={42}
+        source="strava"
+        currentShoeId={null}
+        onChange={vi.fn()}
+      />,
+    );
+    const select = (await screen.findByLabelText(
+      "Tag a shoe",
+    )) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "__add__" } });
+    // The inline ShoeForm replaces the dropdown; no tag PATCH fires.
+    expect(
+      await screen.findByPlaceholderText(/Vaporfly 3 — blue/),
+    ).toBeInTheDocument();
+    expect(mockedPatchActivityShoe).not.toHaveBeenCalled();
+  });
 });

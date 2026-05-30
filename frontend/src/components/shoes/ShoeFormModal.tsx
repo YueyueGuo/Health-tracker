@@ -32,7 +32,11 @@ export default function ShoeFormModal({ open, shoe, onClose, onSaved }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm"
+      // On mobile the sheet is bottom-anchored; pad the bottom by the
+      // fixed BottomNav height (h-16 = 4rem) plus the safe-area inset so
+      // the card — and its Save button — sit clear of the nav instead of
+      // disappearing behind it. Desktop centers the card, so no inset.
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm pb-[calc(4rem+env(safe-area-inset-bottom))] sm:pb-0"
       role="dialog"
       aria-modal="true"
       aria-label={title}
@@ -40,7 +44,9 @@ export default function ShoeFormModal({ open, shoe, onClose, onSaved }: Props) {
       onClick={onClose}
     >
       <div
-        className="w-full sm:max-w-md bg-card border border-cardBorder sm:rounded-2xl rounded-t-2xl shadow-xl max-h-[90vh] flex flex-col"
+        // Cap the height to the space left above the nav so a tall form
+        // scrolls internally rather than overflowing under the nav.
+        className="w-full sm:max-w-md bg-card border border-cardBorder sm:rounded-2xl rounded-t-2xl shadow-xl max-h-[calc(100vh-5rem)] sm:max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-cardBorder/70">

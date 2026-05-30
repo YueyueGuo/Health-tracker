@@ -11,6 +11,10 @@ import { useShoesList, invalidateShoes } from "../../hooks/useShoes";
 import { getErrorMessage } from "../../utils/errors";
 import ShoeForm from "./ShoeForm";
 
+/** Sentinel <option> value for the "add another pair" action. Chosen so
+ *  it can never collide with a real shoe id (which are positive numbers). */
+const ADD_OPTION_VALUE = "__add__";
+
 interface Props {
   activityId: number;
   source: ActivitySource | null;
@@ -176,6 +180,13 @@ export default function ShoeSelector({
                 disabled={busy}
                 onChange={(e) => {
                   const val = e.target.value;
+                  // "Add another pair" is an action, not a selectable
+                  // shoe — open the inline create flow instead of
+                  // tagging. The <select> never holds this value.
+                  if (val === ADD_OPTION_VALUE) {
+                    setCreating(true);
+                    return;
+                  }
                   handleChange(val === "" ? null : Number(val));
                 }}
                 style={{ flex: 1, maxWidth: 360 }}
@@ -195,6 +206,10 @@ export default function ShoeSelector({
                     (retired) #{effectiveShoeId}
                   </option>
                 )}
+                {/* Always the last option, regardless of how many pairs
+                    already exist — lets the user add another pair without
+                    leaving the workout. */}
+                <option value={ADD_OPTION_VALUE}>+ Add another pair…</option>
               </select>
             </div>
           )}
