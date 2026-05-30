@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from backend.clients.strava import StravaRateLimitError
 from backend.database import Base
-from backend.models import Activity, ActivityLap, SyncLog
+from backend.models import Activity, ActivityLap, ActivityStream, SyncLog
 from backend.services import sync as sync_mod
 from backend.services.sync import SyncEngine, _lap_from_raw
 
@@ -62,18 +62,23 @@ class StubStravaClient:
         list_payload: list[dict] | None = None,
         details: dict[int, dict] | None = None,
         zones: dict[int, list[dict]] | None = None,
+        streams: dict[int, dict[str, list]] | None = None,
         raises: dict[int, Exception] | None = None,
+        stream_raises: dict[int, Exception] | None = None,
         quota_after_n: int | None = None,
     ):
         self._list = list_payload or []
         self._details = details or {}
         self._zones = zones or {}
+        self._streams = streams or {}
         self._raises = raises or {}
+        self._stream_raises = stream_raises or {}
         self._quota_after_n = quota_after_n
         self.calls: dict[str, list[Any]] = {
             "get_all_activities": [],
             "detail": [],
             "zones": [],
+            "streams": [],
         }
         self._quota_fraction_ignored: float | None = None
 
@@ -90,6 +95,12 @@ class StubStravaClient:
     async def get_activity_zones(self, activity_id: int) -> list[dict]:
         self.calls["zones"].append(activity_id)
         return self._zones.get(activity_id, [])
+
+    async def get_activity_streams(self, activity_id: int) -> dict[str, list]:
+        self.calls["streams"].append(activity_id)
+        if activity_id in self._stream_raises:
+            raise self._stream_raises[activity_id]
+        return self._streams.get(activity_id, {})
 
     def quota_exhausted(self, fraction: float = 0.95) -> bool:
         self._quota_fraction_ignored = fraction
@@ -731,3 +742,121 @@ async def test_phase_a_dedup_failure_does_not_break_sync(db, monkeypatch):
     act = (await db.execute(select(Activity))).scalar_one()
     assert act.strava_id == 600
     assert act.superseded_by_id is None
+
+
+# ── Phase B: stream fetch during enrichment ───────────────────────
+
+
+async def test_phase_b_calls_stream_fetch_after_enrichment(db):
+    """Phase B should fetch and cache streams for non-manual activities
+    after applying detail + zones + laps."""
+    await _seed_pending(db, 1)
+    stream_data = {"heartrate": [120, 130, 140], "time": [0, 1, 2]}
+    strava = StubStravaClient(
+        details={1: _detail(strava_id=1)},
+        zones={1: [{"type": "heartrate", "distribution_buckets": []}]},
+        streams={1: stream_data},
+    )
+    count = await _engine(db, strava)._strava_phase_b(limit=None)
+    assert count == 1
+
+    # Streams were fetched.
+    assert strava.calls["streams"] == [1]
+
+    # Activity marked complete.
+    act = (await db.execute(select(Activity))).scalar_one()
+    assert act.enrichment_status == "complete"
+
+    # Stream rows persisted.
+    rows = (
+        await db.execute(
+            select(ActivityStream).where(ActivityStream.activity_id == act.id)
+        )
+    ).scalars().all()
+    assert len(rows) == 2
+    types = {r.stream_type for r in rows}
+    assert types == {"heartrate", "time"}
+
+
+async def test_phase_b_stream_rate_limit_does_not_prevent_complete(db):
+    """A StravaRateLimitError during stream fetch must NOT prevent the
+    activity from being marked enrichment_status='complete'. The
+    detail + zones data is more important than streams."""
+    await _seed_pending(db, 1)
+    strava = StubStravaClient(
+        details={1: _detail(strava_id=1)},
+        zones={1: [{"type": "heartrate", "distribution_buckets": []}]},
+        stream_raises={1: StravaRateLimitError(retry_after=15)},
+    )
+    count = await _engine(db, strava)._strava_phase_b(limit=None)
+    assert count == 1
+
+    # Stream fetch was attempted.
+    assert strava.calls["streams"] == [1]
+
+    # Activity still marked complete despite stream 429.
+    act = (await db.execute(select(Activity))).scalar_one()
+    assert act.enrichment_status == "complete"
+    assert act.enriched_at is not None
+
+    # No stream rows persisted.
+    rows = (
+        await db.execute(
+            select(ActivityStream).where(ActivityStream.activity_id == act.id)
+        )
+    ).scalars().all()
+    assert len(rows) == 0
+
+
+async def test_phase_b_stream_failure_does_not_break_enrichment_loop(db):
+    """A stream-fetch failure on one activity must not prevent the next
+    activity from being enriched."""
+    await _seed_pending(db, 1, 2)
+    strava = StubStravaClient(
+        details={
+            1: _detail(strava_id=1),
+            2: _detail(strava_id=2),
+        },
+        zones={
+            1: [],
+            2: [],
+        },
+        streams={2: {"heartrate": [100, 110]}},
+        # strava_id=2 is newest (enriched first) -- its streams fail.
+        stream_raises={2: RuntimeError("stream timeout")},
+    )
+    count = await _engine(db, strava)._strava_phase_b(limit=None)
+
+    # Both activities enriched despite the stream failure on one.
+    assert count == 2
+
+    rows = {
+        r.strava_id: r
+        for r in (await db.execute(select(Activity))).scalars().all()
+    }
+    assert rows[1].enrichment_status == "complete"
+    assert rows[2].enrichment_status == "complete"
+
+    # Stream fetch was attempted for both (strava_id=2 first since newest).
+    assert 2 in strava.calls["streams"]
+    assert 1 in strava.calls["streams"]
+
+
+async def test_phase_b_skips_streams_for_manual_activities(db):
+    """Manual activities (detail has ``"manual": True``) should NOT
+    trigger a stream fetch -- Strava returns 404 for them."""
+    await _seed_pending(db, 1)
+    strava = StubStravaClient(
+        details={1: _detail(strava_id=1, manual=True)},
+        zones={1: []},
+        streams={1: {"heartrate": [100]}},
+    )
+    count = await _engine(db, strava)._strava_phase_b(limit=None)
+    assert count == 1
+
+    # Stream fetch was NOT called.
+    assert strava.calls["streams"] == []
+
+    # Activity still marked complete.
+    act = (await db.execute(select(Activity))).scalar_one()
+    assert act.enrichment_status == "complete"
