@@ -140,6 +140,23 @@ export function fetchDashboardHistory(days = 30, limit = 200) {
   return fetchJson<DashboardHistoryBundle>(`/dashboard/history?${qs}`);
 }
 
+export interface HistoryFeedPage {
+  activities: ActivitySummary[];
+  sleep: SleepSession[];
+  strength: StrengthSession[];
+  next_cursor: string | null;
+  has_more: boolean;
+}
+
+export function fetchHistoryFeed(cursor?: string, limit = 50) {
+  const qs = new URLSearchParams();
+  qs.set("limit", String(limit));
+  // Omit the cursor param entirely on the first page so the backend treats
+  // the request as "start from newest".
+  if (cursor !== undefined) qs.set("cursor", cursor);
+  return fetchJson<HistoryFeedPage>(`/dashboard/history-feed?${qs}`);
+}
+
 export interface DashboardTrainingTrendsBundle {
   activities: ActivitySummary[];
   recovery: RecoveryTrend[];
