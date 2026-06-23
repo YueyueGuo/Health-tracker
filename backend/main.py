@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import pathlib
 import time
 from contextlib import asynccontextmanager, suppress
@@ -14,6 +15,15 @@ from fastapi.staticfiles import StaticFiles
 from backend.config import settings
 from backend.database import init_db
 from backend.scheduler import create_scheduler
+
+# Route app-level loggers (backend.*) to stdout so scheduler activity and
+# sync errors show up in Railway/container logs. Uvicorn configures its own
+# `uvicorn.*` loggers (propagate=False), so this won't double-log access lines.
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    force=True,
+)
 
 logger = logging.getLogger(__name__)
 
